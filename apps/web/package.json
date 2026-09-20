@@ -1,0 +1,29 @@
+{
+  "name": "@date-notes/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vp dev --host 0.0.0.0",
+    "build": "vp build",
+    "preview": "vp preview --host 0.0.0.0",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@convex-dev/auth": "latest",
+    "@date-notes/backend": "workspace:*",
+    "@fontsource/epilogue": "latest",
+    "@fontsource/plus-jakarta-sans": "latest",
+    "convex": "latest",
+    "lucide-react": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "react-router-dom": "latest"
+  },
+  "devDependencies": {
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@vitejs/plugin-react": "latest",
+    "vite-plus": "latest"
+  }
+}

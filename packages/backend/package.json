@@ -1,0 +1,25 @@
+{
+  "name": "@date-notes/backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./api": "./convex/_generated/api.js",
+    "./dataModel": "./convex/_generated/dataModel.d.ts",
+    "./shared": "./shared.ts"
+  },
+  "scripts": {
+    "dev": "convex dev",
+    "deploy": "convex deploy",
+    "codegen": "convex codegen",
+    "typecheck": "tsc --noEmit -p convex/tsconfig.json",
+    "setup:auth": "node scripts/setup-auth.mjs"
+  },
+  "dependencies": {
+    "@auth/core": "^0.41.0",
+    "@convex-dev/auth": "latest",
+    "convex": "latest",
+    "convex-helpers": "latest",
+    "jose": "latest"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "name": "date-notes",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm -r --parallel dev",
+    "dev:web": "pnpm --filter @date-notes/web dev",
+    "dev:backend": "pnpm --filter @date-notes/backend dev",
+    "build": "pnpm --filter @date-notes/web build",
+    "check": "vp check && tsc --noEmit && pnpm -r typecheck",
+    "test": "vp test run",
+    "test:e2e": "playwright test",
+    "format": "vp fmt",
+    "deploy:backend": "pnpm --filter @date-notes/backend deploy"
+  },
+  "devDependencies": {
+    "@playwright/test": "latest",
+    "@types/node": "^24.0.0",
+    "convex-test": "latest",
+    "typescript": "~5.9.3",
+    "vite-plus": "latest"
+  },
+  "packageManager": "pnpm@10.33.3"
+}
