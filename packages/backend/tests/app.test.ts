@@ -396,3 +396,71 @@ describe('Private photos and cleanup', () => {
     expect(await t.run((ctx) => ctx.db.get(visitId))).toBeNull();
   });
 });
+
+describe('Map and note imports', () => {
+  it('imports once, preserves separate visits, optional scores and named historical ratings', async () => {
+    const { t, alice, ids, boardId } = await setup();
+    await t.run((ctx) => ctx.db.patch(ids.alice, { name: 'Nishit' }));
+    const first = await t.mutation(internal.importNotes.bangalore, { boardId });
+    expect(first.inserted).toBe(22);
+    expect((await t.mutation(internal.importNotes.bangalore, { boardId })).inserted).toBe(0);
+    const places = await alice.query(api.visits.places, {
+      boardId,
+      paginationOpts: { numItems: 100, cursor: null },
+    });
+    const udupi = places.page.filter((p) => p.title === 'Udupi');
+    expect(udupi).toHaveLength(2);
+    expect(udupi.map((p) => p.visitNumber).sort()).toEqual([1, 2]);
+    expect(udupi.every((p) => p.date === '')).toBe(true);
+    const amudham = places.page.find((p) => p.title === 'Amudham')!;
+    const details = await alice.query(api.visits.get, { visitId: amudham._id });
+    const mansi = details.ratings.find((r) => r.importedName === 'Mansi')!;
+    expect(mansi.userId).toBeUndefined();
+    expect(mansi.score).toBe(8.5);
+    expect(mansi.note).toContain('8.59');
+    expect(details.ratings.filter((r) => r.kind === 'overall')).toHaveLength(0);
+    const dhaba = places.page.find((p) => p.title === 'Chulha Choki')!;
+    const dhabaDetail = await alice.query(api.visits.get, { visitId: dhaba._id });
+    const roti = dhabaDetail.dishes.find((d) => d.name === 'Roti')!;
+    expect(dhabaDetail.ratings.filter((r) => r.targetId === roti._id)).toHaveLength(0);
+    await alice.mutation(api.ratings.save, {
+      visitId: amudham._id,
+      targetId: mansi.targetId as Id<'dishes'>,
+      kind: 'dish',
+      score: 9,
+      note: '',
+    });
+    expect(
+      (await alice.query(api.visits.get, { visitId: amudham._id })).ratings.find(
+        (r) => r._id === mansi._id,
+      )?.score,
+    ).toBe(8.5);
+  });
+  it('protects map reads and rejects invalid pin coordinates', async () => {
+    const { alice, outsider, boardId, visitId } = await setup();
+    await expect(
+      outsider.query(api.visits.places, {
+        boardId,
+        paginationOpts: { numItems: 100, cursor: null },
+      }),
+    ).rejects.toThrow(/access/);
+    const update = {
+      visitId,
+      title: 'A date',
+      date: '',
+      place: 'Bangalore',
+      notes: '',
+      showDishes: true,
+    };
+    await expect(
+      alice.mutation(api.visits.update, { ...update, location: { latitude: 91, longitude: 77 } }),
+    ).rejects.toThrow(/map location/);
+    await alice.mutation(api.visits.update, {
+      ...update,
+      location: { latitude: 12.95, longitude: 77.65 },
+    });
+    expect((await alice.query(api.visits.get, { visitId })).visit.location?.latitude).toBe(12.95);
+    await alice.mutation(api.visits.update, { ...update, location: null });
+    expect((await alice.query(api.visits.get, { visitId })).visit.location).toBeUndefined();
+  });
+});

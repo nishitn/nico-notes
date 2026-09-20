@@ -309,6 +309,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, { error: s
   }
 }
 export function formatDate(date: string) {
+  if (!date) return 'Date not recorded';
   return new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric', year: 'numeric' }).format(
     new Date(`${date}T12:00:00`),
   );

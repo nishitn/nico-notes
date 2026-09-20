@@ -13,6 +13,7 @@ import type * as boards from "../boards.js";
 import type * as cleanup from "../cleanup.js";
 import type * as crons from "../crons.js";
 import type * as http from "../http.js";
+import type * as importNotes from "../importNotes.js";
 import type * as items from "../items.js";
 import type * as lib from "../lib.js";
 import type * as photos from "../photos.js";
@@ -33,6 +34,7 @@ declare const fullApi: ApiFromModules<{
   cleanup: typeof cleanup;
   crons: typeof crons;
   http: typeof http;
+  importNotes: typeof importNotes;
   items: typeof items;
   lib: typeof lib;
   photos: typeof photos;

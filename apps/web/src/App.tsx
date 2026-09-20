@@ -172,6 +172,13 @@ function Shell() {
           </button>
           <div className="header-back" ref={setBackSlot} />
           <Brand />
+          <button
+            className="account-pill"
+            aria-label="Your account and boards"
+            onClick={() => setDrawerOpen(true)}
+          >
+            <Initials name={me?.name ?? 'You'} small />
+          </button>
         </header>
         {drawerOpen && (
           <Modal title="Boards" className="board-drawer" onClose={() => setDrawerOpen(false)}>

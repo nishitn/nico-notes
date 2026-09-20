@@ -1,34 +1,20 @@
 import { useEffect, useState } from 'react';
 import { useMutation, usePaginatedQuery, useQuery } from 'convex/react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
-import {
-  ArrowRight,
-  CalendarDays,
-  Heart,
-  Image,
-  MapPin,
-  Plus,
-  Settings2,
-  Star,
-  Utensils,
-  UserPlus,
-} from 'lucide-react';
+import { ArrowRight, Heart } from 'lucide-react';
 import { api } from '@date-notes/backend/api';
 import type { Id } from '@date-notes/backend/dataModel';
 import { Artwork } from './Artwork';
-import { Photo } from './Photos';
-import { Invitations } from './Settings';
+import { BoardDashboard } from './BoardDashboard';
 import {
   Back,
   Empty,
   ErrorNote,
   Field,
   Form,
-  Initials,
   Modal,
   Spinner,
   Submit,
-  formatDate,
   useNotice,
   useTask,
 } from './ui';
@@ -196,16 +182,10 @@ export function BoardsPage() {
   );
 }
 export function BoardPage() {
-  const [addingMember, setAddingMember] = useState(false);
   const { boardId } = useParams();
   const id = boardId as Id<'boards'>;
   const me = useQuery(api.boards.me);
   const detail = useQuery(api.boards.get, { boardId: id });
-  const { results, status, loadMore } = usePaginatedQuery(
-    api.visits.list,
-    { boardId: id },
-    { initialNumItems: 12 },
-  );
   useEffect(() => {
     if (detail && me) {
       try {
@@ -216,127 +196,7 @@ export function BoardPage() {
     }
   }, [detail, me]);
   if (!detail) return <Spinner />;
-  return (
-    <div className="page">
-      <header className="board-heading">
-        <h1>{detail.board.name}</h1>
-        <div className="members-inline">
-          <div className="avatar-stack">
-            {detail.members.slice(0, 5).map((p) => (
-              <Initials key={p._id} name={p.name} small />
-            ))}
-          </div>
-          <span>
-            {detail.members.length === 1 ? '1 member' : `${detail.members.length} members`}
-          </span>
-          {me?._id === detail.board.ownerId && (
-            <button
-              className="button secondary add-member"
-              onClick={() => setAddingMember(true)}
-              disabled={detail.members.length >= 20}
-            >
-              <UserPlus size={16} /> Add member
-            </button>
-          )}
-        </div>
-        {detail.board.description && <p>{detail.board.description}</p>}
-      </header>
-      {addingMember && me?._id === detail.board.ownerId && (
-        <Modal title="Add member" onClose={() => setAddingMember(false)}>
-          <Invitations boardId={id} />
-        </Modal>
-      )}
-      <div className="section-heading">
-        <div>
-          <h2>
-            Visits{' '}
-            <span className="count">
-              {results.length}
-              {status === 'CanLoadMore' ? '+' : ''}
-            </span>
-          </h2>
-        </div>
-        <div className="actions">
-          <Link
-            className="button secondary"
-            to={`/boards/${id}/settings`}
-            aria-label="Board settings"
-          >
-            <Settings2 size={17} />
-            <span>Board settings</span>
-          </Link>
-          <Link className="button primary" to={`/boards/${id}/visits/new`}>
-            <Plus size={18} /> Add visit
-          </Link>
-        </div>
-      </div>
-      {status === 'LoadingFirstPage' ? (
-        <Spinner />
-      ) : results.length === 0 ? (
-        <Empty
-          title="No visits yet"
-          action={
-            <Link className="button primary" to={`/boards/${id}/visits/new`}>
-              <Plus size={18} /> Add visit
-            </Link>
-          }
-        >
-          Add a visit to save dishes, ratings, and photos.
-        </Empty>
-      ) : (
-        <div className="visit-grid">
-          {results.map((visit) => (
-            <Link className="visit-card" key={visit._id} to={`/visits/${visit._id}`}>
-              <div className={`visit-cover ${detail.board.accent}`}>
-                {visit.photoId ? (
-                  <Photo id={visit.photoId} alt={visit.title} />
-                ) : (
-                  <Artwork variant={visit.showDishes ? 'food' : 'adventure'} />
-                )}
-                <span className="cover-badge">{visit.typeName}</span>
-                {visit.overall !== null && (
-                  <span className="score-badge">
-                    <Star size={13} fill="currentColor" />
-                    {visit.overall.toFixed(1)}
-                    <small>/10</small>
-                  </span>
-                )}
-              </div>
-              <div className="visit-card-body">
-                <span className="date-label">
-                  <CalendarDays size={13} />
-                  {formatDate(visit.date)}
-                </span>
-                <h3>{visit.title}</h3>
-                {visit.place && (
-                  <p className="place">
-                    <MapPin size={14} />
-                    {visit.place}
-                  </p>
-                )}
-                <div className="visit-card-footer">
-                  <span>
-                    <Utensils size={14} />
-                    {visit.dishCount} dishes
-                  </span>
-                  <span>
-                    <Image size={14} />
-                    {visit.photoCount} photos
-                  </span>
-                  <ArrowRight size={18} />
-                </div>
-              </div>
-            </Link>
-          ))}
-        </div>
-      )}
-      {status === 'CanLoadMore' && (
-        <button className="button secondary load-more" onClick={() => loadMore(12)}>
-          More visits
-        </button>
-      )}
-    </div>
-  );
+  return <BoardDashboard key={id} detail={detail} userId={me?._id} />;
 }
 export function InvitePage() {
   const { token = '' } = useParams();

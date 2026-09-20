@@ -4,6 +4,11 @@ import { v } from 'convex/values';
 
 export const accent = v.union(v.literal('coral'), v.literal('sage'), v.literal('peach'));
 export const targetKind = v.union(v.literal('overall'), v.literal('dish'), v.literal('category'));
+export const locationValidator = v.object({
+  latitude: v.number(),
+  longitude: v.number(),
+  source: v.optional(v.string()),
+});
 const schema = defineSchema({
   ...authTables,
   boards: defineTable({
@@ -40,7 +45,13 @@ const schema = defineSchema({
     notes: v.string(),
     typeName: v.string(),
     showDishes: v.boolean(),
-  }).index('by_boardId_and_date', ['boardId', 'date']),
+    location: v.optional(locationValidator),
+    mapQuery: v.optional(v.string()),
+    visitNumber: v.optional(v.number()),
+    importKey: v.optional(v.string()),
+  })
+    .index('by_boardId_and_importKey', ['boardId', 'importKey'])
+    .index('by_boardId_and_date', ['boardId', 'date']),
   categories: defineTable({
     visitId: v.id('visits'),
     name: v.string(),
@@ -52,7 +63,8 @@ const schema = defineSchema({
   ),
   ratings: defineTable({
     visitId: v.id('visits'),
-    userId: v.id('users'),
+    userId: v.optional(v.id('users')),
+    importedName: v.optional(v.string()),
     kind: targetKind,
     targetId: v.string(),
     score: v.number(),

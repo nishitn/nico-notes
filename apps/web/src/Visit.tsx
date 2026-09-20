@@ -1,7 +1,17 @@
 import { useState } from 'react';
 import { useMutation, useQuery } from 'convex/react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { CalendarDays, MapPin, Pencil, Plus, Star, Trash2, Utensils, Heart } from 'lucide-react';
+import {
+  CalendarDays,
+  MapPin,
+  Pencil,
+  Plus,
+  Star,
+  Trash2,
+  Utensils,
+  Heart,
+  Navigation,
+} from 'lucide-react';
 import { api } from '@date-notes/backend/api';
 import type { Doc, Id } from '@date-notes/backend/dataModel';
 import { average } from '@date-notes/backend/shared';
@@ -21,6 +31,8 @@ import {
   useTask,
 } from './ui';
 import { PhotoSection } from './Photos';
+import { LocationField } from './LocationField';
+import { mapsLink, type MapLocation } from './PlacesMap';
 
 export function VisitEditor() {
   const { boardId, visitId } = useParams();
@@ -61,6 +73,7 @@ function Editor({
   const [date, setDate] = useState(existing?.date ?? today());
   const [place, setPlace] = useState(existing?.place ?? '');
   const [notes, setNotes] = useState(existing?.notes ?? '');
+  const [location, setLocation] = useState<MapLocation | null>(existing?.location ?? null);
   const [typeId, setTypeId] = useState<string>(types[0]?._id ?? '');
   const [showDishes, setShowDishes] = useState(
     existing?.showDishes ?? types[0]?.showDishes ?? true,
@@ -80,7 +93,15 @@ function Editor({
         onSubmit={() =>
           task.run(async () => {
             if (existing) {
-              await update({ visitId: existing._id, title, date, place, notes, showDishes });
+              await update({
+                visitId: existing._id,
+                title,
+                date,
+                place,
+                notes,
+                showDishes,
+                location,
+              });
               navigate(back);
             } else {
               const id = await create({
@@ -90,6 +111,7 @@ function Editor({
                 place,
                 notes,
                 showDishes,
+                location,
                 ...(typeId ? { typeId: typeId as Id<'visitTypes'> } : {}),
                 categories: categories
                   .split(',')
@@ -113,8 +135,8 @@ function Editor({
           />
         </Field>
         <div className="form-row">
-          <Field label="When was it?">
-            <input required type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+          <Field label="When was it?" hint="Leave blank if you don’t remember.">
+            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
           </Field>
           <Field label="Place or location (optional)">
             <input
@@ -125,6 +147,7 @@ function Editor({
             />
           </Field>
         </div>
+        <LocationField value={location} onChange={setLocation} title={title} place={place} />
         {!existing && (
           <>
             <Field label="What kind of date?">
@@ -259,11 +282,15 @@ function RatingCard({
         {ratings.length ? (
           ratings.map((rating) => {
             const person = people.find((p) => p._id === rating.userId);
+            const personName = person?.name ?? rating.importedName ?? 'Member';
             return (
               <div className="person-rating" key={rating._id}>
-                <Initials name={person?.name ?? 'Member'} small />
+                <Initials name={personName} small />
                 <div>
-                  <strong>{rating.userId === userId ? 'You' : (person?.name ?? 'Member')}</strong>
+                  <strong>{rating.userId === userId ? 'You' : personName}</strong>
+                  {rating.importedName && (
+                    <small className="imported-rating-label">From your notes</small>
+                  )}
                   {rating.note && <p>{rating.note}</p>}
                 </div>
                 <span className="person-score">
@@ -475,7 +502,12 @@ export function VisitPage() {
       <div className="page-heading">
         <div>
           <span className={`type-pill ${board.accent}`}>{visit.typeName}</span>
-          <h1>{visit.title}</h1>
+          <h1>
+            {visit.title}
+            {visit.visitNumber && visit.visitNumber > 1 && (
+              <span className="visit-number">Visit {visit.visitNumber}</span>
+            )}
+          </h1>
           <div className="visit-meta">
             <span>
               <CalendarDays size={16} />
@@ -490,6 +522,10 @@ export function VisitPage() {
           </div>
         </div>
         <div className="actions">
+          <a className="button secondary" href={mapsLink(visit)} target="_blank" rel="noreferrer">
+            <Navigation size={16} />
+            Google Maps
+          </a>
           <Link className="button secondary" to={`/visits/${id}/edit`}>
             <Pencil size={16} /> Edit visit
           </Link>

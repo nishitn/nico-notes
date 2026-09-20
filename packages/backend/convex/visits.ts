@@ -1,11 +1,48 @@
 import { paginationOptsValidator } from 'convex/server';
 import { ConvexError, v } from 'convex/values';
-import schema from './schema';
+import schema, { locationValidator } from './schema';
 import { authedMutation, authedQuery, member, person, personValidator, visitAccess } from './lib';
 import { deleteVisit } from './cleanup';
 import { MAX_ITEMS, MAX_PHOTOS, textValue, validDate } from '../shared';
 
-const fields = { title: v.string(), date: v.string(), place: v.string(), notes: v.string() };
+const fields = {
+  title: v.string(),
+  date: v.string(),
+  place: v.string(),
+  notes: v.string(),
+  location: v.optional(v.union(locationValidator, v.null())),
+};
+function validateLocation(
+  location: { latitude: number; longitude: number; source?: string } | null | undefined,
+) {
+  if (
+    location &&
+    (!Number.isFinite(location.latitude) ||
+      !Number.isFinite(location.longitude) ||
+      Math.abs(location.latitude) > 90 ||
+      Math.abs(location.longitude) > 180)
+  )
+    throw new ConvexError('Choose a valid map location.');
+  return location ? { latitude: location.latitude, longitude: location.longitude } : undefined;
+}
+// Lightweight, paginated metadata lets the map include every visit, not just the first card page.
+export const places = authedQuery({
+  args: { boardId: v.id('boards'), paginationOpts: paginationOptsValidator },
+  returns: v.object({
+    page: v.array(schema.doc('visits')),
+    isDone: v.boolean(),
+    continueCursor: v.string(),
+  }),
+  handler: async (ctx, args) => {
+    await member(ctx, args.boardId);
+    const { page, isDone, continueCursor } = await ctx.db
+      .query('visits')
+      .withIndex('by_boardId_and_date', (q) => q.eq('boardId', args.boardId))
+      .order('desc')
+      .paginate({ ...args.paginationOpts, numItems: Math.min(args.paginationOpts.numItems, 100) });
+    return { page, isDone, continueCursor };
+  },
+});
 export const list = authedQuery({
   args: { boardId: v.id('boards'), paginationOpts: paginationOptsValidator },
   returns: v.object({
@@ -13,6 +50,9 @@ export const list = authedQuery({
       v.object({
         ...schema.doc('visits').fields,
         photoId: v.union(v.id('photos'), v.null()),
+        photoIds: v.array(v.id('photos')),
+        dishAverage: v.union(v.number(), v.null()),
+        highlights: v.array(v.string()),
         dishCount: v.number(),
         photoCount: v.number(),
         overall: v.union(v.number(), v.null()),
@@ -44,8 +84,19 @@ export const list = authedQuery({
             q.eq('visitId', visit._id).eq('kind', 'overall').eq('targetId', visit._id),
           )
           .take(2000);
+        const dishRatings = await ctx.db
+          .query('ratings')
+          .withIndex('by_visitId_and_kind_and_targetId', (q) =>
+            q.eq('visitId', visit._id).eq('kind', 'dish'),
+          )
+          .take(2000);
         return {
           ...visit,
+          photoIds: photos.slice(0, 3).map((p) => p._id),
+          highlights: dishes.slice(0, 3).map((d) => d.name),
+          dishAverage: dishRatings.length
+            ? dishRatings.reduce((sum, r) => sum + r.score, 0) / dishRatings.length
+            : null,
           photoId: photos[0]?._id ?? null,
           photoCount: photos.length,
           dishCount: dishes.length,
@@ -89,7 +140,9 @@ export const get = authedQuery({
       board,
       ratings,
       people: await Promise.all(
-        [...new Set(ratings.map((r) => r.userId))].map((id) => person(ctx, id)),
+        [...new Set(ratings.flatMap((r) => (r.userId ? [r.userId] : [])))].map((id) =>
+          person(ctx, id),
+        ),
       ),
       categories: (
         await ctx.db
@@ -121,7 +174,7 @@ export const create = authedMutation({
   returns: v.id('visits'),
   handler: async (ctx, args) => {
     await member(ctx, args.boardId);
-    if (!validDate(args.date)) throw new ConvexError('Choose a valid visit date.');
+    if (args.date && !validDate(args.date)) throw new ConvexError('Choose a valid visit date.');
     const type = args.typeId ? await ctx.db.get(args.typeId) : null;
     if (args.typeId && (!type || type.boardId !== args.boardId))
       throw new ConvexError('Choose a visit type from this board.');
@@ -142,6 +195,7 @@ export const create = authedMutation({
       notes: args.notes.trim().slice(0, 5000),
       typeName: type?.name ?? 'A date',
       showDishes: args.showDishes,
+      location: validateLocation(args.location),
     });
     for (const [position, name] of categories.entries())
       await ctx.db.insert('categories', { visitId, name, position });
@@ -152,10 +206,13 @@ export const update = authedMutation({
   args: { visitId: v.id('visits'), showDishes: v.boolean(), ...fields },
   returns: v.null(),
   handler: async (ctx, { visitId, ...args }) => {
-    await visitAccess(ctx, visitId);
-    if (!validDate(args.date)) throw new ConvexError('Choose a valid visit date.');
+    const { visit } = await visitAccess(ctx, visitId);
+    if (args.date && !validDate(args.date)) throw new ConvexError('Choose a valid visit date.');
     await ctx.db.patch(visitId, {
       ...args,
+      mapQuery:
+        args.title !== visit.title || args.place !== visit.place ? undefined : visit.mapQuery,
+      location: args.location === undefined ? visit.location : validateLocation(args.location),
       title: textValue(args.title, 'Visit title'),
       place: args.place.trim().slice(0, 250),
       notes: args.notes.trim().slice(0, 5000),

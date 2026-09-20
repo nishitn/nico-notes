@@ -55,7 +55,7 @@ Google OAuth is implemented through [Convex Auth](https://labs.convex.dev/auth/c
 
 Members can edit shared details, dishes, and types. Only owners manage membership and boards. The visit creator or owner can delete a visit; photo uploaders or owners can remove photos or edit captions. Removing someone preserves their historical contributions. Revoke a still-active invitation if you don't want that person to rejoin.
 
-Boards, visits, and gallery data update reactively. Already viewed/downloaded photos cannot be recalled from another person's device when access is removed. The application does not offer public sharing, offline sync, maps, or special trip structures.
+Boards, visits, and gallery data update reactively. Already viewed/downloaded photos cannot be recalled from another person's device when access is removed. The application does not offer public sharing, offline sync, or special trip structures.
 
 ## Packages and commands
 
@@ -97,3 +97,17 @@ Screenshots and test reports stay in ignored `test-results/`. They may contain t
 5. Verify Google sign-in with both accounts, invitation acceptance, a shared rating, photo upload, and direct-link navigation on the final domain. Keep `DATE_NOTES_E2E_ENABLED` unset in production.
 
 Development data is separate from production data. There is no automatic data migration or public publishing step.
+
+## Maps and imported Bangalore notes
+
+Boards open in a map view with a list toggle, place search, Food/Adventure filters, and recent visit cards. Repeat visits are grouped by place in the list; each visit keeps separate dishes, notes, and ratings. The map loads paginated lightweight visit metadata independently of the recent-card pagination. Card scores labeled “dish avg.” are separate from overall visit scores. Real uploaded photos appear as a strip of up to three images; visits without photos use illustrations, not simulated visit photos.
+
+Maps use Leaflet and standard OpenStreetMap tiles with visible attribution. Tiles load directly in the browser, follow browser caching, and are not prefetched or stored for offline use. See the [OSM tile policy](https://operations.osmfoundation.org/policies/tiles/); use an appropriate tile provider if deploying at larger scale. No map API key is needed for this local app. Google Maps links open a coordinate or venue search. In the visit editor, use **Set map pin** to tap a location or paste coordinates/a full Google Maps URL. A short sharing URL must first be opened in Google Maps to obtain coordinates.
+
+The user-provided dataset in `packages/backend/imports/bangalore.ts` contains 22 visits across 21 places. Verified pin coordinates carry source URLs in the fixture; ambiguous branches remain unpinned with search links. Dates were not supplied and stay blank (“Date not recorded”). Mansi’s 8.59 is represented as 8.5 with the original value in the note. Uttari Betta’s unattributed Photos 10/10 remains a note rather than being assigned to either person. Missing scores stay unrated.
+
+The operator-only `importNotes:bangalore` mutation imports into Nishit’s board, once per import key. Re-running skips existing visits and scores, and only fills newly verified missing locations. It is not callable from a browser. Nishit’s ratings belong to his real account; Mansi’s are explicitly attributed historical ratings marked “From your notes,” without an invented user or login. They are read-only until a future explicit account-linking step; she can join the board normally via invitation. Do not import them again as new personal scores when linking accounts.
+
+```sh
+pnpm --filter @date-notes/backend exec convex run importNotes:bangalore '{"boardId":"YOUR_BOARD_ID"}'
+```
