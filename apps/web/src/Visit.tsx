@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery } from 'convex/react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   CalendarDays,
   MapPin,
@@ -69,11 +69,24 @@ function Editor({
   const task = useTask();
   const navigate = useNavigate();
   const notice = useNotice();
-  const [title, setTitle] = useState(existing?.title ?? '');
+  const [searchParams] = useSearchParams();
+  const initialTitle = existing?.title ?? searchParams.get('title') ?? '';
+  const initialPlace = existing?.place ?? searchParams.get('place') ?? '';
+  const initialLat = searchParams.get('lat');
+  const initialLng = searchParams.get('lng');
+  const initialLocation: MapLocation | null =
+    existing?.location ??
+    (initialLat && initialLng
+      ? {
+          latitude: parseFloat(initialLat),
+          longitude: parseFloat(initialLng),
+        }
+      : null);
+  const [title, setTitle] = useState(initialTitle);
   const [date, setDate] = useState(existing?.date ?? today());
-  const [place, setPlace] = useState(existing?.place ?? '');
+  const [place, setPlace] = useState(initialPlace);
   const [notes, setNotes] = useState(existing?.notes ?? '');
-  const [location, setLocation] = useState<MapLocation | null>(existing?.location ?? null);
+  const [location, setLocation] = useState<MapLocation | null>(initialLocation);
   const [typeId, setTypeId] = useState<string>(types[0]?._id ?? '');
   const [showDishes, setShowDishes] = useState(
     existing?.showDishes ?? types[0]?.showDishes ?? true,
@@ -522,10 +535,12 @@ export function VisitPage() {
           </div>
         </div>
         <div className="actions">
-          <a className="button secondary" href={mapsLink(visit)} target="_blank" rel="noreferrer">
-            <Navigation size={16} />
-            Google Maps
-          </a>
+          {visit.location && (
+            <a className="button secondary" href={mapsLink(visit)} target="_blank" rel="noreferrer">
+              <Navigation size={16} />
+              Google Maps
+            </a>
+          )}
           <Link className="button secondary" to={`/visits/${id}/edit`}>
             <Pencil size={16} /> Edit visit
           </Link>

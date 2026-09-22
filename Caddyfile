@@ -1,0 +1,8 @@
+:8080 {
+	redir /datenotes /datenotes/
+	handle_path /datenotes* {
+		root * /Users/nishitnagar/repos/date-notes/apps/web/dist
+		try_files {path} /index.html
+		file_server
+	}
+}

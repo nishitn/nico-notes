@@ -24,7 +24,15 @@ import {
   useTask,
 } from './ui';
 import { Artwork } from './Artwork';
-import { BoardForm, BoardPage, BoardsPage, HomePage, InvitePage } from './Boards';
+import {
+  BoardForm,
+  BoardPage,
+  BoardsPage,
+  HomePage,
+  InvitePage,
+  PlaceDetailPage,
+  PlacesPage,
+} from './Boards';
 import { VisitEditor, VisitPage } from './Visit';
 import { Settings } from './Settings';
 
@@ -249,6 +257,8 @@ function Shell() {
               <Route path="/" element={<HomePage />} />
               <Route path="/boards" element={<BoardsPage />} />
               <Route path="/boards/:boardId" element={<BoardPage />} />
+              <Route path="/boards/:boardId/places" element={<PlacesPage />} />
+              <Route path="/boards/:boardId/place" element={<PlaceDetailPage />} />
               <Route path="/boards/:boardId/settings" element={<Settings />} />
               <Route path="/boards/:boardId/visits/new" element={<VisitEditor />} />
               <Route path="/visits/:visitId" element={<VisitPage />} />

@@ -56,6 +56,22 @@ export const list = authedQuery({
         dishCount: v.number(),
         photoCount: v.number(),
         overall: v.union(v.number(), v.null()),
+        dishes: v.optional(
+          v.array(
+            v.object({
+              _id: v.id('dishes'),
+              name: v.string(),
+              score: v.union(v.number(), v.null()),
+              ratings: v.array(
+                v.object({
+                  userId: v.optional(v.id('users')),
+                  importedName: v.optional(v.string()),
+                  score: v.number(),
+                }),
+              ),
+            }),
+          ),
+        ),
       }),
     ),
     isDone: v.boolean(),
@@ -90,10 +106,27 @@ export const list = authedQuery({
             q.eq('visitId', visit._id).eq('kind', 'dish'),
           )
           .take(2000);
+        const dishItems = dishes.slice(0, 5).map((d) => {
+          const dRatings = dishRatings.filter((r) => r.targetId === d._id);
+          const avg = dRatings.length
+            ? dRatings.reduce((sum, r) => sum + r.score, 0) / dRatings.length
+            : null;
+          return {
+            _id: d._id,
+            name: d.name,
+            score: avg,
+            ratings: dRatings.map((r) => ({
+              userId: r.userId,
+              importedName: r.importedName,
+              score: r.score,
+            })),
+          };
+        });
         return {
           ...visit,
           photoIds: photos.slice(0, 3).map((p) => p._id),
-          highlights: dishes.slice(0, 3).map((d) => d.name),
+          highlights: dishes.slice(0, 5).map((d) => d.name),
+          dishes: dishItems,
           dishAverage: dishRatings.length
             ? dishRatings.reduce((sum, r) => sum + r.score, 0) / dishRatings.length
             : null,

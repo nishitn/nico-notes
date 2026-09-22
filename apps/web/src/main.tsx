@@ -17,9 +17,10 @@ import './styles.css';
 
 const url = import.meta.env.VITE_CONVEX_URL;
 const client = url ? new ConvexReactClient(url) : null;
+const baseUrl = import.meta.env.BASE_URL.replace(/\/$/, '');
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <BrowserRouter>
+    <BrowserRouter basename={baseUrl}>
       <ErrorBoundary>
         <Notices>
           {client ? (

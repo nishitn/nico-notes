@@ -1,11 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, usePaginatedQuery, useQuery } from 'convex/react';
-import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
-import { ArrowRight, Heart } from 'lucide-react';
+import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { ArrowRight, Heart, MapPin, Mountain, Search, Utensils, X } from 'lucide-react';
 import { api } from '@date-notes/backend/api';
-import type { Id } from '@date-notes/backend/dataModel';
+import type { Doc, Id } from '@date-notes/backend/dataModel';
 import { Artwork } from './Artwork';
-import { BoardDashboard } from './BoardDashboard';
+import { BoardDashboard, VisitCard, type DesignVariant } from './BoardDashboard';
+import { PlacesMap } from './PlacesMap';
 import {
   Back,
   Empty,
@@ -181,7 +182,7 @@ export function BoardsPage() {
     </div>
   );
 }
-export function BoardPage() {
+export function BoardPage({ forcedDesign }: { forcedDesign?: DesignVariant } = {}) {
   const { boardId } = useParams();
   const id = boardId as Id<'boards'>;
   const me = useQuery(api.boards.me);
@@ -196,7 +197,14 @@ export function BoardPage() {
     }
   }, [detail, me]);
   if (!detail) return <Spinner />;
-  return <BoardDashboard key={id} detail={detail} userId={me?._id} />;
+  return (
+    <BoardDashboard
+      key={`${id}-${forcedDesign || 'default'}`}
+      detail={detail}
+      userId={me?._id}
+      forcedDesign={forcedDesign}
+    />
+  );
 }
 export function InvitePage() {
   const { token = '' } = useParams();
@@ -236,6 +244,251 @@ export function InvitePage() {
       <Link className="back" to="/">
         Maybe later
       </Link>
+    </div>
+  );
+}
+
+export function PlacesPage() {
+  const { boardId } = useParams();
+  const id = boardId as Id<'boards'>;
+  const navigate = useNavigate();
+  const detail = useQuery(api.boards.get, { boardId: id });
+  const [params, setParams] = useSearchParams();
+  const activeTab = params.get('tab') === 'unpinned' ? 'unpinned' : 'all';
+  const [query, setQuery] = useState('');
+
+  const {
+    results: visits,
+    status: placesStatus,
+    loadMore: loadPlaces,
+  } = usePaginatedQuery(api.visits.places, { boardId: id }, { initialNumItems: 100 });
+
+  useEffect(() => {
+    if (placesStatus === 'CanLoadMore') loadPlaces(100);
+  }, [placesStatus, loadPlaces]);
+
+  const groups = useMemo(() => {
+    const map = new globalThis.Map<string, Doc<'visits'>[]>();
+    for (const visit of visits) {
+      const key = `${visit.title.trim().toLowerCase()}|${visit.place.trim().toLowerCase()}`;
+      map.set(key, [...(map.get(key) ?? []), visit]);
+    }
+    return [...map.entries()].map(([key, entries]) => ({
+      key,
+      entries,
+      visit: entries.find((v) => v.location) ?? entries[0],
+    }));
+  }, [visits]);
+
+  const matching = useMemo(() => {
+    const trimmed = query.trim().toLowerCase();
+    if (!trimmed) return groups;
+    return groups.filter(({ entries }) =>
+      entries.some((v) => `${v.title} ${v.place} ${v.notes}`.toLowerCase().includes(trimmed)),
+    );
+  }, [groups, query]);
+
+  const unpinned = useMemo(() => groups.filter((p) => !p.visit.location).length, [groups]);
+
+  if (!detail || placesStatus === 'LoadingFirstPage') return <Spinner />;
+
+  const displayList =
+    activeTab === 'unpinned' ? matching.filter((p) => !p.visit.location) : matching;
+
+  return (
+    <div className="page places-page">
+      <Back to={`/boards/${id}`}>Map View</Back>
+      <header className="page-heading">
+        <h1>{detail.board.name} places</h1>
+        <p className="subtitle">
+          {groups.length} explored places across {visits.length} visits
+        </p>
+      </header>
+
+      <div className="places-page-toolbar">
+        <div className="places-search">
+          <Search size={18} />
+          <input
+            aria-label="Search places"
+            placeholder="Search saved places…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          {query && (
+            <button className="icon-button" aria-label="Clear search" onClick={() => setQuery('')}>
+              <X size={16} />
+            </button>
+          )}
+        </div>
+
+        <div className="modal-tab-bar" style={{ borderBottom: 'none', marginBottom: 0 }}>
+          <button
+            type="button"
+            className={`tab-btn ${activeTab === 'all' ? 'active' : ''}`}
+            onClick={() => setParams({}, { replace: true })}
+          >
+            All places ({groups.length})
+          </button>
+          {unpinned > 0 && (
+            <button
+              type="button"
+              className={`tab-btn ${activeTab === 'unpinned' ? 'active' : ''}`}
+              onClick={() => setParams({ tab: 'unpinned' }, { replace: true })}
+            >
+              Awaited pins ({unpinned})
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="places-list" style={{ marginTop: '20px' }}>
+        {displayList.length ? (
+          displayList.map(({ key, entries, visit }) => {
+            const placeDetailUrl = `/boards/${id}/place?title=${encodeURIComponent(
+              visit.title,
+            )}&place=${encodeURIComponent(visit.place || '')}`;
+
+            return (
+              <article
+                key={key}
+                className="place-row place-row-clickable"
+                onClick={() => navigate(placeDetailUrl)}
+              >
+                <span className={`place-row-icon ${visit.showDishes ? '' : 'sage'}`}>
+                  {visit.showDishes ? <Utensils size={21} /> : <Mountain size={22} />}
+                </span>
+                <div className="place-row-body">
+                  <div className="place-row-header">
+                    <h3>
+                      <Link to={placeDetailUrl} onClick={(e) => e.stopPropagation()}>
+                        {visit.title}
+                      </Link>
+                    </h3>
+                    {visit.location ? (
+                      <Link
+                        to={`/boards/${id}?select=${encodeURIComponent(key)}`}
+                        className="place-card-pin-link"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <MapPin size={14} />
+                        Show on map
+                      </Link>
+                    ) : (
+                      <Link
+                        to={`/visits/${visit._id}/edit`}
+                        className="place-card-pin-link"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <MapPin size={14} />
+                        Set pin
+                      </Link>
+                    )}
+                  </div>
+                  <p>
+                    {visit.place || 'Location not recorded'} · {entries.length}{' '}
+                    {entries.length === 1 ? 'visit' : 'visits'}
+                  </p>
+                </div>
+              </article>
+            );
+          })
+        ) : (
+          <p className="no-results">
+            {activeTab === 'unpinned' ? 'No places waiting for a pin!' : 'No matching places.'}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function PlaceDetailPage() {
+  const { boardId } = useParams();
+  const id = boardId as Id<'boards'>;
+  const [params] = useSearchParams();
+  const titleParam = params.get('title') || '';
+  const placeParam = params.get('place') || '';
+
+  const detail = useQuery(api.boards.get, { boardId: id });
+  const {
+    results: visitsList,
+    status: visitsStatus,
+    loadMore: loadVisits,
+  } = usePaginatedQuery(api.visits.list, { boardId: id }, { initialNumItems: 50 });
+
+  useEffect(() => {
+    if (visitsStatus === 'CanLoadMore') loadVisits(50);
+  }, [visitsStatus, loadVisits]);
+
+  const targetKey = `${titleParam.trim().toLowerCase()}|${placeParam.trim().toLowerCase()}`;
+
+  const placeEntries = useMemo(() => {
+    return visitsList.filter(
+      (v) => `${v.title.trim().toLowerCase()}|${v.place.trim().toLowerCase()}` === targetKey,
+    );
+  }, [visitsList, targetKey]);
+
+  if (!detail || visitsStatus === 'LoadingFirstPage') return <Spinner />;
+
+  const pinnedVisit = placeEntries.find((v) => v.location);
+  const title = placeEntries[0]?.title || titleParam || 'Place';
+  const place = placeEntries[0]?.place || placeParam || '';
+
+  const mapPins = pinnedVisit?.location
+    ? [{ id: targetKey, title, location: pinnedVisit.location, count: placeEntries.length }]
+    : [];
+
+  return (
+    <div className="page place-detail-page">
+      <Back to={`/boards/${id}/places`}>Places list</Back>
+
+      <header className="page-heading">
+        <h1>{title}</h1>
+        {place && (
+          <p className="subtitle">
+            {place} · {placeEntries.length} {placeEntries.length === 1 ? 'visit' : 'visits'}
+          </p>
+        )}
+      </header>
+
+      {/* Map on top of page */}
+      <div className="map-shell place-detail-map" style={{ marginBottom: '24px' }}>
+        <PlacesMap places={mapPins} />
+        {!pinnedVisit?.location && (
+          <div className="map-hint" style={{ pointerEvents: 'auto' }}>
+            <MapPin size={15} />
+            <span>No location pin set for this place yet.</span>
+            {placeEntries[0] && (
+              <Link className="button secondary" to={`/visits/${placeEntries[0]._id}/edit`}>
+                Set pin
+              </Link>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* All visits to this place */}
+      <section className="place-visits-section">
+        <div className="recent-heading" style={{ marginBottom: '16px' }}>
+          <h2>All visits ({placeEntries.length})</h2>
+        </div>
+
+        {placeEntries.length > 0 ? (
+          <div className="memory-grid">
+            {placeEntries.map((visit) => (
+              <VisitCard
+                key={visit._id}
+                visit={visit}
+                variant="editorial"
+                members={detail.members}
+                isRow={false}
+              />
+            ))}
+          </div>
+        ) : (
+          <p className="no-results">No visits found for this place.</p>
+        )}
+      </section>
     </div>
   );
 }
