@@ -16,7 +16,7 @@ import {
   X,
 } from 'lucide-react';
 import { api } from '@date-notes/backend/api';
-import type { Doc, Id } from '@date-notes/backend/dataModel';
+import type { Doc } from '@date-notes/backend/dataModel';
 import type { FunctionReturnType } from 'convex/server';
 import { Initials, Modal, Spinner, formatDate } from './ui';
 import { Invitations } from './Settings';
@@ -196,11 +196,9 @@ export function VisitCard({
 
 export function BoardDashboard({
   detail,
-  userId,
   forcedDesign,
 }: {
   detail: Detail;
-  userId?: Id<'users'>;
   forcedDesign?: DesignVariant;
 }) {
   const id = detail.board._id;
@@ -211,9 +209,9 @@ export function BoardDashboard({
   const [query, setQuery] = useState('');
   const [selectedKey, setSelectedKey] = useState<string | null>(selectParam);
   const [addingMember, setAddingMember] = useState(false);
-  const isOwner = userId === detail.board.ownerId;
+  const isAdmin = detail.isAdmin;
   const pendingRequests =
-    useQuery(api.boards.pendingRequests, isOwner ? { boardId: id } : 'skip') ?? [];
+    useQuery(api.boards.pendingRequests, isAdmin ? { boardId: id } : 'skip') ?? [];
 
   // New place search states
   const [newPlaces, setNewPlaces] = useState<NewPlace[]>([]);
@@ -384,25 +382,21 @@ export function BoardDashboard({
           <div className="members-inline members-editorial">
             <div className="avatar-stack">
               {detail.members.slice(0, 5).map((p) => (
-                <Initials key={p._id} name={p.name} small />
+                <Initials key={p._id} name={p.name} image={p.image} small />
               ))}
             </div>
             <span className="editorial-dot">·</span>
             <span className="member-count-text">
               {detail.members.length} {detail.members.length === 1 ? 'member' : 'members'}
             </span>
-            {userId === detail.board.ownerId && (
-              <>
-                <span className="editorial-dot">·</span>
-                <button
-                  className="button text-button invite-editorial"
-                  onClick={() => setAddingMember(true)}
-                  disabled={detail.members.length >= 20}
-                >
-                  <UserPlus size={14} /> + Invite
-                </button>
-              </>
-            )}
+            <span className="editorial-dot">·</span>
+            <button
+              className="button text-button invite-editorial"
+              onClick={() => setAddingMember(true)}
+              disabled={detail.members.length >= 20}
+            >
+              <UserPlus size={14} /> + Invite
+            </button>
           </div>
         </div>
         <div className="board-heading-actions">
@@ -828,7 +822,11 @@ export function BoardDashboard({
 
       {addingMember && (
         <Modal title="Add member" onClose={() => setAddingMember(false)}>
-          <Invitations boardId={id} inviteCode={detail.board.inviteCode} />
+          <Invitations
+            boardId={id}
+            inviteCode={detail.board.inviteCode}
+            canManage={detail.isAdmin}
+          />
         </Modal>
       )}
     </div>

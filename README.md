@@ -1,6 +1,6 @@
 # Date Notes
 
-A private place for shared dates, visit photos, and each person's ratings. React + TypeScript + Vite+ on the frontend; Convex database, realtime functions, storage, and Google authentication on the backend.
+A private place for shared dates, visit photos, and each person's ratings. React + TypeScript + Vite+ on the frontend; Convex database, realtime functions and Google authentication on the backend. New photo files are stored on the Mac mini in `~/pics/notes`.
 
 ## Run locally
 
@@ -27,6 +27,42 @@ Open [localhost:5173](http://localhost:5173). After initial configuration, `pnpm
 
 This workspace has already been connected to the `date-notes` project and its `opulent-partridge-532` development deployment. The frontend environment and development signing keys have been configured. **Google OAuth credentials still need to be supplied** before the two of you can sign in.
 
+## Start everything on the Mac mini
+
+From this repository, run:
+
+```sh
+pnpm start
+```
+
+This builds the web app, starts the local photo service and Caddy, then runs the Cloudflare tunnel from `~/.cloudflared/config.yml` (currently `datenotes.nishitnagar.com`). Caddy serves the built app on port 8080 and forwards `/photos/*` to the photo service on port 8788.
+
+Keep this terminal open. Press **Ctrl+C** to stop the processes this command started. An already-running photo service is reused and stays running. Stop separately launched Caddy and Cloudflare processes before using this command; it reports occupied ports without killing existing processes. If one of the managed services fails, the others started here are stopped too. This command does not deploy or test the Convex backend.
+
+Set `CLOUDFLARED_CONFIG` if your tunnel configuration is in a different file.
+
+## Photos on the Mac mini
+
+New pictures are stored in `~/pics/notes` as private JPEG, PNG, or WebP files. Convex keeps only their visit, uploader, caption, and disk key; existing Convex-hosted photos remain readable.
+
+One-time setup (configures the currently selected backend, never prints the service secret):
+
+```sh
+pnpm --filter @date-notes/backend setup:photos --configure-backend
+```
+
+Deploy the updated backend functions, then keep the photo service running on the Mac mini alongside the app:
+
+```sh
+pnpm photos
+```
+
+The service listens on `127.0.0.1:8788`. Vite dev and preview proxy `/photos` to it, so phones accessing this app through the Mac mini use the same folder. Any other frontend host must also proxy `/photos` to this service securely. The Mac mini must be online for photo uploads and viewing. The service's credential and folder are stored in ignored `packages/backend/.env.photos.local`; never expose that credential through a `VITE_` variable.
+
+The New visit form includes an optional picture picker below notes. It previews the selected file, uploads after saving the visit, and lets failed uploads retry without creating another visit. Each request verifies current board access. Photo and visit deletion queue disk cleanup, processed every minute while the service runs. Incomplete uploads whose registration never succeeds may leave a file on disk; the service never scans or deletes unrelated files in this folder.
+
+Back up `~/pics/notes` with your Mac backups. Nothing migrates or deletes existing cloud photos automatically.
+
 ## Enable Google sign-in
 
 1. Create a Web application OAuth client in [Google Auth Platform](https://console.cloud.google.com/auth/overview). Configure its consent screen and add both of your Google accounts as test users while the OAuth app is in testing.
@@ -38,13 +74,13 @@ This workspace has already been connected to the `date-notes` project and its `o
    ```
 
 4. In the [development deployment's environment settings](https://dashboard.convex.dev/d/opulent-partridge-532/settings/environment-variables), set `AUTH_GOOGLE_ID` and `AUTH_GOOGLE_SECRET` to your OAuth client values. `SITE_URL` should be `http://localhost:5173`. The setup script configures `JWT_PRIVATE_KEY` and `JWKS` without printing them; it preserves existing keys.
-5. Reload the app. The Google button becomes available when the required settings exist. Sign in, create a board, and use **Board settings → Create invitation link** to invite your partner. They explicitly accept after signing in with their own account.
+5. Reload the app. The Google button becomes available when the required settings exist. Sign in, create a board, and use **Board Settings → Create invitation link** to invite your partner. Members can share invites too. Invitees request to join after signing in, and a board admin approves or rejects each request.
 
 Google OAuth is implemented through [Convex Auth](https://labs.convex.dev/auth/config/oauth/google), which is currently beta. No Google password is handled by Date Notes. There is no password, anonymous sign-in, or demo-account fallback in the application.
 
 ## What is included
 
-- Private boards with a creator/owner and up to 20 members. Invite links expire after seven days; generating a replacement invalidates the previous link.
+- Private boards with one or more admins and up to 20 members. Invite links expire after seven days. Members can create or copy the active link; only admins can revoke links or regenerate the board code.
 - Independent visits, even when returning to the same restaurant. Each visit has its own dishes, categories, notes, and photos.
 - Board-specific type presets, such as Food or Trek, copied into visits. Changing or deleting a preset does not change past visits.
 - Individual dish, category, and optional overall ratings from 1–10 in half-point increments. Each person can update or clear only their own rating. Averages exclude unrated people and never substitute for overall ratings.
@@ -53,7 +89,7 @@ Google OAuth is implemented through [Convex Auth](https://labs.convex.dev/auth/c
 - Scheduled cleanup for board deletion, expired upload reservations, and unreferenced files older than a day.
 - Desktop and mobile layouts, keyboard-accessible dialogs, loading and error states, and input preservation after failed saves.
 
-Members can edit shared details, dishes, and types. Only owners manage membership and boards. The visit creator or owner can delete a visit; photo uploaders or owners can remove photos or edit captions. Removing someone preserves their historical contributions. Revoke a still-active invitation if you don't want that person to rejoin.
+Members can edit shared details, dishes, and types. Admins manage membership and boards, promote other members, and can enter ratings on behalf of any current member. Every board must retain at least one admin. The visit creator or admin can delete a visit; photo uploaders or admins can remove photos or edit captions. Removing someone preserves their historical contributions. Removed members must request access again and receive admin approval before rejoining.
 
 Boards, visits, and gallery data update reactively. Already viewed/downloaded photos cannot be recalled from another person's device when access is removed. The application does not offer public sharing, offline sync, or special trip structures.
 
@@ -64,7 +100,7 @@ Boards, visits, and gallery data update reactively. Already viewed/downloaded ph
 | `apps/web`         | React SPA, Vite+, interface and responsive styles | `pnpm dev:web`     | `pnpm build`          |
 | `packages/backend` | Convex functions, auth, database, storage         | `pnpm dev:backend` | `pnpm deploy:backend` |
 
-The backend package exports `@date-notes/backend/api`, `@date-notes/backend/dataModel`, and `@date-notes/backend/shared`. Generated Convex bindings are included with source; regenerate them with `pnpm --filter @date-notes/backend codegen` after backend changes. Frontend calls use typed queries and mutations, not a separate REST server. The two authenticated HTTP endpoints handle photo bytes.
+The backend package exports `@date-notes/backend/api`, `@date-notes/backend/dataModel`, and `@date-notes/backend/shared`. Generated Convex bindings are included with source; regenerate them with `pnpm --filter @date-notes/backend codegen` after backend changes. Frontend calls use typed queries and mutations, not a separate REST server. The local photo service handles new photo bytes and authorizes requests with Convex. Legacy cloud photos use the existing authenticated HTTP endpoint.
 
 Theme tokens and responsive styles are in `apps/web/src/styles.css`. Epilogue and Plus Jakarta Sans are bundled locally. The supplied palette is used throughout, with darker shades for text and buttons.
 
@@ -94,7 +130,7 @@ Screenshots and test reports stay in ignored `test-results/`. They may contain t
 2. Add the production Convex callback URI to Google and set `SITE_URL` to your frontend's HTTPS origin. If serving more than one trusted frontend origin, set the comma-separated `ALLOWED_ORIGINS` for photo requests accordingly.
 3. Run `pnpm deploy:backend`. Set the frontend build environment to the production `VITE_CONVEX_URL` and `VITE_CONVEX_SITE_URL`, then run `pnpm build`.
 4. Host `apps/web/dist` on a static host with HTTPS and an SPA fallback rewriting application routes to `/index.html`. Frontend hosting is intentionally not provisioned by this implementation.
-5. Verify Google sign-in with both accounts, invitation acceptance, a shared rating, photo upload, and direct-link navigation on the final domain. Keep `DATE_NOTES_E2E_ENABLED` unset in production.
+5. Verify Google sign-in with both accounts, member invitations and admin approval, a shared rating, photo upload, and direct-link navigation on the final domain. Keep `DATE_NOTES_E2E_ENABLED` unset in production.
 
 Development data is separate from production data. There is no automatic data migration or public publishing step.
 

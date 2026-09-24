@@ -27,13 +27,12 @@ export function BoardForm({ onClose }: { onClose: () => void }) {
   const notice = useNotice();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [accent, setAccent] = useState<'coral' | 'sage' | 'peach'>('coral');
   return (
     <Modal title="New board" onClose={onClose}>
       <Form
         onSubmit={() =>
           task.run(async () => {
-            const id = await create({ name, description, accent });
+            const id = await create({ name, description, accent: 'coral' });
             notice('Board created.');
             onClose();
             navigate(`/boards/${id}`);
@@ -59,24 +58,6 @@ export function BoardForm({ onClose }: { onClose: () => void }) {
             onChange={(e) => setDescription(e.target.value)}
           />
         </Field>
-        <fieldset className="color-picker">
-          <legend>Choose a color</legend>
-          {(['coral', 'sage', 'peach'] as const).map((color) => (
-            <label
-              key={color}
-              className={`color-option ${color} ${accent === color ? 'selected' : ''}`}
-            >
-              <input
-                type="radio"
-                name="accent"
-                value={color}
-                checked={accent === color}
-                onChange={() => setAccent(color)}
-              />
-              <span>{color}</span>
-            </label>
-          ))}
-        </fieldset>
         <ErrorNote text={task.error} />
         <div className="form-actions">
           <button type="button" className="button secondary" onClick={onClose}>
@@ -109,7 +90,7 @@ export function JoinBoardModal({ onClose }: { onClose: () => void }) {
               notice(`You already have a pending join request for "${res.boardName}".`);
               onClose();
             } else {
-              notice(`Join request sent to the owner of "${res.boardName}"!`);
+              notice(`Join request sent to the admins of "${res.boardName}"!`);
               onClose();
             }
           })
@@ -117,7 +98,7 @@ export function JoinBoardModal({ onClose }: { onClose: () => void }) {
       >
         <Field
           label="Board invite code or link"
-          hint="Ask the board owner for their invite code or invitation link."
+          hint="Ask a board member for their invite code or invitation link."
         >
           <input
             required
@@ -211,11 +192,11 @@ export function BoardsPage() {
               <div key={req._id} className="pending-request-card">
                 <div className="pending-request-header">
                   <strong>{req.boardName}</strong>
-                  <span className="pending-pill">Awaiting owner approval</span>
+                  <span className="pending-pill">Awaiting admin approval</span>
                 </div>
                 <p className="small muted">
-                  Requested {new Date(req.createdAt).toLocaleDateString()} · Waiting for board owner
-                  to accept
+                  Requested {new Date(req.createdAt).toLocaleDateString()} · Waiting for an admin to
+                  accept
                 </p>
               </div>
             ))}
@@ -308,7 +289,6 @@ export function BoardPage({ forcedDesign }: { forcedDesign?: DesignVariant } = {
     <BoardDashboard
       key={`${id}-${forcedDesign || 'default'}`}
       detail={detail}
-      userId={me?._id}
       forcedDesign={forcedDesign}
     />
   );
@@ -316,7 +296,7 @@ export function BoardPage({ forcedDesign }: { forcedDesign?: DesignVariant } = {
 export function InvitePage() {
   const { token = '' } = useParams();
   const invite = useQuery(api.boards.invitation, { token });
-  const accept = useMutation(api.boards.acceptInvitation);
+  const request = useMutation(api.boards.requestToJoin);
   const navigate = useNavigate();
   const task = useTask();
   if (!invite) return <Spinner label="Opening your invitation…" />;
@@ -331,21 +311,36 @@ export function InvitePage() {
         {invite.name}
       </h1>
       <p>
-        Join this private board to add visits, share photos, and bring your own perspective to every
-        rating.
+        {invite.alreadyMember
+          ? 'You’re already a member of this board.'
+          : invite.requestStatus === 'pending'
+            ? 'Your request is waiting for a board admin’s approval.'
+            : invite.requestStatus === 'rejected'
+              ? 'An admin declined your request. You can request to join again.'
+              : 'Request to join. A board admin will approve your access.'}
       </p>
       <ErrorNote text={task.error} />
       <button
         className="button primary"
-        disabled={task.busy}
+        disabled={task.busy || (!invite.alreadyMember && invite.requestStatus === 'pending')}
         onClick={() =>
           task.run(async () => {
-            const boardId = await accept({ token });
-            navigate(`/boards/${boardId}`);
+            if (invite.alreadyMember) {
+              navigate(`/boards/${invite.boardId}`);
+              return;
+            }
+            const result = await request({ code: token });
+            if (result.status === 'already_member') navigate(`/boards/${result.boardId}`);
           })
         }
       >
-        {task.busy ? 'Joining…' : invite.alreadyMember ? 'Open board' : 'Accept invitation'}
+        {task.busy
+          ? 'Sending request…'
+          : invite.alreadyMember
+            ? 'Open board'
+            : invite.requestStatus === 'pending'
+              ? 'Request pending'
+              : 'Request to join'}
         <ArrowRight size={18} />
       </button>
       <Link className="back" to="/">

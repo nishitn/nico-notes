@@ -3,6 +3,7 @@ import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
 
 export const accent = v.union(v.literal('coral'), v.literal('sage'), v.literal('peach'));
+export const memberRole = v.union(v.literal('admin'), v.literal('member'));
 export const targetKind = v.union(v.literal('overall'), v.literal('dish'), v.literal('category'));
 export const locationValidator = v.object({
   latitude: v.number(),
@@ -19,7 +20,11 @@ const schema = defineSchema({
     deleting: v.boolean(),
     inviteCode: v.optional(v.string()),
   }).index('by_inviteCode', ['inviteCode']),
-  memberships: defineTable({ boardId: v.id('boards'), userId: v.id('users') })
+  memberships: defineTable({
+    boardId: v.id('boards'),
+    userId: v.id('users'),
+    role: v.optional(memberRole),
+  })
     .index('by_userId', ['userId'])
     .index('by_boardId', ['boardId'])
     .index('by_boardId_and_userId', ['boardId', 'userId']),
@@ -95,12 +100,15 @@ const schema = defineSchema({
   photos: defineTable({
     visitId: v.id('visits'),
     uploaderId: v.id('users'),
-    storageId: v.id('_storage'),
+    storageId: v.optional(v.id('_storage')),
+    localKey: v.optional(v.string()),
     caption: v.string(),
     contentType: v.string(),
   })
     .index('by_visitId', ['visitId'])
-    .index('by_storageId', ['storageId']),
+    .index('by_storageId', ['storageId'])
+    .index('by_localKey', ['localKey']),
+  localPhotoDeletions: defineTable({ key: v.string(), contentType: v.string() }),
   uploads: defineTable({
     visitId: v.id('visits'),
     userId: v.id('users'),

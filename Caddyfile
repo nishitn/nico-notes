@@ -1,5 +1,11 @@
 :8080 {
-	root * /Users/nishitnagar/repos/date-notes/apps/web/dist
-	try_files {path} /index.html
-	file_server
+	handle /photos/* {
+		reverse_proxy 127.0.0.1:8788
+	}
+
+	handle {
+		root * /Users/nishitnagar/repos/date-notes/apps/web/dist
+		try_files {path} /index.html
+		file_server
+	}
 }

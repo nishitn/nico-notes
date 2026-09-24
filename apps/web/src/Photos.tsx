@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAuthToken } from '@convex-dev/auth/react';
 import { useMutation } from 'convex/react';
 import { Camera, ImagePlus, LoaderCircle, Trash2 } from 'lucide-react';
 import { api } from '@date-notes/backend/api';
 import type { Doc, Id } from '@date-notes/backend/dataModel';
 import { MAX_PHOTOS, MAX_PHOTO_BYTES, PHOTO_TYPES } from '@date-notes/backend/shared';
+const photoApi = import.meta.env.VITE_PHOTO_API_URL || '';
+
 import { Confirm, ErrorNote, Field, Form, Modal, Submit, useNotice, useTask } from './ui';
 
 export function Photo({
@@ -27,7 +29,7 @@ export function Photo({
     if (!token) return;
     const abort = new AbortController();
     let objectUrl = '';
-    void fetch(`${import.meta.env.VITE_CONVEX_SITE_URL}/photos/file?id=${id}`, {
+    void fetch(`${photoApi}/photos/file?id=${id}`, {
       headers: { Authorization: `Bearer ${token}` },
       signal: abort.signal,
     })
@@ -84,27 +86,60 @@ function upload(file: File, url: string, token: string, progress: (n: number) =>
     xhr.send(file);
   });
 }
+export function usePhotoUpload() {
+  const token = useAuthToken();
+  const reserve = useMutation(api.photos.reserve);
+  const [progress, setProgress] = useState(0);
+  const pending = useRef<{
+    file: File;
+    visitId: Id<'visits'>;
+    ticket: Id<'uploads'>;
+    createdAt: number;
+  } | null>(null);
+  async function send(visitId: Id<'visits'>, file: File, caption = '') {
+    if (!token) throw new Error('Please sign in to upload.');
+    if (!PHOTO_TYPES.includes(file.type)) throw new Error('Choose a JPEG, PNG, or WebP picture.');
+    if (file.size > MAX_PHOTO_BYTES) throw new Error('Choose a picture up to 10 MB.');
+    setProgress(0);
+    if (
+      !pending.current ||
+      pending.current.file !== file ||
+      pending.current.visitId !== visitId ||
+      Date.now() - pending.current.createdAt > 14 * 60_000
+    ) {
+      const ticket = await reserve({ visitId, caption });
+      pending.current = { file, visitId, ticket, createdAt: Date.now() };
+    }
+    await upload(
+      file,
+      `${photoApi}/photos/upload?ticket=${pending.current.ticket}`,
+      token,
+      setProgress,
+    );
+    pending.current = null;
+  }
+  return { send, progress };
+}
+
 export function PhotoSection({
   visitId,
   photos,
   userId,
-  ownerId,
+  isAdmin,
 }: {
   visitId: Id<'visits'>;
   photos: Omit<Doc<'photos'>, 'storageId'>[];
   userId: Id<'users'>;
-  ownerId: Id<'users'>;
+  isAdmin: boolean;
 }) {
-  const token = useAuthToken();
-  const reserve = useMutation(api.photos.reserve);
-  const cancel = useMutation(api.photos.cancel);
+  const photoUpload = usePhotoUpload();
   const remove = useMutation(api.photos.remove);
   const updateCaption = useMutation(api.photos.updateCaption);
   const [adding, setAdding] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [caption, setCaption] = useState('');
   const [preview, setPreview] = useState('');
-  const [progress, setProgress] = useState(0);
+  const progress = photoUpload.progress;
   const [viewing, setViewing] = useState<Id<'photos'> | null>(null);
   const [deleting, setDeleting] = useState<Id<'photos'> | null>(null);
   const [editCaption, setEditCaption] = useState(false);
@@ -120,43 +155,24 @@ export function PhotoSection({
     [preview],
   );
   async function send() {
-    if (!file || !token) throw new Error('Select a photo and sign in to upload.');
-    if (!PHOTO_TYPES.includes(file.type))
-      throw new Error(
-        'Please choose a JPEG, PNG, or WebP image. HEIC images need to be exported as JPEG first.',
-      );
-    if (file.size > MAX_PHOTO_BYTES)
-      throw new Error('This photo is too large. Choose an image up to 10 MB.');
-    setProgress(0);
-    const ticket = await reserve({ visitId, caption });
-    try {
-      await upload(
-        file,
-        `${import.meta.env.VITE_CONVEX_SITE_URL}/photos/upload?ticket=${ticket}`,
-        token,
-        setProgress,
-      );
-      setAdding(false);
-      setFile(null);
-      setPreview('');
-      setCaption('');
-      notice('A little moment, saved.');
-    } catch (error) {
-      await cancel({ uploadId: ticket }).catch(() => {});
-      throw error;
-    }
+    if (!file) throw new Error('Select a photo to upload.');
+    await photoUpload.send(visitId, file, caption);
+    setAdding(false);
+    setFile(null);
+    setPreview('');
+    setCaption('');
+    notice('Picture saved.');
   }
   return (
     <section className="photo-section">
       <div className="section-heading">
         <div>
           <h2>
-            A few snapshots{' '}
+            Photos{' '}
             <span className="count">
               {photos.length}/{MAX_PHOTOS}
             </span>
           </h2>
-          <p className="muted small">The little details you’ll want to remember.</p>
         </div>
         <button
           className="button secondary"
@@ -185,13 +201,12 @@ export function PhotoSection({
       ) : (
         <button className="photo-empty" onClick={() => setAdding(true)}>
           <Camera size={29} />
-          <strong>A picture brings it all back.</strong>
-          <span>Add your first photo · JPEG, PNG or WebP</span>
+          <strong>Add your first photo</strong>
         </button>
       )}
       {adding && (
         <Modal
-          title="Save a little snapshot"
+          title="Add photo"
           onClose={() => {
             if (!task.busy) setAdding(false);
           }}
@@ -271,7 +286,7 @@ export function PhotoSection({
               Next
             </button>
           </div>
-          {(current.uploaderId === userId || ownerId === userId) && (
+          {(current.uploaderId === userId || isAdmin) && (
             <>
               <div className="form-actions">
                 <button

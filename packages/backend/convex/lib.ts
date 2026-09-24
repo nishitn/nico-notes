@@ -2,7 +2,7 @@ import { getAuthUserId } from '@convex-dev/auth/server';
 import { customCtx, customMutation, customQuery } from 'convex-helpers/server/customFunctions';
 import { ConvexError, v } from 'convex/values';
 import { query, mutation, type QueryCtx } from './_generated/server';
-import type { Id } from './_generated/dataModel';
+import type { Doc, Id } from './_generated/dataModel';
 
 export async function requireUser(ctx: Pick<QueryCtx, 'auth'>) {
   const userId = await getAuthUserId(ctx);
@@ -18,6 +18,10 @@ const authenticated = customCtx(async (ctx: QueryCtx) => {
 export const authedQuery = customQuery(query, authenticated);
 export const authedMutation = customMutation(mutation, authenticated);
 
+export function membershipRole(board: Doc<'boards'>, membership: Doc<'memberships'>) {
+  return membership.role ?? (membership.userId === board.ownerId ? 'admin' : 'member');
+}
+
 export async function member(ctx: QueryCtx, boardId: Id<'boards'>) {
   const userId = await requireUser(ctx);
   const board = await ctx.db.get(boardId);
@@ -27,12 +31,11 @@ export async function member(ctx: QueryCtx, boardId: Id<'boards'>) {
     .unique();
   if (!board || board.deleting || !membership)
     throw new ConvexError('This board is unavailable or you no longer have access.');
-  return { board, userId };
+  return { board, userId, isAdmin: membershipRole(board, membership) === 'admin' };
 }
-export async function owner(ctx: QueryCtx, boardId: Id<'boards'>) {
+export async function admin(ctx: QueryCtx, boardId: Id<'boards'>) {
   const result = await member(ctx, boardId);
-  if (result.board.ownerId !== result.userId)
-    throw new ConvexError('Only the board owner can do that.');
+  if (!result.isAdmin) throw new ConvexError('Only a board admin can do that.');
   return result;
 }
 export async function visitAccess(ctx: QueryCtx, visitId: Id<'visits'>) {

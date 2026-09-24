@@ -1,10 +1,18 @@
 import { paginationOptsValidator } from 'convex/server';
 import { ConvexError, v } from 'convex/values';
-import type { QueryCtx } from './_generated/server';
-import type { Doc } from './_generated/dataModel';
+import type { MutationCtx, QueryCtx } from './_generated/server';
+import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
-import schema, { accent } from './schema';
-import { authedMutation, authedQuery, member, owner, person, personValidator } from './lib';
+import schema, { accent, memberRole } from './schema';
+import {
+  authedMutation,
+  authedQuery,
+  member,
+  admin,
+  membershipRole,
+  person,
+  personValidator,
+} from './lib';
 import { INVITE_LIFETIME, MAX_MEMBERS, textValue } from '../shared';
 
 const inviteWords = `
@@ -119,18 +127,25 @@ export const get = authedQuery({
   args: { boardId: v.id('boards') },
   returns: v.object({
     board: schema.doc('boards'),
-    members: v.array(personValidator),
+    members: v.array(v.object({ ...personValidator.fields, role: memberRole })),
+    isAdmin: v.boolean(),
     types: v.array(schema.doc('visitTypes')),
   }),
   handler: async (ctx, { boardId }) => {
-    const { board } = await member(ctx, boardId);
+    const { board, isAdmin } = await member(ctx, boardId);
     const memberships = await ctx.db
       .query('memberships')
       .withIndex('by_boardId', (q) => q.eq('boardId', boardId))
       .take(MAX_MEMBERS);
     return {
       board,
-      members: await Promise.all(memberships.map((m) => person(ctx, m.userId))),
+      isAdmin,
+      members: await Promise.all(
+        memberships.map(async (m) => ({
+          ...(await person(ctx, m.userId)),
+          role: membershipRole(board, m),
+        })),
+      ),
       types: await ctx.db
         .query('visitTypes')
         .withIndex('by_boardId', (q) => q.eq('boardId', boardId))
@@ -151,7 +166,7 @@ export const create = authedMutation({
       deleting: false,
       inviteCode,
     });
-    await ctx.db.insert('memberships', { boardId, userId: ctx.userId });
+    await ctx.db.insert('memberships', { boardId, userId: ctx.userId, role: 'admin' });
     await ctx.db.insert('visitTypes', {
       boardId,
       name: 'Food',
@@ -171,7 +186,7 @@ export const update = authedMutation({
   args: { boardId: v.id('boards'), name: v.string(), description: v.string(), accent },
   returns: v.null(),
   handler: async (ctx, { boardId, ...fields }) => {
-    await owner(ctx, boardId);
+    await admin(ctx, boardId);
     await ctx.db.patch(boardId, {
       ...fields,
       name: textValue(fields.name, 'Board name', 80),
@@ -195,25 +210,55 @@ export const regenerateInviteCode = authedMutation({
   args: { boardId: v.id('boards') },
   returns: v.string(),
   handler: async (ctx, { boardId }) => {
-    await owner(ctx, boardId);
+    await admin(ctx, boardId);
     const code = await uniqueInviteCode(ctx);
     await ctx.db.patch(boardId, { inviteCode: code });
     return code;
   },
 });
+async function keepAdmin(ctx: QueryCtx, board: Doc<'boards'>, membership: Doc<'memberships'>) {
+  if (membershipRole(board, membership) !== 'admin') return;
+  const memberships = await ctx.db
+    .query('memberships')
+    .withIndex('by_boardId', (q) => q.eq('boardId', board._id))
+    .take(MAX_MEMBERS);
+  if (!memberships.some((m) => m._id !== membership._id && membershipRole(board, m) === 'admin'))
+    throw new ConvexError('Keep at least one admin on this board.');
+}
+
+export const setMemberRole = authedMutation({
+  args: { boardId: v.id('boards'), userId: v.id('users'), role: memberRole },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const { board } = await admin(ctx, args.boardId);
+    const membership = await ctx.db
+      .query('memberships')
+      .withIndex('by_boardId_and_userId', (q) =>
+        q.eq('boardId', args.boardId).eq('userId', args.userId),
+      )
+      .unique();
+    if (!membership) throw new ConvexError('This person is no longer a board member.');
+    if (args.role === 'member') await keepAdmin(ctx, board, membership);
+    await ctx.db.patch(membership._id, { role: args.role });
+    return null;
+  },
+});
+
 export const removeMember = authedMutation({
   args: { boardId: v.id('boards'), userId: v.id('users') },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const { board } = await owner(ctx, args.boardId);
-    if (args.userId === board.ownerId) throw new ConvexError('The owner cannot be removed.');
+    const { board } = await admin(ctx, args.boardId);
     const m = await ctx.db
       .query('memberships')
       .withIndex('by_boardId_and_userId', (q) =>
         q.eq('boardId', args.boardId).eq('userId', args.userId),
       )
       .unique();
-    if (m) await ctx.db.delete(m._id);
+    if (m) {
+      await keepAdmin(ctx, board, m);
+      await ctx.db.delete(m._id);
+    }
     return null;
   },
 });
@@ -221,7 +266,7 @@ export const createInvitation = authedMutation({
   args: { boardId: v.id('boards') },
   returns: schema.doc('invitations'),
   handler: async (ctx, { boardId }) => {
-    const { board } = await owner(ctx, boardId);
+    const { board } = await member(ctx, boardId);
     if (!board.inviteCode) {
       await ctx.db.patch(boardId, { inviteCode: await uniqueInviteCode(ctx) });
     }
@@ -229,6 +274,9 @@ export const createInvitation = authedMutation({
       .query('invitations')
       .withIndex('by_boardId', (q) => q.eq('boardId', boardId))
       .take(20);
+    // Sharing a board's active link must not invalidate a link someone else sent.
+    const active = old.find((invite) => !invite.revoked && invite.expiresAt > Date.now());
+    if (active) return active;
     for (const invite of old) await ctx.db.delete(invite._id);
     const id = await ctx.db.insert('invitations', {
       boardId,
@@ -246,7 +294,7 @@ export const invitations = authedQuery({
   args: { boardId: v.id('boards') },
   returns: v.array(schema.doc('invitations')),
   handler: async (ctx, { boardId }) => {
-    await owner(ctx, boardId);
+    await member(ctx, boardId);
     return ctx.db
       .query('invitations')
       .withIndex('by_boardId', (q) => q.eq('boardId', boardId))
@@ -259,7 +307,7 @@ export const revokeInvitation = authedMutation({
   handler: async (ctx, { invitationId }) => {
     const invitation = await ctx.db.get(invitationId);
     if (!invitation) return null;
-    await owner(ctx, invitation.boardId);
+    await admin(ctx, invitation.boardId);
     await ctx.db.patch(invitationId, { revoked: true });
     return null;
   },
@@ -285,7 +333,7 @@ export const invitation = authedQuery({
     }
     if (!board || board.deleting)
       throw new ConvexError(
-        'This invitation has expired or been revoked. Ask the owner for a new link.',
+        'This invitation has expired or been revoked. Ask a board member for a new link.',
       );
     const m = await ctx.db
       .query('memberships')
@@ -307,30 +355,60 @@ export const invitation = authedQuery({
     };
   },
 });
+async function requestBoardAccess(
+  ctx: MutationCtx & { userId: Id<'users'> },
+  board: Doc<'boards'>,
+) {
+  const membership = await ctx.db
+    .query('memberships')
+    .withIndex('by_boardId_and_userId', (q) => q.eq('boardId', board._id).eq('userId', ctx.userId))
+    .unique();
+  if (membership) {
+    return { status: 'already_member' as const, boardId: board._id, boardName: board.name };
+  }
+
+  const existingRequest = await ctx.db
+    .query('joinRequests')
+    .withIndex('by_boardId_and_userId', (q) => q.eq('boardId', board._id).eq('userId', ctx.userId))
+    .first();
+  if (existingRequest?.status === 'pending') {
+    return { status: 'already_pending' as const, boardId: board._id, boardName: board.name };
+  }
+
+  const memberships = await ctx.db
+    .query('memberships')
+    .withIndex('by_boardId', (q) => q.eq('boardId', board._id))
+    .take(MAX_MEMBERS);
+  if (memberships.length >= MAX_MEMBERS) {
+    throw new ConvexError('This board has reached its 20-member limit.');
+  }
+
+  if (existingRequest) {
+    await ctx.db.patch(existingRequest._id, {
+      status: 'pending',
+      createdAt: Date.now(),
+      reviewedAt: undefined,
+      reviewedBy: undefined,
+    });
+  } else {
+    await ctx.db.insert('joinRequests', {
+      boardId: board._id,
+      userId: ctx.userId,
+      status: 'pending',
+      createdAt: Date.now(),
+    });
+  }
+  return { status: 'requested' as const, boardId: board._id, boardName: board.name };
+}
+
+// Keep older clients compatible without allowing them to bypass admin approval.
 export const acceptInvitation = authedMutation({
   args: { token: v.string() },
   returns: v.id('boards'),
   handler: async (ctx, { token }) => {
-    let board: Doc<'boards'> | null = null;
-    const invite = await ctx.db
-      .query('invitations')
-      .withIndex('by_token', (q) => q.eq('token', token))
-      .unique();
-    if (invite && !invite.revoked && invite.expiresAt > Date.now()) {
-      board = await ctx.db.get(invite.boardId);
-    } else {
-      board = await resolveBoardFromCode(ctx, token);
-    }
-    if (!board || board.deleting)
-      throw new ConvexError('This invitation has expired or been revoked.');
-    const memberships = await ctx.db
-      .query('memberships')
-      .withIndex('by_boardId', (q) => q.eq('boardId', board._id))
-      .take(MAX_MEMBERS);
-    if (memberships.some((m) => m.userId === ctx.userId)) return board._id;
-    if (memberships.length >= MAX_MEMBERS)
-      throw new ConvexError('This board has reached its 20-member limit.');
-    await ctx.db.insert('memberships', { boardId: board._id, userId: ctx.userId });
+    const board = await resolveBoardFromCode(ctx, token);
+    if (!board) throw new ConvexError('This invitation has expired or been revoked.');
+    await requestBoardAccess(ctx, board);
     return board._id;
   },
 });
@@ -347,60 +425,8 @@ export const requestToJoin = authedMutation({
   }),
   handler: async (ctx, { code }) => {
     const board = await resolveBoardFromCode(ctx, code);
-    if (!board || board.deleting) {
-      throw new ConvexError('Board not found. Please verify your invite code or link.');
-    }
-    if (board.ownerId === ctx.userId) {
-      throw new ConvexError('You are the owner of this board.');
-    }
-
-    const membership = await ctx.db
-      .query('memberships')
-      .withIndex('by_boardId_and_userId', (q) =>
-        q.eq('boardId', board._id).eq('userId', ctx.userId),
-      )
-      .unique();
-    if (membership) {
-      return { status: 'already_member' as const, boardId: board._id, boardName: board.name };
-    }
-
-    const existingRequest = await ctx.db
-      .query('joinRequests')
-      .withIndex('by_boardId_and_userId', (q) =>
-        q.eq('boardId', board._id).eq('userId', ctx.userId),
-      )
-      .first();
-
-    if (existingRequest) {
-      if (existingRequest.status === 'pending') {
-        return { status: 'already_pending' as const, boardId: board._id, boardName: board.name };
-      }
-      // Re-open if previously rejected
-      await ctx.db.patch(existingRequest._id, {
-        status: 'pending',
-        createdAt: Date.now(),
-        reviewedAt: undefined,
-        reviewedBy: undefined,
-      });
-      return { status: 'requested' as const, boardId: board._id, boardName: board.name };
-    }
-
-    const memberships = await ctx.db
-      .query('memberships')
-      .withIndex('by_boardId', (q) => q.eq('boardId', board._id))
-      .take(MAX_MEMBERS);
-    if (memberships.length >= MAX_MEMBERS) {
-      throw new ConvexError('This board has reached its 20-member limit.');
-    }
-
-    await ctx.db.insert('joinRequests', {
-      boardId: board._id,
-      userId: ctx.userId,
-      status: 'pending',
-      createdAt: Date.now(),
-    });
-
-    return { status: 'requested' as const, boardId: board._id, boardName: board.name };
+    if (!board) throw new ConvexError('Board not found. Please verify your invite code or link.');
+    return requestBoardAccess(ctx, board);
   },
 });
 export const pendingRequests = authedQuery({
@@ -416,7 +442,7 @@ export const pendingRequests = authedQuery({
     }),
   ),
   handler: async (ctx, { boardId }) => {
-    await owner(ctx, boardId);
+    await admin(ctx, boardId);
     const requests = await ctx.db
       .query('joinRequests')
       .withIndex('by_boardId_and_status', (q) => q.eq('boardId', boardId).eq('status', 'pending'))
@@ -443,7 +469,7 @@ export const acceptRequest = authedMutation({
   handler: async (ctx, { requestId }) => {
     const request = await ctx.db.get(requestId);
     if (!request) throw new ConvexError('Join request not found.');
-    await owner(ctx, request.boardId);
+    await admin(ctx, request.boardId);
 
     if (request.status === 'accepted') return null;
 
@@ -465,6 +491,7 @@ export const acceptRequest = authedMutation({
       await ctx.db.insert('memberships', {
         boardId: request.boardId,
         userId: request.userId,
+        role: 'member',
       });
     }
 
@@ -483,7 +510,7 @@ export const rejectRequest = authedMutation({
   handler: async (ctx, { requestId }) => {
     const request = await ctx.db.get(requestId);
     if (!request) throw new ConvexError('Join request not found.');
-    await owner(ctx, request.boardId);
+    await admin(ctx, request.boardId);
 
     await ctx.db.patch(requestId, {
       status: 'rejected',
@@ -531,7 +558,7 @@ export const remove = authedMutation({
   args: { boardId: v.id('boards') },
   returns: v.null(),
   handler: async (ctx, { boardId }) => {
-    await owner(ctx, boardId);
+    await admin(ctx, boardId);
     await ctx.db.patch(boardId, { deleting: true });
     await ctx.scheduler.runAfter(0, internal.cleanup.board, { boardId });
     return null;

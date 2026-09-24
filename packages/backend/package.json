@@ -13,7 +13,9 @@
     "deploy": "convex deploy",
     "codegen": "convex codegen",
     "typecheck": "tsc --noEmit -p convex/tsconfig.json",
-    "setup:auth": "node scripts/setup-auth.mjs"
+    "setup:auth": "node scripts/setup-auth.mjs",
+    "photos": "node --env-file=.env.local --env-file=.env.photos.local scripts/local-photos.mjs",
+    "setup:photos": "node scripts/setup-local-photos.mjs"
   },
   "dependencies": {
     "@auth/core": "^0.41.0",

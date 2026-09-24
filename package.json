@@ -11,7 +11,9 @@
     "test": "vp test run",
     "test:e2e": "playwright test",
     "format": "vp fmt",
-    "deploy:backend": "pnpm --filter @date-notes/backend deploy"
+    "deploy:backend": "pnpm --filter @date-notes/backend deploy",
+    "photos": "pnpm --filter @date-notes/backend photos",
+    "start": "node scripts/start-local.mjs"
   },
   "devDependencies": {
     "@playwright/test": "latest",

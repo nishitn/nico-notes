@@ -24,7 +24,7 @@ export function AccountPage() {
           <Heart size={27} />
         </div>
         <div className="account-details">
-          <Initials name={me.name} />
+          <Initials name={me.name} image={me.image} />
           <h2>{me.name}</h2>
           <span className="account-provider">
             <ShieldCheck size={15} /> Signed in with Google

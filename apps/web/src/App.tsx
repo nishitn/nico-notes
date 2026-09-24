@@ -229,7 +229,7 @@ function Shell() {
             </button>
           </div>
           <NavLink className="drawer-account" to="/account" onClick={() => setDrawerOpen(false)}>
-            <Initials name={me?.name ?? 'You'} />
+            <Initials name={me?.name ?? 'You'} image={me?.image} />
             <span>
               <strong>{me?.name ?? 'Your account'}</strong>
               <span>Account</span>

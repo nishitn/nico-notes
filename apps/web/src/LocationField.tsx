@@ -55,11 +55,32 @@ export function LocationField({
 
   return (
     <section className="location-field" aria-label="Visit place">
-      <PlacesMap
-        places={pins(value, title)}
-        selectedId={value ? 'visit' : undefined}
-        label="Visit location"
-      />
+      <div className="visit-location-picker">
+        <PlacesMap
+          places={pins(value, title)}
+          selectedId={value ? 'visit' : undefined}
+          label="Visit location"
+        />
+        <div className="visit-place-actions">
+          <button
+            type="button"
+            className="button secondary visit-map-edit"
+            onClick={() => {
+              setDraft({ title, place, location: value });
+              setQuery(title);
+              setCoordinates('');
+              setResults([]);
+              setSearched(false);
+              setSearching(false);
+              setError('');
+              setEditing(true);
+            }}
+          >
+            {value || place ? <Pencil size={15} /> : <MapPin size={15} />}
+            {value || place ? 'Edit place' : 'Choose place'}
+          </button>
+        </div>
+      </div>
       <div className="visit-place-summary">
         <div>
           <Field label="Visit name">
@@ -72,39 +93,20 @@ export function LocationField({
               onChange={(event) => onChange({ title: event.target.value, place, location: value })}
             />
           </Field>
-          <p className="muted small">
-            {place ||
-              (title
-                ? 'Add a location to remember the spot.'
-                : 'Choose a place from Google Maps to name your visit.')}
-          </p>
-        </div>
-        <div className="visit-place-actions">
-          <button
-            type="button"
-            className="button secondary"
-            onClick={() => {
-              setDraft({ title, place, location: value });
-              setQuery(title);
-              setCoordinates('');
-              setResults([]);
-              setSearched(false);
-              setSearching(false);
-              setError('');
-              setEditing(true);
-            }}
-          >
-            <Pencil size={15} /> {title ? 'Edit place' : 'Choose place'}
-          </button>
-          {value && (
-            <a
-              href={mapsLink({ title, place, location: value })}
-              target="_blank"
-              rel="noreferrer"
-              className="text-button small"
-            >
-              <Navigation size={14} /> Google Maps
-            </a>
+          {(place || value) && (
+            <div className="visit-place-caption">
+              {place && <p className="muted small">{place}</p>}
+              {value && (
+                <a
+                  href={mapsLink({ title, place, location: value })}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-button small"
+                >
+                  <Navigation size={14} /> Google Maps
+                </a>
+              )}
+            </div>
           )}
         </div>
       </div>

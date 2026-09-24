@@ -10,10 +10,20 @@ export const save = authedMutation({
     targetId: v.union(v.id('visits'), v.id('dishes'), v.id('categories')),
     score: v.union(v.number(), v.null()),
     note: v.string(),
+    userId: v.optional(v.id('users')),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    await visitAccess(ctx, args.visitId);
+    const { board, isAdmin } = await visitAccess(ctx, args.visitId);
+    const userId = args.userId ?? ctx.userId;
+    if (userId !== ctx.userId) {
+      if (!isAdmin) throw new ConvexError('Only a board admin can rate for another member.');
+      const membership = await ctx.db
+        .query('memberships')
+        .withIndex('by_boardId_and_userId', (q) => q.eq('boardId', board._id).eq('userId', userId))
+        .unique();
+      if (!membership) throw new ConvexError('This person is no longer a board member.');
+    }
     if (args.kind === 'overall') {
       if (args.targetId !== args.visitId) throw new ConvexError('Invalid overall rating target.');
     } else {
@@ -27,7 +37,7 @@ export const save = authedMutation({
       .withIndex('by_visitId_and_userId_and_kind_and_targetId', (q) =>
         q
           .eq('visitId', args.visitId)
-          .eq('userId', ctx.userId)
+          .eq('userId', userId)
           .eq('kind', args.kind)
           .eq('targetId', args.targetId),
       )
@@ -41,7 +51,7 @@ export const save = authedMutation({
       visitId: args.visitId,
       kind: args.kind,
       targetId: args.targetId,
-      userId: ctx.userId,
+      userId,
       score: args.score,
       note: args.note.trim().slice(0, 1000),
     };

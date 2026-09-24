@@ -1,7 +1,17 @@
 import { v } from 'convex/values';
 import { internalMutation, type MutationCtx } from './_generated/server';
 import { internal } from './_generated/api';
-import type { Id } from './_generated/dataModel';
+import type { Doc, Id } from './_generated/dataModel';
+
+export async function deletePhoto(ctx: MutationCtx, photo: Doc<'photos'>) {
+  if (photo.storageId) await ctx.storage.delete(photo.storageId);
+  if (photo.localKey)
+    await ctx.db.insert('localPhotoDeletions', {
+      key: photo.localKey,
+      contentType: photo.contentType,
+    });
+  await ctx.db.delete(photo._id);
+}
 
 export async function deleteVisit(ctx: MutationCtx, visitId: Id<'visits'>) {
   for (const table of ['ratings', 'dishes', 'categories', 'uploads'] as const) {
@@ -16,8 +26,7 @@ export async function deleteVisit(ctx: MutationCtx, visitId: Id<'visits'>) {
     .withIndex('by_visitId', (q) => q.eq('visitId', visitId))
     .take(10);
   for (const photo of photos) {
-    await ctx.storage.delete(photo.storageId);
-    await ctx.db.delete(photo._id);
+    await deletePhoto(ctx, photo);
   }
   if (await ctx.db.get(visitId)) await ctx.db.delete(visitId);
 }

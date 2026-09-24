@@ -24,6 +24,8 @@ async function setup() {
   });
   const invite = await alice.mutation(api.boards.createInvitation, { boardId });
   await bob.mutation(api.boards.acceptInvitation, { token: invite.token });
+  const [request] = await alice.query(api.boards.pendingRequests, { boardId });
+  await alice.mutation(api.boards.acceptRequest, { requestId: request._id });
   const visitId = await alice.mutation(api.visits.create, {
     boardId,
     title: 'Friday dinner',
@@ -68,12 +70,63 @@ describe('Private boards and invitations', () => {
     const { alice, bob, outsider, boardId, invite } = await setup();
     await bob.mutation(api.boards.acceptInvitation, { token: invite.token });
     expect((await alice.query(api.boards.get, { boardId })).members).toHaveLength(2);
-    await expect(bob.mutation(api.boards.createInvitation, { boardId })).rejects.toThrow(/owner/);
+    expect((await bob.mutation(api.boards.createInvitation, { boardId }))._id).toBe(invite._id);
+    await expect(
+      bob.mutation(api.boards.revokeInvitation, { invitationId: invite._id }),
+    ).rejects.toThrow(/admin/);
+    await expect(bob.mutation(api.boards.regenerateInviteCode, { boardId })).rejects.toThrow(
+      /admin/,
+    );
     await alice.mutation(api.boards.revokeInvitation, { invitationId: invite._id });
     await expect(
       outsider.mutation(api.boards.acceptInvitation, { token: invite.token }),
     ).rejects.toThrow(/revoked/);
     expect((await bob.query(api.boards.get, { boardId })).board.name).toBe('Food dates');
+  });
+  it('lets members create and share links while only owners approve access', async () => {
+    const { alice, bob, outsider, boardId, invite } = await setup();
+    await alice.mutation(api.boards.revokeInvitation, { invitationId: invite._id });
+    const memberInvite = await bob.mutation(api.boards.createInvitation, { boardId });
+    expect(memberInvite._id).not.toBe(invite._id);
+    expect((await bob.query(api.boards.invitations, { boardId })).map((i) => i._id)).toContain(
+      memberInvite._id,
+    );
+    expect((await alice.mutation(api.boards.createInvitation, { boardId }))._id).toBe(
+      memberInvite._id,
+    );
+    await expect(outsider.mutation(api.boards.createInvitation, { boardId })).rejects.toThrow(
+      /access/,
+    );
+    await expect(outsider.query(api.boards.invitations, { boardId })).rejects.toThrow(/access/);
+
+    const result = await outsider.mutation(api.boards.requestToJoin, {
+      code: `https://example.com/invite/${memberInvite.token}`,
+    });
+    expect(result.status).toBe('requested');
+    await expect(outsider.query(api.boards.get, { boardId })).rejects.toThrow(/access/);
+    const [pending] = await alice.query(api.boards.pendingRequests, { boardId });
+    await expect(
+      bob.mutation(api.boards.acceptRequest, { requestId: pending._id }),
+    ).rejects.toThrow(/admin/);
+    await expect(
+      bob.mutation(api.boards.rejectRequest, { requestId: pending._id }),
+    ).rejects.toThrow(/admin/);
+    await alice.mutation(api.boards.rejectRequest, { requestId: pending._id });
+    expect(
+      (await outsider.query(api.boards.invitation, { token: memberInvite.token })).requestStatus,
+    ).toBe('rejected');
+
+    // The legacy endpoint must also request access instead of bypassing approval.
+    await outsider.mutation(api.boards.acceptInvitation, { token: memberInvite.token });
+    await expect(outsider.query(api.boards.get, { boardId })).rejects.toThrow(/access/);
+    expect(
+      (await outsider.mutation(api.boards.requestToJoin, { code: memberInvite.token })).status,
+    ).toBe('already_pending');
+    const reopened = await alice.query(api.boards.pendingRequests, { boardId });
+    expect(reopened).toHaveLength(1);
+    expect(reopened[0]._id).toBe(pending._id);
+    await alice.mutation(api.boards.acceptRequest, { requestId: pending._id });
+    expect((await outsider.query(api.boards.get, { boardId })).members).toHaveLength(3);
   });
   it('rejects expired invites and does not silently join on preview', async () => {
     const { t, alice, outsider, boardId } = await setup();
@@ -115,7 +168,7 @@ describe('Private boards and invitations', () => {
     expect(duplicate.status).toBe('already_pending');
 
     // Non-owner cannot view pending requests
-    await expect(bob.query(api.boards.pendingRequests, { boardId })).rejects.toThrow(/owner/);
+    await expect(bob.query(api.boards.pendingRequests, { boardId })).rejects.toThrow(/admin/);
 
     // Alice (owner) sees the pending request
     const pending = await alice.query(api.boards.pendingRequests, { boardId });
@@ -166,13 +219,15 @@ describe('Private boards and invitations', () => {
     });
     await alice.mutation(api.boards.removeMember, { boardId, userId: ids.bob });
     await expect(bob.query(api.visits.get, { visitId })).rejects.toThrow(/access/);
+    await expect(bob.mutation(api.boards.createInvitation, { boardId })).rejects.toThrow(/access/);
+    await expect(bob.query(api.boards.invitations, { boardId })).rejects.toThrow(/access/);
     await expect(bob.mutation(api.photos.reserve, { visitId, caption: '' })).rejects.toThrow(
       /access/,
     );
     expect((await alice.query(api.visits.get, { visitId })).ratings).toHaveLength(1);
     await expect(
       alice.mutation(api.boards.removeMember, { boardId, userId: ids.alice }),
-    ).rejects.toThrow(/owner/);
+    ).rejects.toThrow(/admin/);
   });
   it('paginates boards and sorts visits by their actual date', async () => {
     const { alice, boardId } = await setup();
@@ -238,17 +293,17 @@ describe('Per-person, per-visit ratings', () => {
       }),
     ).rejects.toThrow(/half-point/);
   });
-  it('rejects attempts to specify another author', async () => {
-    const { alice, visitId, dishId, ids } = await setup();
+  it('rejects member attempts to specify another author', async () => {
+    const { bob, visitId, dishId, ids } = await setup();
     const forged = {
       visitId,
       kind: 'dish' as const,
       targetId: dishId,
       score: 9,
       note: '',
-      userId: ids.bob,
+      userId: ids.alice,
     };
-    await expect(alice.mutation(api.ratings.save, forged)).rejects.toThrow();
+    await expect(bob.mutation(api.ratings.save, forged)).rejects.toThrow(/admin/);
   });
   it('keeps restaurant revisits independent and does not invent an overall score', async () => {
     const { alice, boardId, visitId, dishId } = await setup();
@@ -372,7 +427,7 @@ describe('Private photos and cleanup', () => {
     expect((await bob.fetch(`/photos/file?id=${photoId}`)).status).toBe(200);
     const detail = await alice.query(api.visits.get, { visitId });
     expect(detail.photos[0]).not.toHaveProperty('storageId');
-    await expect(bob.mutation(api.photos.remove, { photoId })).rejects.toThrow(/uploader or owner/);
+    await expect(bob.mutation(api.photos.remove, { photoId })).rejects.toThrow(/uploader or admin/);
     await alice.mutation(api.photos.remove, { photoId });
     expect((await alice.fetch(`/photos/file?id=${photoId}`)).status).toBe(403);
   });
@@ -421,7 +476,7 @@ describe('Private photos and cleanup', () => {
   it('removes stored files and ratings when a visit is deleted', async () => {
     const { t, alice, bob, visitId, dishId } = await setup();
     await expect(bob.mutation(api.visits.remove, { visitId })).rejects.toThrow(
-      /creator or board owner/,
+      /creator or board admin/,
     );
     const uploadId = await alice.mutation(api.photos.reserve, { visitId, caption: '' });
     const storageId = await t.run((ctx) =>
@@ -527,5 +582,269 @@ describe('Map and note imports', () => {
     expect((await alice.query(api.visits.get, { visitId })).visit.location?.latitude).toBe(12.95);
     await alice.mutation(api.visits.update, { ...update, location: null });
     expect((await alice.query(api.visits.get, { visitId })).visit.location).toBeUndefined();
+  });
+});
+
+describe('Board admins', () => {
+  it('keeps legacy owners as admins and prevents removing the last admin', async () => {
+    const { t, alice, boardId, ids } = await setup();
+    await t.run(async (ctx) => {
+      const membership = await ctx.db
+        .query('memberships')
+        .withIndex('by_boardId_and_userId', (q) => q.eq('boardId', boardId).eq('userId', ids.alice))
+        .unique();
+      await ctx.db.patch(membership!._id, { role: undefined });
+    });
+    const detail = await alice.query(api.boards.get, { boardId });
+    expect(detail.isAdmin).toBe(true);
+    expect(detail.members.find((p) => p._id === ids.alice)?.role).toBe('admin');
+    await expect(
+      alice.mutation(api.boards.setMemberRole, { boardId, userId: ids.alice, role: 'member' }),
+    ).rejects.toThrow(/at least one admin/);
+    await expect(
+      alice.mutation(api.boards.removeMember, { boardId, userId: ids.alice }),
+    ).rejects.toThrow(/at least one admin/);
+  });
+
+  it('allows promotion and admin approvals, and revokes privileges on demotion', async () => {
+    const { alice, bob, outsider, boardId, invite, ids } = await setup();
+    await expect(
+      bob.mutation(api.boards.setMemberRole, { boardId, userId: ids.bob, role: 'admin' }),
+    ).rejects.toThrow(/admin/);
+    await expect(
+      outsider.mutation(api.boards.setMemberRole, { boardId, userId: ids.outsider, role: 'admin' }),
+    ).rejects.toThrow(/access/);
+    await expect(
+      alice.mutation(api.boards.setMemberRole, { boardId, userId: ids.outsider, role: 'admin' }),
+    ).rejects.toThrow(/no longer a board member/);
+    await alice.mutation(api.boards.setMemberRole, { boardId, userId: ids.bob, role: 'admin' });
+    expect((await bob.query(api.boards.get, { boardId })).isAdmin).toBe(true);
+    await outsider.mutation(api.boards.requestToJoin, { code: invite.token });
+    const [request] = await bob.query(api.boards.pendingRequests, { boardId });
+    await bob.mutation(api.boards.acceptRequest, { requestId: request._id });
+    await bob.mutation(api.boards.update, {
+      boardId,
+      name: 'Our board',
+      description: '',
+      accent: 'coral',
+    });
+    await bob.mutation(api.boards.setMemberRole, { boardId, userId: ids.alice, role: 'member' });
+    expect((await alice.query(api.boards.get, { boardId })).isAdmin).toBe(false);
+    await expect(alice.mutation(api.boards.regenerateInviteCode, { boardId })).rejects.toThrow(
+      /admin/,
+    );
+    await bob.mutation(api.boards.removeMember, { boardId, userId: ids.alice });
+    await alice.mutation(api.boards.requestToJoin, { code: invite.token });
+    const [rejoin] = await bob.query(api.boards.pendingRequests, { boardId });
+    await bob.mutation(api.boards.acceptRequest, { requestId: rejoin._id });
+    expect((await alice.query(api.boards.get, { boardId })).isAdmin).toBe(false);
+  });
+
+  it('lets admins create, update and clear member ratings with member and target checks', async () => {
+    const { alice, bob, boardId, visitId, ids } = await setup();
+    await alice.mutation(api.boards.setMemberRole, { boardId, userId: ids.bob, role: 'admin' });
+    const categoryId = await bob.mutation(api.items.saveCategory, { visitId, name: 'Ambience' });
+    const target = { visitId, targetId: categoryId, kind: 'category' as const, note: 'Cozy' };
+    const initial = await bob.query(api.visits.get, { visitId });
+    expect(initial.members.map((m) => m._id)).toContain(ids.alice);
+    expect(initial.isAdmin).toBe(true);
+    await bob.mutation(api.ratings.save, { ...target, userId: ids.alice, score: 8 });
+    await bob.mutation(api.ratings.save, { ...target, score: 6 });
+    await alice.mutation(api.ratings.save, { ...target, score: 9 });
+    let ratings = (await bob.query(api.visits.get, { visitId })).ratings;
+    expect(ratings.find((r) => r.userId === ids.alice)?.score).toBe(9);
+    expect(ratings.find((r) => r.userId === ids.bob)?.score).toBe(6);
+    await expect(
+      bob.mutation(api.ratings.save, { ...target, userId: ids.outsider, score: 8 }),
+    ).rejects.toThrow(/no longer a board member/);
+    await expect(
+      bob.mutation(api.ratings.save, { ...target, userId: ids.alice, score: 8.25 }),
+    ).rejects.toThrow(/half-point/);
+    const otherVisit = await alice.mutation(api.visits.create, {
+      boardId,
+      title: 'Other',
+      date: '2026-09-25',
+      place: '',
+      notes: '',
+      showDishes: false,
+    });
+    await expect(
+      bob.mutation(api.ratings.save, {
+        ...target,
+        visitId: otherVisit,
+        userId: ids.alice,
+        score: 8,
+      }),
+    ).rejects.toThrow(/does not belong/);
+    await bob.mutation(api.ratings.save, { ...target, userId: ids.alice, score: null });
+    ratings = (await bob.query(api.visits.get, { visitId })).ratings;
+    expect(ratings.map((r) => r.userId)).toEqual([ids.bob]);
+    await alice.mutation(api.boards.setMemberRole, { boardId, userId: ids.bob, role: 'member' });
+    await expect(
+      bob.mutation(api.ratings.save, { ...target, userId: ids.alice, score: 7 }),
+    ).rejects.toThrow(/admin/);
+    await alice.mutation(api.boards.removeMember, { boardId, userId: ids.bob });
+    await expect(
+      alice.mutation(api.ratings.save, { ...target, userId: ids.bob, score: 7 }),
+    ).rejects.toThrow(/no longer a board member/);
+    await expect(bob.mutation(api.ratings.save, { ...target, score: 7 })).rejects.toThrow(/access/);
+  });
+});
+
+describe('Ratings during visit creation', () => {
+  it('saves categories, dishes and separate member scores in one visit', async () => {
+    const { alice, bob, boardId, ids } = await setup();
+    const visitId = await alice.mutation(api.visits.create, {
+      boardId,
+      title: 'Coffee and cake',
+      date: '2026-09-25',
+      place: '',
+      notes: '',
+      showDishes: false,
+      categories: ['Ambience', 'Value'],
+      dishes: ['Flat white', 'Cake'],
+      initialScores: [
+        { userId: ids.alice, overall: 8, categories: [8.5, null], dishes: [9, null] },
+        { userId: ids.bob, overall: null, categories: [7, 8], dishes: [null, 9.5] },
+      ],
+    });
+    const result = await bob.query(api.visits.get, { visitId });
+    expect(result.visit.showDishes).toBe(true);
+    expect(result.categories.map((category) => category.name)).toEqual(['Ambience', 'Value']);
+    expect(result.dishes.map((dish) => dish.name)).toEqual(['Flat white', 'Cake']);
+    expect(result.ratings).toHaveLength(6);
+    expect(
+      result.ratings.find(
+        (r) =>
+          r.kind === 'category' &&
+          r.targetId === result.categories[0]._id &&
+          r.userId === ids.alice,
+      )?.score,
+    ).toBe(8.5);
+    expect(
+      result.ratings.find(
+        (r) => r.kind === 'dish' && r.targetId === result.dishes[1]._id && r.userId === ids.bob,
+      )?.score,
+    ).toBe(9.5);
+    expect(result.ratings.filter((r) => r.kind === 'overall').map((r) => r.userId)).toEqual([
+      ids.alice,
+    ]);
+  });
+
+  it('enforces admin and membership permissions when creating ratings', async () => {
+    const { alice, bob, boardId, ids } = await setup();
+    const args = {
+      boardId,
+      title: 'A visit',
+      date: '',
+      place: '',
+      notes: '',
+      showDishes: false,
+      categories: ['View'],
+      dishes: [],
+    };
+    const scores = { overall: null, categories: [8], dishes: [] };
+    await expect(
+      bob.mutation(api.visits.create, {
+        ...args,
+        initialScores: [{ ...scores, userId: ids.alice }],
+      }),
+    ).rejects.toThrow(/admin/);
+    await expect(
+      alice.mutation(api.visits.create, {
+        ...args,
+        initialScores: [{ ...scores, userId: ids.outsider }],
+      }),
+    ).rejects.toThrow(/no longer a board member/);
+    const visitId = await bob.mutation(api.visits.create, {
+      ...args,
+      initialScores: [{ ...scores, userId: ids.bob }],
+    });
+    expect((await bob.query(api.visits.get, { visitId })).ratings[0].userId).toBe(ids.bob);
+  });
+
+  it('rejects invalid or mismatched scores without creating a partial visit', async () => {
+    const { alice, boardId, ids } = await setup();
+    const args = {
+      boardId,
+      title: 'Invalid visit',
+      date: '',
+      place: '',
+      notes: '',
+      showDishes: true,
+      categories: ['Value'],
+      dishes: ['Cake'],
+    };
+    const entry = { userId: ids.alice, overall: null, categories: [7], dishes: [8] };
+    const listArgs = { boardId, paginationOpts: { numItems: 20, cursor: null } };
+    const before = await alice.query(api.visits.list, listArgs);
+    await expect(
+      alice.mutation(api.visits.create, { ...args, initialScores: [{ ...entry, dishes: [10.5] }] }),
+    ).rejects.toThrow(/half-point/);
+    await expect(
+      alice.mutation(api.visits.create, { ...args, initialScores: [{ ...entry, categories: [] }] }),
+    ).rejects.toThrow(/Match scores/);
+    await expect(
+      alice.mutation(api.visits.create, { ...args, initialScores: [entry, entry] }),
+    ).rejects.toThrow(/once per member/);
+    expect((await alice.query(api.visits.list, listArgs)).page.map((visit) => visit._id)).toEqual(
+      before.page.map((visit) => visit._id),
+    );
+  });
+});
+
+describe('Mac mini photo metadata', () => {
+  afterEach(() => vi.unstubAllEnvs());
+  it('requires both the uploader and local service, supports retries, and hides disk keys from visit data', async () => {
+    vi.stubEnv('LOCAL_PHOTO_SECRET', 'test-local-secret');
+    const { alice, bob, outsider, visitId } = await setup();
+    const uploadId = await alice.mutation(api.photos.reserve, { visitId, caption: 'Our table' });
+    await expect(bob.query(api.photos.localUpload, { uploadId })).rejects.toThrow(/another person/);
+    await expect(outsider.query(api.photos.localUpload, { uploadId })).rejects.toThrow(/access/);
+    expect(await alice.query(api.photos.localUpload, { uploadId })).toBeNull();
+    const args = { uploadId, contentType: 'image/png' as const, secret: 'test-local-secret' };
+    await expect(
+      alice.mutation(api.photos.finishLocalUpload, { ...args, secret: 'wrong' }),
+    ).rejects.toThrow(/not authorized/);
+    await expect(bob.mutation(api.photos.finishLocalUpload, args)).rejects.toThrow(
+      /another person/,
+    );
+    const photoId = await alice.mutation(api.photos.finishLocalUpload, args);
+    expect(await alice.mutation(api.photos.finishLocalUpload, args)).toBe(photoId);
+    expect(await alice.query(api.photos.localUpload, { uploadId })).toBe(photoId);
+    const data = await bob.query(api.visits.get, { visitId });
+    expect(data.photos).toHaveLength(1);
+    expect(data.photos[0]).not.toHaveProperty('localKey');
+    expect((await bob.query(api.photos.localFile, { photoId }))?.key).toBe(uploadId);
+    await expect(outsider.query(api.photos.localFile, { photoId })).rejects.toThrow(/access/);
+    await alice.mutation(api.photos.remove, { photoId });
+    await expect(alice.query(api.photos.localDeletions, { secret: 'wrong' })).rejects.toThrow(
+      /not authorized/,
+    );
+    const jobs = await alice.query(api.photos.localDeletions, { secret: 'test-local-secret' });
+    expect(jobs.map((job) => job.key)).toEqual([uploadId]);
+    await alice.mutation(api.photos.finishLocalDeletions, {
+      secret: 'test-local-secret',
+      ids: jobs.map((job) => job._id),
+    });
+    expect(await alice.query(api.photos.localDeletions, { secret: 'test-local-secret' })).toEqual(
+      [],
+    );
+  });
+  it('queues local files for removal when their visit is deleted', async () => {
+    vi.stubEnv('LOCAL_PHOTO_SECRET', 'test-local-secret');
+    const { alice, visitId } = await setup();
+    const uploadId = await alice.mutation(api.photos.reserve, { visitId, caption: '' });
+    await alice.mutation(api.photos.finishLocalUpload, {
+      uploadId,
+      contentType: 'image/jpeg',
+      secret: 'test-local-secret',
+    });
+    await alice.mutation(api.visits.remove, { visitId });
+    expect(
+      (await alice.query(api.photos.localDeletions, { secret: 'test-local-secret' })).map(
+        (job) => job.key,
+      ),
+    ).toEqual([uploadId]);
   });
 });

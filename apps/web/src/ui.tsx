@@ -222,8 +222,10 @@ export function Confirm({
   children,
   onConfirm,
   onClose,
+  confirmLabel = 'Yes, remove',
 }: {
   title: string;
+  confirmLabel?: string;
   children: ReactNode;
   onConfirm: () => Promise<unknown>;
   onClose: () => void;
@@ -231,6 +233,7 @@ export function Confirm({
   const task = useTask();
   return (
     <Modal
+      className="confirm-modal"
       title={title}
       onClose={() => {
         if (!task.busy) onClose();
@@ -249,13 +252,33 @@ export function Confirm({
             if (await task.run(onConfirm)) onClose();
           }}
         >
-          {task.busy ? 'Removing…' : 'Yes, remove'}
+          {task.busy ? 'Removing…' : confirmLabel}
         </button>
       </div>
     </Modal>
   );
 }
-export function Initials({ name, small = false }: { name: string; small?: boolean }) {
+export function Initials({
+  name,
+  image,
+  small = false,
+}: {
+  name: string;
+  image?: string;
+  small?: boolean;
+}) {
+  const [failedImage, setFailedImage] = useState<string>();
+  if (image && image !== failedImage) {
+    return (
+      <img
+        className={`avatar ${small ? 'small' : ''}`}
+        src={image}
+        alt={name}
+        referrerPolicy="no-referrer"
+        onError={() => setFailedImage(image)}
+      />
+    );
+  }
   return (
     <span className={`avatar ${small ? 'small' : ''}`} title={name}>
       {name
