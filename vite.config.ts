@@ -7,7 +7,7 @@ export default defineConfig({
   },
   fmt: { ignorePatterns: ['**/_generated/**', 'pnpm-lock.yaml'], singleQuote: true },
   test: {
-    include: ['packages/**/*.test.ts'],
+    include: ['packages/**/*.test.ts', 'apps/**/*.test.ts'],
     server: { deps: { inline: ['convex-test'] } },
   },
 });

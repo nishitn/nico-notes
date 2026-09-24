@@ -1,24 +1,24 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, usePaginatedQuery, useQuery } from 'convex/react';
 import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowRight, Heart, MapPin, Mountain, Search, Utensils, X } from 'lucide-react';
+import {
+  ArrowRight,
+  Clock,
+  Heart,
+  MapPin,
+  Mountain,
+  Plus,
+  Search,
+  UserPlus,
+  Utensils,
+  X,
+} from 'lucide-react';
 import { api } from '@date-notes/backend/api';
 import type { Doc, Id } from '@date-notes/backend/dataModel';
 import { Artwork } from './Artwork';
 import { BoardDashboard, VisitCard, type DesignVariant } from './BoardDashboard';
 import { PlacesMap } from './PlacesMap';
-import {
-  Back,
-  Empty,
-  ErrorNote,
-  Field,
-  Form,
-  Modal,
-  Spinner,
-  Submit,
-  useNotice,
-  useTask,
-} from './ui';
+import { Back, ErrorNote, Field, Form, Modal, Spinner, Submit, useNotice, useTask } from './ui';
 
 export function BoardForm({ onClose }: { onClose: () => void }) {
   const create = useMutation(api.boards.create);
@@ -88,6 +88,56 @@ export function BoardForm({ onClose }: { onClose: () => void }) {
     </Modal>
   );
 }
+export function JoinBoardModal({ onClose }: { onClose: () => void }) {
+  const requestToJoin = useMutation(api.boards.requestToJoin);
+  const navigate = useNavigate();
+  const task = useTask();
+  const notice = useNotice();
+  const [code, setCode] = useState('');
+
+  return (
+    <Modal title="Join a board" onClose={onClose}>
+      <Form
+        onSubmit={() =>
+          task.run(async () => {
+            const res = await requestToJoin({ code });
+            if (res.status === 'already_member') {
+              notice(`You are already a member of "${res.boardName}".`);
+              onClose();
+              navigate(`/boards/${res.boardId}`);
+            } else if (res.status === 'already_pending') {
+              notice(`You already have a pending join request for "${res.boardName}".`);
+              onClose();
+            } else {
+              notice(`Join request sent to the owner of "${res.boardName}"!`);
+              onClose();
+            }
+          })
+        }
+      >
+        <Field
+          label="Board invite code or link"
+          hint="Ask the board owner for their invite code or invitation link."
+        >
+          <input
+            required
+            autoFocus
+            placeholder="e.g. MINT-ROSE-MOON"
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+          />
+        </Field>
+        <ErrorNote text={task.error} />
+        <div className="form-actions">
+          <button type="button" className="button secondary" onClick={onClose}>
+            Cancel
+          </button>
+          <Submit busy={task.busy}>Request to join</Submit>
+        </div>
+      </Form>
+    </Modal>
+  );
+}
 function lastBoardKey(userId: string) {
   return `date-notes:last-board:${userId}`;
 }
@@ -128,16 +178,71 @@ export function BoardsPage() {
     {},
     { initialNumItems: 24 },
   );
+  const outgoingRequests = useQuery(api.boards.myOutgoingRequests) ?? [];
+  const [creating, setCreating] = useState(false);
+  const [joining, setJoining] = useState(false);
+
   return (
-    <div className="page">
-      <Back to="/">Home</Back>
+    <div className="page boards-page">
       <div className="page-heading">
-        <h1>Boards</h1>
+        <div>
+          <h1>Boards</h1>
+        </div>
+        {results.length > 0 && (
+          <div className="heading-actions">
+            <button className="button secondary" onClick={() => setJoining(true)}>
+              <UserPlus size={16} /> Join board
+            </button>
+            <button className="button primary" onClick={() => setCreating(true)}>
+              <Plus size={16} /> Add board
+            </button>
+          </div>
+        )}
       </div>
+
+      {outgoingRequests.length > 0 && (
+        <section className="pending-requests-section">
+          <div className="section-title-row">
+            <Clock size={17} />
+            <h2>Pending requests ({outgoingRequests.length})</h2>
+          </div>
+          <div className="pending-requests-grid">
+            {outgoingRequests.map((req) => (
+              <div key={req._id} className="pending-request-card">
+                <div className="pending-request-header">
+                  <strong>{req.boardName}</strong>
+                  <span className="pending-pill">Awaiting owner approval</span>
+                </div>
+                <p className="small muted">
+                  Requested {new Date(req.createdAt).toLocaleDateString()} · Waiting for board owner
+                  to accept
+                </p>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       {status === 'LoadingFirstPage' ? (
         <Spinner />
       ) : results.length === 0 ? (
-        <Empty title="No boards yet">Open the menu and choose New board to get started.</Empty>
+        <div className="empty boards-empty">
+          <div className="empty-keepsake" aria-hidden="true">
+            <Artwork variant="notes" />
+            <span className="keepsake-spark">✧</span>
+            <Heart className="keepsake-heart" size={23} />
+          </div>
+          <h2>No boards yet</h2>
+          <p>Create a board or join one with an invite code.</p>
+          <div className="empty-actions">
+            <button className="button primary" onClick={() => setCreating(true)}>
+              <Plus size={18} /> Create a board
+            </button>
+            <button className="text-button" onClick={() => setJoining(true)}>
+              <UserPlus size={16} /> Have an invite code?
+            </button>
+          </div>
+        </div>
       ) : (
         <div className="board-grid">
           {results.map((board) => (
@@ -179,6 +284,8 @@ export function BoardsPage() {
           More boards
         </button>
       )}
+      {creating && <BoardForm onClose={() => setCreating(false)} />}
+      {joining && <JoinBoardModal onClose={() => setJoining(false)} />}
     </div>
   );
 }
@@ -440,7 +547,15 @@ export function PlaceDetailPage() {
 
   return (
     <div className="page place-detail-page">
-      <Back to={`/boards/${id}/places`}>Places list</Back>
+      <Back
+        to={
+          params.get('from') === 'map'
+            ? `/boards/${id}?select=${encodeURIComponent(targetKey)}`
+            : `/boards/${id}/places`
+        }
+      >
+        {params.get('from') === 'map' ? 'Map view' : 'Places list'}
+      </Back>
 
       <header className="page-heading">
         <h1>{title}</h1>

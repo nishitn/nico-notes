@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery } from 'convex/react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Check, Copy, Link2, Pencil, Plus, Trash2, Users } from 'lucide-react';
+import { Check, Clock, Copy, Link2, Pencil, Plus, RefreshCw, Trash2, Users, X } from 'lucide-react';
 import { api } from '@date-notes/backend/api';
 import type { Doc, Id } from '@date-notes/backend/dataModel';
 import {
@@ -69,28 +69,166 @@ function BoardDetails({ board }: { board: Doc<'boards'> }) {
     </Form>
   );
 }
-export function Invitations({ boardId }: { boardId: Id<'boards'> }) {
+export function PendingRequestsList({ boardId }: { boardId: Id<'boards'> }) {
+  const pending = useQuery(api.boards.pendingRequests, { boardId });
+  const accept = useMutation(api.boards.acceptRequest);
+  const reject = useMutation(api.boards.rejectRequest);
+  const task = useTask();
+  const notice = useNotice();
+
+  if (!pending) return <Spinner label="Loading join requests…" />;
+  if (pending.length === 0) return null;
+
+  return (
+    <div className="pending-requests-card">
+      <div className="pending-requests-head">
+        <Clock size={17} />
+        <h3>Pending join requests ({pending.length})</h3>
+      </div>
+      <p className="muted small">
+        These people requested to join using your board's invite code or link.
+      </p>
+      <ErrorNote text={task.error} />
+      <div className="join-requests-list">
+        {pending.map((req) => (
+          <div key={req._id} className="join-request-row">
+            <div className="join-request-user">
+              <Initials name={req.userName} small />
+              <div>
+                <strong>{req.userName}</strong>
+                <span className="small muted">
+                  Requested {new Date(req.createdAt).toLocaleDateString()}
+                </span>
+              </div>
+            </div>
+            <div className="join-request-actions">
+              <button
+                className="button primary small"
+                disabled={task.busy}
+                onClick={() =>
+                  task.run(async () => {
+                    await accept({ requestId: req._id });
+                    notice(`Accepted ${req.userName} into the board.`);
+                  })
+                }
+              >
+                <Check size={14} /> Accept
+              </button>
+              <button
+                className="button secondary small danger-hover"
+                disabled={task.busy}
+                onClick={() =>
+                  task.run(async () => {
+                    await reject({ requestId: req._id });
+                    notice(`Rejected join request.`);
+                  })
+                }
+              >
+                <X size={14} /> Reject
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function Invitations({
+  boardId,
+  inviteCode,
+}: {
+  boardId: Id<'boards'>;
+  inviteCode?: string;
+}) {
   const invitations = useQuery(api.boards.invitations, { boardId });
   const create = useMutation(api.boards.createInvitation);
   const revoke = useMutation(api.boards.revokeInvitation);
+  const regenerateCode = useMutation(api.boards.regenerateInviteCode);
+  const ensureCode = useMutation(api.boards.ensureInviteCode);
   const [revoking, setRevoking] = useState<Id<'invitations'> | null>(null);
   const task = useTask();
   const notice = useNotice();
-  const [copied, setCopied] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
+  const [copiedCode, setCopiedCode] = useState(false);
+  const [generatedCode, setGeneratedCode] = useState('');
+  const code = generatedCode || inviteCode || '';
   const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!inviteCode && !generatedCode) {
+      ensureCode({ boardId })
+        .then(setGeneratedCode)
+        .catch(() => {});
+    }
+  }, [inviteCode, generatedCode, boardId, ensureCode]);
+
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30_000);
     return () => clearInterval(timer);
   }, []);
+
   const active = invitations?.find((i) => !i.revoked && i.expiresAt > now);
   const link = active ? `${window.location.origin}/invite/${active.token}` : '';
+
   if (!invitations) return <Spinner label="Loading invitations…" />;
+
   return (
     <>
       <p className="muted">
-        Anyone with your link can join after signing in. Links last seven days. Share it only with
-        your people.
+        Anyone with your board's invite code or link can request to join. As board owner, you
+        approve or reject each request.
       </p>
+
+      {code && (
+        <div className="invite-code-card">
+          <Field
+            label="Board invite code"
+            hint="Share this code with your partner or friend. They can use it to join from the Home or Boards page."
+          >
+            <div className="code-input-group">
+              <input
+                readOnly
+                value={code}
+                className="code-input"
+                onFocus={(e) => e.target.select()}
+              />
+              <button
+                type="button"
+                className="button secondary"
+                disabled={task.busy}
+                onClick={() =>
+                  task.run(async () => {
+                    await navigator.clipboard.writeText(code);
+                    setCopiedCode(true);
+                    notice('Invite code copied.');
+                  })
+                }
+              >
+                {copiedCode ? <Check size={16} /> : <Copy size={16} />}
+                {copiedCode ? 'Copied' : 'Copy code'}
+              </button>
+              <button
+                type="button"
+                className="button secondary icon-only"
+                title="Regenerate invite code"
+                disabled={task.busy}
+                onClick={() =>
+                  task.run(async () => {
+                    const newCode = await regenerateCode({ boardId });
+                    setGeneratedCode(newCode);
+                    setCopiedCode(false);
+                    notice('Generated new invite code.');
+                  })
+                }
+              >
+                <RefreshCw size={15} />
+              </button>
+            </div>
+          </Field>
+        </div>
+      )}
+
       {active ? (
         <div className="invite-link-box">
           <Field label="Invitation link">
@@ -103,13 +241,13 @@ export function Invitations({ boardId }: { boardId: Id<'boards'> }) {
               onClick={() =>
                 task.run(async () => {
                   await navigator.clipboard.writeText(link);
-                  setCopied(true);
+                  setCopiedLink(true);
                   notice('Invitation link copied.');
                 })
               }
             >
-              {copied ? <Check size={16} /> : <Copy size={16} />}
-              {copied ? 'Copied' : 'Copy link'}
+              {copiedLink ? <Check size={16} /> : <Copy size={16} />}
+              {copiedLink ? 'Copied' : 'Copy link'}
             </button>
             <button className="text-button danger-text" onClick={() => setRevoking(active._id)}>
               Revoke link
@@ -124,7 +262,7 @@ export function Invitations({ boardId }: { boardId: Id<'boards'> }) {
           onClick={() =>
             task.run(async () => {
               await create({ boardId });
-              setCopied(false);
+              setCopiedLink(false);
             })
           }
         >
@@ -327,10 +465,13 @@ export function Settings() {
               </div>
             ))}
             {owner && (
-              <div className="invite-settings">
-                <h3>Save them a seat</h3>
-                <Invitations boardId={id} />
-              </div>
+              <>
+                <PendingRequestsList boardId={id} />
+                <div className="invite-settings">
+                  <h3>Save them a seat</h3>
+                  <Invitations boardId={id} inviteCode={detail.board.inviteCode} />
+                </div>
+              </>
             )}
           </section>
           {owner && (

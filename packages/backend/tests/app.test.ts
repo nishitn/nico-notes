@@ -90,6 +90,71 @@ describe('Private boards and invitations', () => {
       outsider.mutation(api.boards.acceptInvitation, { token: invite.token }),
     ).rejects.toThrow(/expired/);
   });
+  it('supports joining through invite code and board owner approval flow', async () => {
+    const { alice, bob, outsider, boardId } = await setup();
+    const boardDetail = await alice.query(api.boards.get, { boardId });
+    let inviteCode = boardDetail.board.inviteCode;
+    if (!inviteCode) {
+      inviteCode = await alice.mutation(api.boards.ensureInviteCode, { boardId });
+    }
+    expect(inviteCode).toMatch(/^[A-Z]{4}-[A-Z]{4}-[A-Z]{4}$/);
+
+    // Outsider requests to join with invite code
+    const reqRes = await outsider.mutation(api.boards.requestToJoin, {
+      code: ` ${inviteCode.toLowerCase()} `,
+    });
+    expect(reqRes.status).toBe('requested');
+    expect(reqRes.boardId).toBe(boardId);
+
+    // Outsider is not a member yet
+    expect((await alice.query(api.boards.get, { boardId })).members).toHaveLength(2);
+    expect((await outsider.query(api.boards.myOutgoingRequests, {})).length).toBe(1);
+
+    // Duplicate request returns already_pending
+    const duplicate = await outsider.mutation(api.boards.requestToJoin, { code: inviteCode });
+    expect(duplicate.status).toBe('already_pending');
+
+    // Non-owner cannot view pending requests
+    await expect(bob.query(api.boards.pendingRequests, { boardId })).rejects.toThrow(/owner/);
+
+    // Alice (owner) sees the pending request
+    const pending = await alice.query(api.boards.pendingRequests, { boardId });
+    expect(pending).toHaveLength(1);
+    expect(pending[0].userName).toBe('Outsider');
+
+    // Alice accepts the request
+    await alice.mutation(api.boards.acceptRequest, { requestId: pending[0]._id });
+
+    // Now outsider is a member
+    const updatedBoard = await alice.query(api.boards.get, { boardId });
+    expect(updatedBoard.members).toHaveLength(3);
+
+    // Outgoing requests are cleared
+    expect((await outsider.query(api.boards.myOutgoingRequests, {})).length).toBe(0);
+
+    // Once accepted, request returns already_member
+    const afterAccept = await outsider.mutation(api.boards.requestToJoin, { code: inviteCode });
+    expect(afterAccept.status).toBe('already_member');
+  });
+  it('allows owner to reject join requests', async () => {
+    const { alice, outsider, boardId } = await setup();
+    const code = await alice.mutation(api.boards.ensureInviteCode, { boardId });
+
+    // Outsider requests
+    await outsider.mutation(api.boards.requestToJoin, { code });
+    const pending = await alice.query(api.boards.pendingRequests, { boardId });
+    expect(pending).toHaveLength(1);
+
+    // Alice rejects
+    await alice.mutation(api.boards.rejectRequest, { requestId: pending[0]._id });
+
+    // Pending requests list is now empty
+    const pendingAfter = await alice.query(api.boards.pendingRequests, { boardId });
+    expect(pendingAfter).toHaveLength(0);
+
+    // Outsider is still not a member
+    expect((await alice.query(api.boards.get, { boardId })).members).toHaveLength(2);
+  });
   it('revokes reads and writes after removal while preserving prior ratings', async () => {
     const { alice, bob, ids, boardId, visitId, dishId } = await setup();
     await bob.mutation(api.ratings.save, {

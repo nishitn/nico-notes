@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { usePaginatedQuery } from 'convex/react';
+import { usePaginatedQuery, useQuery } from 'convex/react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowRight,
@@ -22,6 +22,7 @@ import { Initials, Modal, Spinner, formatDate } from './ui';
 import { Invitations } from './Settings';
 import { Photo } from './Photos';
 import { PlacesMap, mapsLink, type MapLocation } from './PlacesMap';
+import { googleMapsConfigured, placeSearchErrorMessage, searchNearbyPlaces } from './googleMaps';
 
 type Detail = FunctionReturnType<typeof api.boards.get>;
 type VisitSummary = FunctionReturnType<typeof api.visits.list>['page'][number];
@@ -68,11 +69,13 @@ export function VisitCard({
   variant,
   members,
   isRow,
+  dateNumber,
 }: {
   visit: VisitSummary;
   variant: DesignVariant;
   members: Detail['members'];
   isRow?: boolean;
+  dateNumber?: number;
 }) {
   const hasPhotos = visit.photoIds.length > 0;
   const showDishRatings = members.length <= 3;
@@ -83,11 +86,10 @@ export function VisitCard({
         !hasPhotos ? 'no-photo-card' : ''
       }`}
     >
-      {visit.date ? (
-        <div className="memory-topline">
-          <span>{formatDate(visit.date)}</span>
-        </div>
-      ) : null}
+      <div className="memory-topline">
+        {dateNumber !== undefined && <span className="memory-date-number">Date #{dateNumber}</span>}
+        {visit.date && <time dateTime={visit.date}>{formatDate(visit.date)}</time>}
+      </div>
       <div className="memory-title-row">
         <Link to={`/visits/${visit._id}`}>
           <h3>{visit.title}</h3>
@@ -116,66 +118,72 @@ export function VisitCard({
         </p>
       </div>
 
-      {hasPhotos ? (
-        <Link
-          to={`/visits/${visit._id}`}
-          className="memory-photos"
-          aria-label={`Open ${visit.title}, visit ${visit.visitNumber ?? 1}`}
-        >
-          {visit.photoIds.map((id, index) => (
-            <Photo key={id} id={id} alt={`${visit.title} photo ${index + 1}`} />
-          ))}
-        </Link>
-      ) : visit.dishes && visit.dishes.length > 0 ? (
-        <div className="memory-dishes-list">
-          {visit.dishes.map((dish) => (
-            <div key={dish._id} className="memory-dish-row">
-              <span className="memory-dish-name">
-                <Utensils size={13} />
-                <span>{dish.name}</span>
-              </span>
-              {showDishRatings && (
-                <div className="memory-dish-ratings">
-                  {dish.ratings && dish.ratings.length > 0 ? (
-                    dish.ratings.map((r, i) => {
-                      const member = members.find((m) => m._id === r.userId);
-                      const fullName = r.importedName || member?.name;
-                      const initials = getInitials(fullName);
-                      return (
-                        <span key={i} className="dish-member-rating" title={fullName || undefined}>
-                          {initials ? <span className="dish-member-name">{initials}</span> : null}
-                          <span className="dish-member-score">{formatRatingScore(r.score)}</span>
-                        </span>
-                      );
-                    })
-                  ) : dish.score !== null ? (
-                    <span className="dish-member-rating">
-                      <span className="dish-member-score">{formatRatingScore(dish.score)}</span>
-                    </span>
-                  ) : null}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      ) : visit.highlights.length > 0 ? (
-        <div className="memory-dishes-list">
-          {visit.highlights.map((dishName) => (
-            <div key={dishName} className="memory-dish-row">
-              <span className="memory-dish-name">
-                <Utensils size={13} />
-                <span>{dishName}</span>
-              </span>
-            </div>
-          ))}
-        </div>
-      ) : visit.notes ? (
-        <p className="dynamic-card-notes">“{visit.notes}”</p>
-      ) : null}
+      <div className="memory-card-body">
+        {hasPhotos ? (
+          <Link
+            to={`/visits/${visit._id}`}
+            className="memory-photos"
+            aria-label={`Open ${visit.title}, visit ${visit.visitNumber ?? 1}`}
+          >
+            {visit.photoIds.map((id, index) => (
+              <Photo key={id} id={id} alt={`${visit.title} photo ${index + 1}`} />
+            ))}
+          </Link>
+        ) : visit.dishes && visit.dishes.length > 0 ? (
+          <div className="memory-dishes-list">
+            {visit.dishes.map((dish) => (
+              <div key={dish._id} className="memory-dish-row">
+                <span className="memory-dish-name">
+                  <Utensils size={13} />
+                  <span>{dish.name}</span>
+                </span>
+                {showDishRatings && (
+                  <div className="memory-dish-ratings">
+                    {dish.ratings && dish.ratings.length > 0 ? (
+                      dish.ratings.map((r, i) => {
+                        const member = members.find((m) => m._id === r.userId);
+                        const fullName = r.importedName || member?.name;
+                        const initials = getInitials(fullName);
+                        return (
+                          <span
+                            key={i}
+                            className="dish-member-rating"
+                            title={fullName || undefined}
+                          >
+                            {initials ? <span className="dish-member-name">{initials}</span> : null}
+                            <span className="dish-member-score">{formatRatingScore(r.score)}</span>
+                          </span>
+                        );
+                      })
+                    ) : dish.score !== null ? (
+                      <span className="dish-member-rating">
+                        <span className="dish-member-score">{formatRatingScore(dish.score)}</span>
+                      </span>
+                    ) : null}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : visit.highlights.length > 0 ? (
+          <div className="memory-dishes-list">
+            {visit.highlights.map((dishName) => (
+              <div key={dishName} className="memory-dish-row">
+                <span className="memory-dish-name">
+                  <Utensils size={13} />
+                  <span>{dishName}</span>
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : visit.notes ? (
+          <p className="dynamic-card-notes">“{visit.notes}”</p>
+        ) : null}
 
-      {hasPhotos && visit.highlights.length > 0 && (
-        <p className="memory-dishes">{visit.highlights.join(' · ')}</p>
-      )}
+        {hasPhotos && visit.highlights.length > 0 && (
+          <p className="memory-dishes">{visit.highlights.join(' · ')}</p>
+        )}
+      </div>
 
       <div className="memory-footer">
         <Link to={`/visits/${visit._id}`}>
@@ -203,10 +211,16 @@ export function BoardDashboard({
   const [query, setQuery] = useState('');
   const [selectedKey, setSelectedKey] = useState<string | null>(selectParam);
   const [addingMember, setAddingMember] = useState(false);
+  const isOwner = userId === detail.board.ownerId;
+  const pendingRequests =
+    useQuery(api.boards.pendingRequests, isOwner ? { boardId: id } : 'skip') ?? [];
 
   // New place search states
   const [newPlaces, setNewPlaces] = useState<NewPlace[]>([]);
   const [isSearchingNew, setIsSearchingNew] = useState(false);
+  const [searchError, setSearchError] = useState('');
+  const [searchAttempt, setSearchAttempt] = useState(0);
+  const [currentLocation, setCurrentLocation] = useState<MapLocation | null>(null);
   const [searchDropdownOpen, setSearchDropdownOpen] = useState(false);
   const [searchedPlace, setSearchedPlace] = useState<NewPlace | null>(null);
   const searchContainerRef = useRef<HTMLDivElement>(null);
@@ -261,49 +275,47 @@ export function BoardDashboard({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Debounced geocoding search for new places
+  const searchLatitude = currentLocation?.latitude;
+  const searchLongitude = currentLocation?.longitude;
+  // Ignore stale responses when the query or the nearby search area changes.
   useEffect(() => {
     const trimmed = query.trim();
+    setNewPlaces([]);
+    setSearchError('');
     if (trimmed.length < 2) {
-      setNewPlaces([]);
       setIsSearchingNew(false);
       return;
     }
-
+    let cancelled = false;
     setIsSearchingNew(true);
     const timer = setTimeout(async () => {
       try {
-        const res = await fetch(
-          `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
-            trimmed,
-          )}&limit=5&addressdetails=1`,
+        const results = await searchNearbyPlaces(
+          trimmed,
+          searchLatitude !== undefined && searchLongitude !== undefined
+            ? { latitude: searchLatitude, longitude: searchLongitude }
+            : undefined,
         );
-        if (!res.ok) throw new Error('Geocoding request failed');
-        const data = await res.json();
-        const results: NewPlace[] = data.map((item: any) => {
-          const parts = (item.display_name || '').split(',');
-          const title = item.name || parts[0]?.trim() || 'Place';
-          const place = parts.slice(1, 4).join(',').trim() || parts[0]?.trim() || '';
-          return {
-            id: `geo-${item.place_id || item.osm_id || Math.random()}`,
-            title,
-            place,
-            location: {
-              latitude: parseFloat(item.lat),
-              longitude: parseFloat(item.lon),
-            },
-          };
-        });
-        setNewPlaces(results);
-      } catch {
-        setNewPlaces([]);
+        if (!cancelled) setNewPlaces(results);
+      } catch (error) {
+        if (import.meta.env.DEV) {
+          console.warn(
+            'Place search failed:',
+            String(error)
+              .replace(/AIza[\w-]+/g, '[redacted]')
+              .replace(/key=[^&\s]+/g, 'key=[redacted]'),
+          );
+        }
+        if (!cancelled) setSearchError(placeSearchErrorMessage(error));
       } finally {
-        setIsSearchingNew(false);
+        if (!cancelled) setIsSearchingNew(false);
       }
-    }, 380);
-
-    return () => clearTimeout(timer);
-  }, [query]);
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [query, searchLatitude, searchLongitude, searchAttempt]);
 
   const groups = useMemo(() => {
     const map = new globalThis.Map<string, Doc<'visits'>[]>();
@@ -343,11 +355,23 @@ export function BoardDashboard({
     return list;
   }, [matching, searchedPlace]);
 
+  // Both visit queries use the same newest-first order. Wait for all lightweight
+  // metadata so numbers stay consistent as more cards are loaded.
+  const dateNumbers = useMemo(
+    () =>
+      new Map(
+        placesStatus === 'Exhausted'
+          ? visits.map((visit, index) => [visit._id, visits.length - index])
+          : [],
+      ),
+    [visits, placesStatus],
+  );
+
   const selected = matching.find((p) => p.key === selectedKey);
   const selectedPlaceUrl = selected
     ? `/boards/${id}/place?title=${encodeURIComponent(
         selected.visit.title,
-      )}&place=${encodeURIComponent(selected.visit.place || '')}`
+      )}&place=${encodeURIComponent(selected.visit.place || '')}&from=map`
     : undefined;
   const unpinned = useMemo(() => groups.filter((p) => !p.visit.location).length, [groups]);
 
@@ -393,23 +417,35 @@ export function BoardDashboard({
         {detail.board.description && <p className="board-desc">{detail.board.description}</p>}
       </header>
 
+      {pendingRequests.length > 0 && (
+        <div className="pending-banner">
+          <div className="pending-banner-text">
+            <span className="pending-banner-pill">👋 Join request</span>
+            <span>
+              <strong>
+                {pendingRequests.length} pending join{' '}
+                {pendingRequests.length === 1 ? 'request' : 'requests'}
+              </strong>{' '}
+              ({pendingRequests.map((p) => p.userName).join(', ')})
+            </span>
+          </div>
+          <Link className="button small primary" to={`/boards/${id}/settings`}>
+            Review requests
+          </Link>
+        </div>
+      )}
+
       {/* Places Section */}
       <section className="places-section" aria-label="Places visited">
         <div className="places-heading">
           <h2>Your places</h2>
           <div className="places-explored-heading-right">
             <span className="heart-counter-badge">
-              <span className="heading-heart-icon" aria-hidden="true">
-                ♡
-              </span>
+              <Heart className="heading-heart-icon" aria-hidden="true" strokeWidth={1.4} />
               <span className="heart-counter-number">{groups.length}</span>
             </span>
             <span className="explored-word">explored</span>
           </div>
-        </div>
-
-        <div className="explore-toolbar">
-          <span className="visit-total">{visits.length} visits together</span>
         </div>
 
         {/* Search Bar Component */}
@@ -427,7 +463,7 @@ export function BoardDashboard({
                 <Search size={20} />
                 <input
                   aria-label="Search places"
-                  placeholder="Search places or find a new one to add…"
+                  placeholder="Search places…"
                   value={query}
                   onFocus={() => {
                     if (query.trim()) setSearchDropdownOpen(true);
@@ -457,24 +493,11 @@ export function BoardDashboard({
 
               {/* Search Dropdown with New Places Results */}
               {searchDropdownOpen && query.trim() && (
-                <div className="places-search-dropdown" role="listbox">
-                  {/* Quick direct add action */}
-                  <div className="search-dropdown-section">
-                    <Link
-                      to={`/boards/${id}/visits/new?title=${encodeURIComponent(query.trim())}`}
-                      className="search-quick-add"
-                      onClick={() => setSearchDropdownOpen(false)}
-                    >
-                      <div className="quick-add-icon">
-                        <Plus size={16} />
-                      </div>
-                      <div className="quick-add-body">
-                        <strong>Add visit to &ldquo;{query.trim()}&rdquo;</strong>
-                        <span>Create a new visit with this name</span>
-                      </div>
-                    </Link>
-                  </div>
-
+                <div
+                  className="places-search-dropdown"
+                  role="region"
+                  aria-label="Place search results"
+                >
                   {/* Saved places matching query */}
                   {matching.length > 0 && (
                     <div className="search-dropdown-section">
@@ -504,7 +527,11 @@ export function BoardDashboard({
                             className="result-action-button"
                             to={`/boards/${id}/visits/new?title=${encodeURIComponent(
                               visit.title,
-                            )}&place=${encodeURIComponent(visit.place || '')}`}
+                            )}&place=${encodeURIComponent(visit.place || '')}${
+                              visit.location
+                                ? `&lat=${visit.location.latitude}&lng=${visit.location.longitude}`
+                                : ''
+                            }`}
                             onClick={(e) => e.stopPropagation()}
                           >
                             <Plus size={14} /> Add visit
@@ -518,7 +545,7 @@ export function BoardDashboard({
                   <div className="search-dropdown-section">
                     <div className="dropdown-section-title">
                       <span>
-                        <Compass size={13} /> New places found
+                        <Compass size={13} /> {currentLocation ? 'Nearby · 10 km' : 'Find a place'}
                       </span>
                       {isSearchingNew && <span className="searching-spinner">Searching…</span>}
                     </div>
@@ -554,10 +581,42 @@ export function BoardDashboard({
                         </div>
                       ))
                     ) : !isSearchingNew ? (
-                      <div className="search-dropdown-empty">
-                        <span>No specific place found on map. Use quick add above.</span>
+                      <div className="search-dropdown-empty" role="status">
+                        <span>
+                          {searchError ||
+                            (query.trim().length < 2
+                              ? 'Type at least two characters to search.'
+                              : currentLocation
+                                ? 'No matching places within 10 km. Try a different name.'
+                                : 'No matching places. Try adding a city or area to your search.')}
+                        </span>
+                        {searchError && (
+                          <button
+                            type="button"
+                            className="result-action-button"
+                            onClick={() => setSearchAttempt((attempt) => attempt + 1)}
+                          >
+                            Try again
+                          </button>
+                        )}
                       </div>
                     ) : null}
+                  </div>
+                  {/* Manual fallback follows Google Maps results. */}
+                  <div className="search-dropdown-section">
+                    <Link
+                      to={`/boards/${id}/visits/new?title=${encodeURIComponent(query.trim())}`}
+                      className="search-quick-add"
+                      onClick={() => setSearchDropdownOpen(false)}
+                    >
+                      <div className="quick-add-icon">
+                        <Plus size={16} />
+                      </div>
+                      <div className="quick-add-body">
+                        <strong>Add &ldquo;{query.trim()}&rdquo; manually</strong>
+                        <span>Continue without a Google Maps place</span>
+                      </div>
+                    </Link>
                   </div>
                 </div>
               )}
@@ -570,122 +629,130 @@ export function BoardDashboard({
 
           return (
             <>
+              {searchBarNode}
               <div className="map-shell">
-                {searchBarNode}
                 <PlacesMap
                   places={pins}
                   selectedId={selectedKey ?? undefined}
                   onSelect={setSelectedKey}
+                  autoLocate
+                  onLocationChange={setCurrentLocation}
                 />
-
-                {/* Place Card: Searched New Place */}
-                {selectedKey === 'searched-place' && searchedPlace ? (
-                  <div className="map-place-card searched-place-card">
-                    <button
-                      className="icon-button close-place"
-                      aria-label="Close selected place"
-                      onClick={() => {
-                        setSelectedKey(null);
-                        setSearchedPlace(null);
-                      }}
-                    >
-                      <X size={17} />
-                    </button>
-                    <span className="type-pill sage">New place to visit</span>
-                    <h3>{searchedPlace.title}</h3>
-                    <p>
-                      <MapPin size={14} />
-                      {searchedPlace.place}
-                    </p>
-                    <div className="map-place-actions">
-                      <a href={mapsLink(searchedPlace)} target="_blank" rel="noreferrer">
-                        <Navigation size={16} />
-                        Google Maps
-                      </a>
-                      <Link
-                        className="button primary"
-                        to={`/boards/${id}/visits/new?title=${encodeURIComponent(
-                          searchedPlace.title,
-                        )}&place=${encodeURIComponent(searchedPlace.place)}&lat=${
-                          searchedPlace.location.latitude
-                        }&lng=${searchedPlace.location.longitude}`}
-                      >
-                        <Plus size={16} /> Add visit
-                      </Link>
-                    </div>
+                {googleMapsConfigured && !selectedKey && pins.length > 0 && (
+                  <div className="map-hint">
+                    <Heart size={14} strokeWidth={1.7} />
+                    <span>Tap a heart to open your notes</span>
                   </div>
-                ) : selected && selectedPlaceUrl ? (
-                  /* Place Card: Existing Visited Place */
-                  <div
-                    className="map-place-card map-place-card-clickable"
-                    onClick={() => navigate(selectedPlaceUrl)}
+                )}
+              </div>
+
+              {/* Place Card: Searched New Place */}
+              {selectedKey === 'searched-place' && searchedPlace ? (
+                <div className="map-place-card searched-place-card">
+                  <button
+                    className="icon-button close-place"
+                    aria-label="Close selected place"
+                    onClick={() => {
+                      setSelectedKey(null);
+                      setSearchedPlace(null);
+                    }}
                   >
-                    <button
-                      className="icon-button close-place"
-                      aria-label="Close selected place"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSelectedKey(null);
-                      }}
+                    <X size={17} />
+                  </button>
+                  <span className="type-pill sage">New place to visit</span>
+                  <h3>{searchedPlace.title}</h3>
+                  <p>
+                    <MapPin size={14} />
+                    {searchedPlace.place}
+                  </p>
+                  <div className="map-place-actions">
+                    <a href={mapsLink(searchedPlace)} target="_blank" rel="noreferrer">
+                      <Navigation size={16} />
+                      Google Maps
+                    </a>
+                    <Link
+                      className="button primary"
+                      to={`/boards/${id}/visits/new?title=${encodeURIComponent(
+                        searchedPlace.title,
+                      )}&place=${encodeURIComponent(searchedPlace.place)}&lat=${
+                        searchedPlace.location.latitude
+                      }&lng=${searchedPlace.location.longitude}`}
                     >
-                      <X size={17} />
-                    </button>
-                    <span className="type-pill sage">
-                      {selected.visit.typeName} · {selected.entries.length}{' '}
-                      {selected.entries.length === 1 ? 'visit' : 'visits'}
-                    </span>
-                    <h3>{selected.visit.title}</h3>
-                    <p>
-                      <MapPin size={14} />
-                      {selected.visit.place}
-                    </p>
-                    <div className="map-place-actions">
-                      <a
-                        href={mapsLink(selected.visit)}
-                        target="_blank"
-                        rel="noreferrer"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <Navigation size={16} />
-                        Google Maps
-                      </a>
+                      <Plus size={16} /> Add visit
+                    </Link>
+                  </div>
+                </div>
+              ) : selected && selectedPlaceUrl ? (
+                /* Place Card: Existing Visited Place */
+                <div
+                  className="map-place-card map-place-card-clickable"
+                  onClick={() => navigate(selectedPlaceUrl)}
+                >
+                  <button
+                    className="icon-button close-place"
+                    aria-label="Close selected place"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedKey(null);
+                    }}
+                  >
+                    <X size={17} />
+                  </button>
+                  <span className="type-pill sage">
+                    {selected.visit.typeName} · {selected.entries.length}{' '}
+                    {selected.entries.length === 1 ? 'visit' : 'visits'}
+                  </span>
+                  <h3>{selected.visit.title}</h3>
+                  <p>
+                    <MapPin size={14} />
+                    {selected.visit.place}
+                  </p>
+                  <div className="map-place-actions">
+                    <a
+                      href={mapsLink(selected.visit)}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <Navigation size={16} />
+                      Google Maps
+                    </a>
+                    <div className="map-place-visit-actions">
                       <Link
-                        className="button primary"
+                        className="button secondary"
                         to={selectedPlaceUrl}
                         onClick={(e) => e.stopPropagation()}
                       >
                         View place
                         <ArrowRight size={17} />
                       </Link>
+                      <Link
+                        className="button primary"
+                        to={`/boards/${id}/visits/new?title=${encodeURIComponent(
+                          selected.visit.title,
+                        )}&place=${encodeURIComponent(selected.visit.place || '')}${
+                          selected.visit.location
+                            ? `&lat=${selected.visit.location.latitude}&lng=${selected.visit.location.longitude}`
+                            : ''
+                        }`}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <Plus size={16} /> Add visit
+                      </Link>
                     </div>
                   </div>
-                ) : (
-                  <div className="map-hint">
-                    <Heart size={15} />
-                    {pins.length
-                      ? 'Tap a heart to open your notes'
-                      : 'No pinned places in this view'}
-                  </div>
-                )}
-              </div>
+                </div>
+              ) : null}
 
-              <div className="map-caption">
-                <span>
-                  {pins.length} pinned {pins.length === 1 ? 'place' : 'places'}
-                </span>
+              <div className="map-summary">
+                <Link to={`/boards/${id}/places`} className="text-button">
+                  <List size={16} /> View list <ArrowRight size={15} />
+                </Link>
                 {unpinned > 0 && (
-                  <Link to={`/boards/${id}/places?tab=unpinned`}>
-                    {unpinned} waiting for a pin <ArrowRight size={14} />
+                  <Link className="map-unpinned" to={`/boards/${id}/places?tab=unpinned`}>
+                    {unpinned} without a pin <ArrowRight size={14} />
                   </Link>
                 )}
-              </div>
-
-              <div className="map-bottom-row">
-                <Link to={`/boards/${id}/places`} className="text-button see-places-text-btn">
-                  <List size={16} />
-                  See places as list <span className="muted">({groups.length})</span>
-                  <ArrowRight size={14} />
-                </Link>
               </div>
 
               {matching.length === 0 && !searchedPlace && (
@@ -704,9 +771,7 @@ export function BoardDashboard({
           <h2>Your dates</h2>
           <div className="places-explored-heading-right">
             <span className="heart-counter-badge">
-              <span className="heading-heart-icon" aria-hidden="true">
-                ♡
-              </span>
+              <Heart className="heading-heart-icon" aria-hidden="true" strokeWidth={1.4} />
               <span className="heart-counter-number">{visits.length}</span>
             </span>
             <span className="explored-word">so far</span>
@@ -721,6 +786,7 @@ export function BoardDashboard({
               <VisitCard
                 key={visit._id}
                 visit={visit}
+                dateNumber={dateNumbers.get(visit._id)}
                 variant="editorial"
                 members={detail.members}
                 isRow={false}
@@ -762,7 +828,7 @@ export function BoardDashboard({
 
       {addingMember && (
         <Modal title="Add member" onClose={() => setAddingMember(false)}>
-          <Invitations boardId={id} />
+          <Invitations boardId={id} inviteCode={detail.board.inviteCode} />
         </Modal>
       )}
     </div>

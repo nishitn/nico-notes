@@ -43,9 +43,14 @@ test('two people share a board, rate a dish, upload a photo, and lose access aft
   await expect(bob.getByRole('heading', { name: 'Our food dates', exact: true })).toBeVisible();
   await alice.goto(boardUrl);
   await alice.getByRole('link', { name: 'Add visit', exact: true }).click();
-  await alice.getByLabel('Give this visit a name').fill('A Friday well spent');
+  await alice.getByRole('button', { name: 'Choose place', exact: true }).click();
+  await alice.getByText('Enter place details manually or adjust the pin').click();
+  await alice.getByLabel('Place name', { exact: true }).fill('A Friday well spent');
+  await alice.getByLabel('Address (optional)').fill('The Little Table');
+  await alice.getByRole('button', { name: 'Use this place' }).click();
+  await alice.locator('.visit-date-control > summary').click();
   await alice.getByLabel('When was it?').fill('2026-09-18');
-  await alice.getByLabel('Place or location').fill('The Little Table');
+  await alice.locator('.visit-date-control > summary').click();
   await alice
     .getByLabel('A note to remember')
     .fill('We ordered too much and stayed for dessert. Worth it.');
@@ -134,13 +139,16 @@ test('mobile visit types, keyboard dialogs, failed forms, and enlarged text', as
   await expect(page.getByText('Trek', { exact: true })).toBeVisible();
   await page.goto(boardUrl);
   await page.getByRole('link', { name: 'Add visit', exact: true }).click();
-  await page.getByLabel('Give this visit a name').fill('Sunrise at the summit');
+  await page.getByRole('button', { name: 'Choose place', exact: true }).click();
+  await page.getByText('Enter place details manually or adjust the pin').click();
+  await page.getByLabel('Place name', { exact: true }).fill('Sunrise at the summit');
+  await page.getByRole('button', { name: 'Use this place' }).click();
   await page.getByLabel('What kind of date?').selectOption({ label: 'Trek' });
   await expect(page.getByLabel('Rating categories')).toHaveValue('View, Trail');
   await page.getByLabel('Rating categories').fill('View, View');
   await page.getByRole('button', { name: 'Create visit', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('different category');
-  await expect(page.getByLabel('Give this visit a name')).toHaveValue('Sunrise at the summit');
+  await expect(page.getByLabel('Visit name', { exact: true })).toHaveValue('Sunrise at the summit');
   await page.getByLabel('Rating categories').fill('View, Trail');
   await page.getByRole('button', { name: 'Create visit', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Sunrise at the summit' })).toBeVisible();
@@ -153,5 +161,61 @@ test('mobile visit types, keyboard dialogs, failed forms, and enlarged text', as
   await page.addStyleTag({ content: 'html { font-size: 200%; }' });
   await noOverflow(page);
   await page.screenshot({ path: 'test-results/mobile-large-text.png', fullPage: true });
+  await context.close();
+});
+
+test('visit uses the selected map place and saves an optional name override', async ({
+  browser,
+}) => {
+  const context = await browser.newContext({
+    storageState: 'test-results/user-0.json',
+    viewport: { width: 390, height: 844 },
+  });
+  const page = await context.newPage();
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Open menu' }).click();
+  await page.getByRole('button', { name: 'New board', exact: true }).click();
+  await page.getByLabel('Board name').fill('Visit editor checks');
+  await page.getByRole('button', { name: 'Create board', exact: true }).click();
+  await expect(
+    page.getByRole('heading', { name: 'Visit editor checks', exact: true }),
+  ).toBeVisible();
+  const boardUrl = page.url();
+  const selected = new URLSearchParams({
+    title: 'Third Wave Coffee',
+    place: 'Sai Paryavaran House, ITPL Main Rd, Bengaluru',
+    lat: '12.963289',
+    lng: '77.7170321',
+  });
+  await page.goto(`${boardUrl}/visits/new?${selected}`);
+  await expect(page.getByLabel('Visit name', { exact: true })).toHaveValue('Third Wave Coffee');
+  await expect(page.getByRole('region', { name: 'Visit location', exact: true })).toBeVisible();
+  await expect(page.getByLabel('When was it?')).toBeHidden();
+  await page.getByLabel('Visit name', { exact: true }).fill('Coffee after our walk');
+  await page.getByLabel('A note to remember').fill('A quiet corner and a shared pastry.');
+  await page.locator('.visit-date-control > summary').click();
+  await page.getByRole('button', { name: 'Leave date blank' }).click();
+  await page.locator('.visit-date-control > summary').click();
+  await noOverflow(page);
+  await page.screenshot({ path: 'test-results/mobile-visit-editor.png', fullPage: true });
+  await page.getByRole('button', { name: 'Create visit', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Coffee after our walk' })).toBeVisible();
+  await page.getByRole('link', { name: 'Edit visit', exact: true }).click();
+  await expect(page.getByLabel('Visit name', { exact: true })).toHaveValue('Coffee after our walk');
+  await expect(page.getByLabel('A note to remember')).toHaveValue(
+    'A quiet corner and a shared pastry.',
+  );
+  await expect(page.getByRole('link', { name: 'Google Maps', exact: true })).toHaveAttribute(
+    'href',
+    /12\.963289%2C77\.7170321/,
+  );
+  await page.getByRole('button', { name: 'Edit place', exact: true }).click();
+  await page.getByText('Enter place details manually or adjust the pin').click();
+  await page.getByLabel('Place name', { exact: true }).fill('Discarded change');
+  await page.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(page.getByLabel('Visit name', { exact: true })).toHaveValue('Coffee after our walk');
+  await page.getByLabel('Visit name', { exact: true }).fill('Our favorite coffee stop');
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Our favorite coffee stop' })).toBeVisible();
   await context.close();
 });

@@ -7,10 +7,10 @@ import {
   Heart,
   LayoutGrid,
   LockKeyhole,
-  LogOut,
-  NotebookPen,
+  ChevronRight,
   Plus,
   Menu,
+  UserPlus,
 } from 'lucide-react';
 import { api } from '@date-notes/backend/api';
 import {
@@ -30,11 +30,13 @@ import {
   BoardsPage,
   HomePage,
   InvitePage,
+  JoinBoardModal,
   PlaceDetailPage,
   PlacesPage,
 } from './Boards';
 import { VisitEditor, VisitPage } from './Visit';
 import { Settings } from './Settings';
+import { AccountPage } from './Account';
 
 export function Setup() {
   return (
@@ -64,7 +66,6 @@ function Login() {
       </header>
       <main id="main-content" className="login-main">
         <section className="login-copy">
-          <span className="eyebrow">THE LITTLE THINGS, KEPT TOGETHER</span>
           <h1>
             Some moments
             <br />
@@ -115,17 +116,11 @@ function Login() {
             )}
             <ErrorNote text={task.error} />
           </div>
-          <span className="login-foot">
-            <Heart size={15} /> Separate accounts. Shared memories.
-          </span>
         </section>
         <section
           className="login-illustration"
           aria-label="Illustration of a shared meal and a keepsake notebook"
         >
-          <div className="floating-label">
-            <span className="tiny-star">✳</span> A little collection of us
-          </div>
           <div className="keepsake">
             <Artwork />
             <div className="keepsake-caption">
@@ -133,29 +128,15 @@ function Login() {
               <Heart size={19} />
             </div>
           </div>
-          <div className="little-note">
-            <NotebookPen size={27} />
-            <span>
-              Good food.
-              <br />
-              Even better company.
-            </span>
-            <span className="note-heart">♡</span>
-          </div>
-          <div className="orbit-text">MADE FOR THE MEMORIES</div>
           <span className="decorative-spark">✧</span>
         </section>
       </main>
-      <footer>
-        date notes <span>Made for your kind of together.</span>
-      </footer>
+      <footer>date notes</footer>
     </div>
   );
 }
 function Shell() {
   const me = useQuery(api.boards.me);
-  const { signOut } = useAuthActions();
-  const task = useTask();
   const {
     results: boards,
     status,
@@ -163,7 +144,9 @@ function Shell() {
   } = usePaginatedQuery(api.boards.list, {}, { initialNumItems: 30 });
   const location = useLocation();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerAction, setDrawerAction] = useState<'create' | 'join' | null>(null);
   const [creating, setCreating] = useState(false);
+  const [joining, setJoining] = useState(false);
   const [backSlot, setBackSlot] = useState<HTMLDivElement | null>(null);
   return (
     <TopNavContext.Provider value={backSlot}>
@@ -180,82 +163,88 @@ function Shell() {
           </button>
           <div className="header-back" ref={setBackSlot} />
           <Brand />
-          <button
-            className="account-pill"
-            aria-label="Your account and boards"
-            onClick={() => setDrawerOpen(true)}
-          >
-            <Initials name={me?.name ?? 'You'} small />
-          </button>
         </header>
-        {drawerOpen && (
-          <Modal title="Boards" className="board-drawer" onClose={() => setDrawerOpen(false)}>
-            <div className="drawer-content">
-              <nav aria-label="Boards">
+        <Modal
+          title="Menu"
+          className="board-drawer"
+          open={drawerOpen}
+          onClose={() => setDrawerOpen(false)}
+          onAfterClose={() => {
+            if (drawerAction === 'create') setCreating(true);
+            if (drawerAction === 'join') setJoining(true);
+            setDrawerAction(null);
+          }}
+        >
+          <div className="drawer-content">
+            <nav aria-label="Boards">
+              <NavLink
+                to="/boards"
+                end
+                className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+                onClick={() => setDrawerOpen(false)}
+              >
+                <LayoutGrid size={19} /> All boards
+              </NavLink>
+              {boards.map((board) => (
                 <NavLink
-                  to="/boards"
-                  end
+                  key={board._id}
+                  to={`/boards/${board._id}`}
                   className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
                   onClick={() => setDrawerOpen(false)}
                 >
-                  <LayoutGrid size={19} /> All boards
+                  <span className={`board-dot ${board.accent}`} />
+                  <span>{board.name}</span>
                 </NavLink>
-                {boards.map((board) => (
-                  <NavLink
-                    key={board._id}
-                    to={`/boards/${board._id}`}
-                    className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
-                    onClick={() => setDrawerOpen(false)}
-                  >
-                    <span className={`board-dot ${board.accent}`} />
-                    <span>{board.name}</span>
-                  </NavLink>
-                ))}
-              </nav>
-              {status === 'LoadingFirstPage' && <Spinner label="Loading boards…" />}
-              {(status === 'CanLoadMore' || status === 'LoadingMore') && (
-                <button
-                  className="button secondary"
-                  disabled={status === 'LoadingMore'}
-                  onClick={() => loadMore(30)}
-                >
-                  More boards
-                </button>
-              )}
+              ))}
+            </nav>
+            {status === 'LoadingFirstPage' && <Spinner label="Loading boards…" />}
+            {(status === 'CanLoadMore' || status === 'LoadingMore') && (
               <button
-                className="button primary drawer-create"
-                onClick={() => {
-                  setDrawerOpen(false);
-                  setCreating(true);
-                }}
+                className="button secondary"
+                disabled={status === 'LoadingMore'}
+                onClick={() => loadMore(30)}
               >
-                <Plus size={18} /> New board
+                More boards
               </button>
-            </div>
-            <div className="profile">
-              {me && <Initials name={me.name} />}
-              <div>
-                <strong>{me?.name ?? 'Your account'}</strong>
-              </div>
-              <button
-                className="icon-button"
-                title="Sign out"
-                aria-label="Sign out"
-                disabled={task.busy}
-                onClick={() => task.run(signOut)}
-              >
-                <LogOut size={19} />
-              </button>
-            </div>
-            <ErrorNote text={task.error} />
-          </Modal>
-        )}
+            )}
+          </div>
+          <div className="drawer-actions">
+            <button
+              className="button primary drawer-create"
+              onClick={() => {
+                setDrawerOpen(false);
+                setDrawerAction('create');
+              }}
+            >
+              <Plus size={18} /> New board
+            </button>
+            <button
+              className="button secondary drawer-join"
+              onClick={() => {
+                setDrawerOpen(false);
+                setDrawerAction('join');
+              }}
+            >
+              <UserPlus size={18} /> Join board
+            </button>
+          </div>
+          <NavLink className="drawer-account" to="/account" onClick={() => setDrawerOpen(false)}>
+            <Initials name={me?.name ?? 'You'} />
+            <span>
+              <strong>{me?.name ?? 'Your account'}</strong>
+              <span>Account</span>
+            </span>
+            <ChevronRight size={18} />
+          </NavLink>
+        </Modal>
         {creating && <BoardForm onClose={() => setCreating(false)} />}
+        {joining && <JoinBoardModal onClose={() => setJoining(false)} />}
         <main id="main-content" className="workspace">
           <ErrorBoundary key={location.pathname}>
             <Routes>
               <Route path="/" element={<HomePage />} />
               <Route path="/boards" element={<BoardsPage />} />
+              <Route path="/account" element={<AccountPage />} />
               <Route path="/boards/:boardId" element={<BoardPage />} />
               <Route path="/boards/:boardId/places" element={<PlacesPage />} />
               <Route path="/boards/:boardId/place" element={<PlaceDetailPage />} />

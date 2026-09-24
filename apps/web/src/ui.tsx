@@ -133,37 +133,62 @@ export function Modal({
   children,
   onClose,
   className = '',
+  open = true,
+  onAfterClose,
 }: {
   title: string;
   children: ReactNode;
   onClose: () => void;
   className?: string;
+  open?: boolean;
+  onAfterClose?: () => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
-  const [returnFocus] = useState(() =>
+  const returnFocus = useRef<HTMLElement | null>(
     document.activeElement instanceof HTMLElement ? document.activeElement : null,
   );
+  const restore = useRef<(() => void) | null>(null);
+  const afterClose = useRef(onAfterClose);
   const titleId = useId();
   useEffect(() => {
+    afterClose.current = onAfterClose;
+  }, [onAfterClose]);
+  useEffect(() => {
     const el = dialog.current!;
-    el.showModal();
-    el.querySelector<HTMLElement>('input:not([type="hidden"]), textarea, select')?.focus({
-      preventScroll: true,
-    });
-    const old = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      el.close();
-      document.body.style.overflow = old;
-      queueMicrotask(() => {
-        if (!el.isConnected && returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
-      });
-    };
-  }, [returnFocus]);
+    if (open) {
+      if (!el.open) {
+        // autoFocus fields may already be focused when this effect runs.
+        if (document.activeElement instanceof HTMLElement && !el.contains(document.activeElement)) {
+          returnFocus.current = document.activeElement;
+        }
+        const old = document.body.style.overflow;
+        restore.current = () => {
+          el.close();
+          document.body.style.overflow = old;
+          if (returnFocus.current?.isConnected) returnFocus.current.focus({ preventScroll: true });
+          restore.current = null;
+        };
+        el.showModal();
+        el.querySelector<HTMLElement>('input:not([type="hidden"]), textarea, select')?.focus({
+          preventScroll: true,
+        });
+        document.body.style.overflow = 'hidden';
+      }
+    } else if (el.open) {
+      const delay = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 240;
+      const timer = window.setTimeout(() => {
+        restore.current?.();
+        afterClose.current?.();
+      }, delay);
+      return () => window.clearTimeout(timer);
+    }
+  }, [open]);
+  useEffect(() => () => restore.current?.(), []);
   return (
     <dialog
       ref={dialog}
       className={`modal ${className}`}
+      data-state={open ? 'open' : 'closed'}
       onClick={(e) => {
         if (e.target === e.currentTarget) {
           const rect = e.currentTarget.getBoundingClientRect();

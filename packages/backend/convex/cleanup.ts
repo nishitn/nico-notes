@@ -35,7 +35,7 @@ export const board = internalMutation({
       await deleteVisit(ctx, visits[0]._id);
       await ctx.scheduler.runAfter(0, internal.cleanup.board, { boardId });
     } else {
-      for (const table of ['memberships', 'visitTypes', 'invitations'] as const) {
+      for (const table of ['memberships', 'visitTypes', 'invitations', 'joinRequests'] as const) {
         const rows = await ctx.db
           .query(table)
           .withIndex('by_boardId', (q) => q.eq('boardId', boardId))

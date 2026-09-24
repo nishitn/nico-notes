@@ -102,9 +102,10 @@ function Editor({
         </div>
       </div>
       <Form
-        className="editor-card"
+        className="visit-editor-form"
         onSubmit={() =>
           task.run(async () => {
+            if (!title.trim()) throw new Error('Choose a place to name your visit.');
             if (existing) {
               await update({
                 visitId: existing._id,
@@ -137,30 +138,40 @@ function Editor({
           })
         }
       >
-        <Field label="Give this visit a name">
-          <input
-            required
-            autoFocus
-            maxLength={120}
-            placeholder="e.g. Friday dinner at the little Italian place"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
+        <LocationField
+          value={location}
+          onChange={(selected) => {
+            setTitle(selected.title);
+            setPlace(selected.place);
+            setLocation(selected.location);
+          }}
+          title={title}
+          place={place}
+        />
+        <div className="visit-date-row">
+          <details className="visit-date-control">
+            <summary>
+              <CalendarDays size={15} /> {date ? formatDate(date) : 'Add date'}
+            </summary>
+            <div className="visit-date-popover">
+              <Field label="When was it?">
+                <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+              </Field>
+              <button type="button" className="text-button small" onClick={() => setDate('')}>
+                Leave date blank
+              </button>
+            </div>
+          </details>
+        </div>
+        <Field label="A note to remember (optional)">
+          <textarea
+            rows={3}
+            maxLength={5000}
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="What made this one special?"
           />
         </Field>
-        <div className="form-row">
-          <Field label="When was it?" hint="Leave blank if you don’t remember.">
-            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-          </Field>
-          <Field label="Place or location (optional)">
-            <input
-              maxLength={250}
-              placeholder="Restaurant, trail, or somewhere special"
-              value={place}
-              onChange={(e) => setPlace(e.target.value)}
-            />
-          </Field>
-        </div>
-        <LocationField value={location} onChange={setLocation} title={title} place={place} />
         {!existing && (
           <>
             <Field label="What kind of date?">
@@ -202,15 +213,6 @@ function Editor({
           />
           <span>Include dishes to rate</span>
         </label>
-        <Field label="A note to remember (optional)">
-          <textarea
-            rows={5}
-            maxLength={5000}
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            placeholder="What made this one special?"
-          />
-        </Field>
         <ErrorNote text={task.error} />
         <div className="form-actions">
           <Link className="button secondary" to={back}>

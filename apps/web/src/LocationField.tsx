@@ -1,7 +1,10 @@
-import { useMemo, useState } from 'react';
-import { MapPin, Navigation, X } from 'lucide-react';
-import { Field, Modal } from './ui';
+import { useRef, useState } from 'react';
+import { MapPin, Navigation, Pencil, Search } from 'lucide-react';
+import { ErrorNote, Field, Modal } from './ui';
 import { PlacesMap, mapsLink, type MapLocation } from './PlacesMap';
+import { placeSearchErrorMessage, searchNearbyPlaces } from './googleMaps';
+
+type SelectedPlace = { title: string; place: string; location: MapLocation | null };
 
 export function LocationField({
   value,
@@ -10,114 +13,271 @@ export function LocationField({
   place,
 }: {
   value: MapLocation | null;
-  onChange: (location: MapLocation | null) => void;
+  onChange: (place: SelectedPlace) => void;
   title: string;
   place: string;
 }) {
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(value);
+  const [draft, setDraft] = useState<SelectedPlace>({ title, place, location: value });
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<Awaited<ReturnType<typeof searchNearbyPlaces>>>([]);
+  const [searching, setSearching] = useState(false);
+  const [searched, setSearched] = useState(false);
   const [coordinates, setCoordinates] = useState('');
   const [error, setError] = useState('');
-  const pins = useMemo(
-    () =>
-      draft ? [{ id: 'draft', title: title || 'Visit location', count: 1, location: draft }] : [],
-    [draft, title],
-  );
+  const searchVersion = useRef(0);
+  const pins = (location: MapLocation | null, name: string) =>
+    location ? [{ id: 'visit', title: name || 'Visit location', count: 1, location }] : [];
+
+  function close() {
+    searchVersion.current++;
+    setEditing(false);
+  }
+
+  async function search() {
+    if (query.trim().length < 2) return;
+    const version = ++searchVersion.current;
+    setSearching(true);
+    setError('');
+    setResults([]);
+    setSearched(false);
+    try {
+      const found = await searchNearbyPlaces(query.trim());
+      if (version !== searchVersion.current) return;
+      setResults(found);
+      setSearched(true);
+    } catch (error) {
+      if (version === searchVersion.current) setError(placeSearchErrorMessage(error));
+    } finally {
+      if (version === searchVersion.current) setSearching(false);
+    }
+  }
+
   return (
-    <div className="location-field">
-      <span className="field-title">
-        Map pin <span className="muted">(optional)</span>
-      </span>
-      <div className="actions">
-        <button
-          type="button"
-          className="button secondary"
-          onClick={() => {
-            setDraft(value);
-            setEditing(true);
-          }}
-        >
-          <MapPin size={17} />
-          {value ? 'Adjust pin' : 'Set map pin'}
-        </button>
-        <a
-          href={mapsLink({ title, place })}
-          target="_blank"
-          rel="noreferrer"
-          className="text-button"
-        >
-          <Navigation size={15} />
-          Find on Google Maps
-        </a>
-        {value && (
-          <button
-            type="button"
-            className="icon-button"
-            aria-label="Remove map pin"
-            onClick={() => onChange(null)}
-          >
-            <X size={17} />
-          </button>
-        )}
-      </div>
-      {value && (
-        <p className="small muted">
-          {value.latitude.toFixed(5)}, {value.longitude.toFixed(5)}
-        </p>
-      )}
-      {editing && (
-        <Modal title="Place your pin" className="location-modal" onClose={() => setEditing(false)}>
-          <p className="muted small">
-            Tap the map, or paste coordinates copied from Google Maps. Check the branch before
-            saving.
-          </p>
-          <PlacesMap places={pins} onPick={setDraft} label="Choose visit location" />
-          <Field label="Coordinates or a Google Maps URL">
+    <section className="location-field" aria-label="Visit place">
+      <PlacesMap
+        places={pins(value, title)}
+        selectedId={value ? 'visit' : undefined}
+        label="Visit location"
+      />
+      <div className="visit-place-summary">
+        <div>
+          <Field label="Visit name">
             <input
-              value={coordinates}
-              onChange={(e) => setCoordinates(e.target.value)}
-              placeholder="12.93, 77.63"
+              className="visit-place-name"
+              required
+              maxLength={120}
+              value={title}
+              placeholder="Choose a place or enter a name"
+              onChange={(event) => onChange({ title: event.target.value, place, location: value })}
             />
           </Field>
-          {error && (
-            <p className="error-note" role="alert">
-              {error}
-            </p>
+          <p className="muted small">
+            {place ||
+              (title
+                ? 'Add a location to remember the spot.'
+                : 'Choose a place from Google Maps to name your visit.')}
+          </p>
+        </div>
+        <div className="visit-place-actions">
+          <button
+            type="button"
+            className="button secondary"
+            onClick={() => {
+              setDraft({ title, place, location: value });
+              setQuery(title);
+              setCoordinates('');
+              setResults([]);
+              setSearched(false);
+              setSearching(false);
+              setError('');
+              setEditing(true);
+            }}
+          >
+            <Pencil size={15} /> {title ? 'Edit place' : 'Choose place'}
+          </button>
+          {value && (
+            <a
+              href={mapsLink({ title, place, location: value })}
+              target="_blank"
+              rel="noreferrer"
+              className="text-button small"
+            >
+              <Navigation size={14} /> Google Maps
+            </a>
           )}
-          <div className="form-actions">
-            <button
-              type="button"
-              className="button secondary"
-              onClick={() => {
-                const pair = coordinates
-                  .trim()
-                  .match(/(?:@|!3d|q=|query=)?(-?\d{1,3}\.\d+)(?:,|!4d|\s+)\s*(-?\d{1,3}\.\d+)/);
-                if (!pair || Math.abs(Number(pair[1])) > 90 || Math.abs(Number(pair[2])) > 180) {
-                  setError(
-                    'Paste latitude, longitude or a full Maps URL containing coordinates. Short sharing links do not include coordinates.',
-                  );
-                  return;
-                }
-                setDraft({ latitude: Number(pair[1]), longitude: Number(pair[2]) });
-                setError('');
-              }}
-            >
-              Locate coordinates
-            </button>
-            <button
-              type="button"
-              className="button primary"
-              disabled={!draft}
-              onClick={() => {
-                onChange(draft);
-                setEditing(false);
-              }}
-            >
-              Use this pin
-            </button>
+        </div>
+      </div>
+      {editing && (
+        <Modal title="Choose a place" className="location-modal" onClose={close}>
+          <div
+            className="form"
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && event.target instanceof HTMLInputElement)
+                event.preventDefault();
+            }}
+          >
+            <div className="place-search-controls">
+              <Field label="Search Google Maps">
+                <input
+                  autoFocus
+                  value={query}
+                  placeholder="Place name and area"
+                  onChange={(event) => {
+                    searchVersion.current++;
+                    setQuery(event.target.value);
+                    setResults([]);
+                    setSearched(false);
+                    setSearching(false);
+                    setError('');
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      void search();
+                    }
+                  }}
+                />
+              </Field>
+              <button
+                type="button"
+                className="button secondary"
+                disabled={searching || query.trim().length < 2}
+                onClick={() => void search()}
+              >
+                <Search size={16} /> {searching ? 'Searching…' : 'Search'}
+              </button>
+            </div>
+            <ErrorNote text={error} />
+            {searched && !results.length && (
+              <p className="small muted" role="status">
+                No matching places. Try adding the city or area.
+              </p>
+            )}
+            {results.length > 0 && (
+              <div className="place-search-results" aria-label="Google Maps results">
+                {results.map((result) => (
+                  <button
+                    type="button"
+                    key={result.id}
+                    className="place-search-result"
+                    onClick={() => {
+                      setDraft(result);
+                      setResults([]);
+                      setSearched(false);
+                      setCoordinates('');
+                    }}
+                  >
+                    <MapPin size={18} />
+                    <span>
+                      <strong>{result.title}</strong>
+                      <small>{result.place}</small>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+            <PlacesMap
+              places={pins(draft.location, draft.title)}
+              selectedId={draft.location ? 'visit' : undefined}
+              onPick={(location) => setDraft((current) => ({ ...current, location }))}
+              autoLocate={!value}
+              label="Choose visit location"
+            />
+            {draft.title && (
+              <div className="place-selection" aria-live="polite">
+                <strong>{draft.title}</strong>
+                <p className="small muted">{draft.place}</p>
+              </div>
+            )}
+            <details className="place-manual-details">
+              <summary>Enter place details manually or adjust the pin</summary>
+              <div className="form">
+                <Field label="Place name">
+                  <input
+                    maxLength={120}
+                    value={draft.title}
+                    onChange={(event) => setDraft({ ...draft, title: event.target.value })}
+                  />
+                </Field>
+                <Field label="Address (optional)">
+                  <input
+                    maxLength={250}
+                    value={draft.place}
+                    onChange={(event) => setDraft({ ...draft, place: event.target.value })}
+                  />
+                </Field>
+                <Field label="Coordinates or a Google Maps URL">
+                  <input
+                    value={coordinates}
+                    onChange={(event) => setCoordinates(event.target.value)}
+                    placeholder="12.93, 77.63"
+                  />
+                </Field>
+                <div className="actions">
+                  <button
+                    type="button"
+                    className="button secondary"
+                    onClick={() => {
+                      const pair = coordinates
+                        .trim()
+                        .match(
+                          /(?:@|!3d|q=|query=)?(-?\d{1,3}\.\d+)(?:,|!4d|\s+)\s*(-?\d{1,3}\.\d+)/,
+                        );
+                      if (
+                        !pair ||
+                        Math.abs(Number(pair[1])) > 90 ||
+                        Math.abs(Number(pair[2])) > 180
+                      ) {
+                        setError(
+                          'Paste latitude, longitude or a full Maps URL containing coordinates. Short sharing links do not include coordinates.',
+                        );
+                        return;
+                      }
+                      setDraft({
+                        ...draft,
+                        location: { latitude: Number(pair[1]), longitude: Number(pair[2]) },
+                      });
+                      setError('');
+                    }}
+                  >
+                    Locate coordinates
+                  </button>
+                  {draft.location && (
+                    <button
+                      type="button"
+                      className="text-button"
+                      onClick={() => setDraft({ ...draft, location: null })}
+                    >
+                      Remove pin
+                    </button>
+                  )}
+                </div>
+              </div>
+            </details>
+            <div className="form-actions">
+              <button type="button" className="button secondary" onClick={close}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="button primary"
+                disabled={!draft.title.trim()}
+                onClick={() => {
+                  onChange({
+                    ...draft,
+                    title: draft.title.trim().slice(0, 120),
+                    place: draft.place.slice(0, 250),
+                  });
+                  close();
+                }}
+              >
+                Use this place
+              </button>
+            </div>
           </div>
         </Modal>
       )}
-    </div>
+    </section>
   );
 }

@@ -17,11 +17,25 @@ const schema = defineSchema({
     accent,
     ownerId: v.id('users'),
     deleting: v.boolean(),
-  }),
+    inviteCode: v.optional(v.string()),
+  }).index('by_inviteCode', ['inviteCode']),
   memberships: defineTable({ boardId: v.id('boards'), userId: v.id('users') })
     .index('by_userId', ['userId'])
     .index('by_boardId', ['boardId'])
     .index('by_boardId_and_userId', ['boardId', 'userId']),
+  joinRequests: defineTable({
+    boardId: v.id('boards'),
+    userId: v.id('users'),
+    status: v.union(v.literal('pending'), v.literal('accepted'), v.literal('rejected')),
+    createdAt: v.number(),
+    reviewedAt: v.optional(v.number()),
+    reviewedBy: v.optional(v.id('users')),
+  })
+    .index('by_boardId', ['boardId'])
+    .index('by_boardId_and_userId', ['boardId', 'userId'])
+    .index('by_boardId_and_status', ['boardId', 'status'])
+    .index('by_userId', ['userId'])
+    .index('by_userId_and_status', ['userId', 'status']),
   invitations: defineTable({
     boardId: v.id('boards'),
     token: v.string(),
