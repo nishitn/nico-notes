@@ -52,7 +52,7 @@ export async function person(ctx: QueryCtx, id: Id<'users'>) {
   const user = await ctx.db.get(id);
   return {
     _id: id,
-    name: user?.name ?? 'Date Notes member',
+    name: user?.displayName ?? user?.name ?? 'nico notes member',
     ...(user?.image ? { image: user.image } : {}),
   };
 }

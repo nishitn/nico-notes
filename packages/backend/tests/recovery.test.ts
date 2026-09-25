@@ -14,6 +14,7 @@ it('restores the notes once with both existing accounts and editable Mansi ratin
   }));
   const restored = await t.mutation(internal.importNotes.restoreBangalore, accounts);
   expect(restored).toMatchObject({ inserted: 22, ratings: 92 });
+  await t.run((ctx) => ctx.db.patch(restored.boardId, { name: 'Our memories' }));
   const retry = await t.mutation(internal.importNotes.restoreBangalore, accounts);
   expect(retry).toEqual({ boardId: restored.boardId, inserted: 0, ratings: 0, skipped: 22 });
   const mansi = t.withIdentity({ subject: `${accounts.mansiUserId}|mansi-session` });

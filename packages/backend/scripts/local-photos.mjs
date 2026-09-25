@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -11,7 +11,32 @@ const maxBytes = 10 * 1024 * 1024;
 export function photoPath(directory, key, contentType) {
   if (!/^[a-zA-Z0-9]{20,64}$/.test(key) || !extensions[contentType])
     throw new Error('Invalid photo key.');
-  return join(directory, `date-notes-${key}.${extensions[contentType]}`);
+  return join(directory, `nico-notes-${key}.${extensions[contentType]}`);
+}
+async function storedPhotoPaths(directory, key, contentType) {
+  // Validate the key before matching files written under any earlier brand prefix.
+  photoPath(directory, key, contentType);
+  const suffix = `-${key}.${extensions[contentType]}`;
+  let entries;
+  try {
+    entries = await readdir(directory, { withFileTypes: true });
+  } catch (error) {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  }
+  return entries
+    .filter((entry) => entry.isFile() && entry.name.endsWith(suffix))
+    .map((entry) => join(directory, entry.name));
+}
+async function readPhoto(directory, key, contentType) {
+  try {
+    return await readFile(photoPath(directory, key, contentType));
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    const existing = await storedPhotoPaths(directory, key, contentType);
+    if (existing.length !== 1) throw new Error('Photo file could not be uniquely located.');
+    return readFile(existing[0]);
+  }
 }
 export function imageMatches(bytes, type) {
   if (type === 'image/jpeg') return bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255;
@@ -116,7 +141,7 @@ export function createPhotoServer({
           response.end(Buffer.from(await remote.arrayBuffer()));
           return;
         }
-        const bytes = await readFile(photoPath(directory, file.key, file.contentType));
+        const bytes = await readPhoto(directory, file.key, file.contentType);
         response.writeHead(200, {
           'Content-Type': file.contentType,
           'Cache-Control': 'no-store',
@@ -141,10 +166,12 @@ export function createPhotoServer({
     const pending = await client.query(api.photos.localDeletions, { secret });
     const ids = [];
     for (const item of pending) {
-      try {
-        await unlink(photoPath(directory, item.key, item.contentType));
-      } catch (error) {
-        if (error.code !== 'ENOENT') throw error;
+      for (const path of await storedPhotoPaths(directory, item.key, item.contentType)) {
+        try {
+          await unlink(path);
+        } catch (error) {
+          if (error.code !== 'ENOENT') throw error;
+        }
       }
       ids.push(item._id);
     }

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getFunctionName } from 'convex/server';
@@ -10,7 +10,7 @@ const ticket = 'a'.repeat(32);
 const photoId = 'b'.repeat(32);
 const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0]);
 async function setup(t) {
-  const directory = await mkdtemp(join(tmpdir(), 'date-notes-photos-'));
+  const directory = await mkdtemp(join(tmpdir(), 'nico-notes-photos-'));
   const state = { photo: false, writes: 0, pending: [], ack: [] };
   const service = createPhotoServer({
     directory,
@@ -95,6 +95,24 @@ test('retries the same upload without a duplicate photo', async (t) => {
   assert.equal((await send()).status, 200);
   assert.equal((await send()).status, 200);
   assert.equal(state.writes, 1);
+});
+test('serves and cleans up photos stored under an earlier brand prefix', async (t) => {
+  const { state, directory, base, removeDeletedPhotos } = await setup(t);
+  const previous = join(directory, `previous-brand-${ticket}.png`);
+  const unrelated = join(directory, 'unrelated.png');
+  await writeFile(previous, png);
+  await writeFile(unrelated, png);
+  state.photo = true;
+  const response = await fetch(`${base}/photos/file?id=${photoId}`, {
+    headers: { Authorization: 'Bearer member' },
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()), png);
+  state.pending = [{ _id: 'job', key: ticket, contentType: 'image/png' }];
+  await removeDeletedPhotos();
+  await assert.rejects(readFile(previous), { code: 'ENOENT' });
+  assert.deepEqual(await readFile(unrelated), png);
+  assert.deepEqual(state.ack, ['job']);
 });
 test('rejects invalid image bytes and unauthorized uploads', async (t) => {
   const { send, state } = await setup(t);

@@ -4,6 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import {
   Check,
   Clock,
+  Cloud,
   Copy,
   Link2,
   Pencil,
@@ -15,8 +16,8 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { api } from '@date-notes/backend/api';
-import type { Doc, Id } from '@date-notes/backend/dataModel';
+import { api } from '@nico-notes/backend/api';
+import type { Doc, Id } from '@nico-notes/backend/dataModel';
 import {
   Back,
   Confirm,
@@ -32,6 +33,48 @@ import {
 } from './ui';
 
 import { DishRatingsToggle, RatingCategories } from './RatingCategories';
+
+function PhotoStorageSettings({ board }: { board: Doc<'boards'> }) {
+  const setStorage = useMutation(api.photos.setStorage);
+  const task = useTask();
+  const notice = useNotice();
+  return (
+    <section className="settings-section">
+      <h2>
+        <span className="settings-icon" aria-hidden="true">
+          <Cloud size={18} />
+        </span>
+        Photo storage
+      </h2>
+      <div className="settings-section-body">
+        <Field
+          label="Store new photos in"
+          hint="Applies to new uploads on this board. Existing photos stay where they are."
+        >
+          <select
+            value={board.photoStorage ?? 'convex'}
+            disabled={task.busy}
+            onChange={(event) => {
+              const provider = event.target.value as 'convex' | 'local';
+              void task.run(async () => {
+                await setStorage({ boardId: board._id, provider });
+                notice('Photo storage updated');
+              });
+            }}
+          >
+            <option value="convex">Convex cloud (default)</option>
+            <option value="local">Local storage (Mac mini)</option>
+          </select>
+        </Field>
+        <p>
+          Convex stores photos online. Local storage requires the Mac mini photo service to be set
+          up and running.
+        </p>
+        <ErrorNote text={task.error} />
+      </div>
+    </section>
+  );
+}
 
 function BoardDetails({ board, canEdit }: { board: Doc<'boards'>; canEdit: boolean }) {
   const [editing, setEditing] = useState(false);
@@ -426,6 +469,7 @@ export function Settings() {
             <BoardDetails board={detail.board} canEdit={isAdmin} />
           </div>
         </section>
+        {isAdmin && <PhotoStorageSettings board={detail.board} />}
         <section className="settings-section settings-types">
           <div className="section-heading">
             <h2>

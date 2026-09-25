@@ -116,13 +116,15 @@ export const restoreBangalore = internalMutation({
     // A repeated operator invocation must not duplicate the restored board or its scores.
     for (const membership of memberships) {
       const board = await ctx.db.get(membership.boardId);
-      if (!board || board.deleting || board.ownerId !== ownerId || board.name !== 'Dates') continue;
+      if (!board || board.deleting || board.ownerId !== ownerId) continue;
       const firstVisit = await ctx.db
         .query('visits')
         .withIndex('by_boardId_and_importKey', (q) =>
           q.eq('boardId', board._id).eq('importKey', 'bangalore-notes-v1:0'),
         )
         .unique();
+      // Match imported content even when the board has been renamed.
+      if (!firstVisit && board.name !== 'Visits') continue;
       const partner = await ctx.db
         .query('memberships')
         .withIndex('by_boardId_and_userId', (q) =>
@@ -130,11 +132,11 @@ export const restoreBangalore = internalMutation({
         )
         .unique();
       if (!firstVisit || !partner)
-        throw new ConvexError('Dates already exists; inspect it before restoring.');
+        throw new ConvexError('An existing board needs inspection before restoring.');
       return { boardId: board._id, ...(await importBangalore(ctx, board._id, mansiUserId)) };
     }
     const boardId = await ctx.db.insert('boards', {
-      name: 'Dates',
+      name: 'Visits',
       description: '',
       accent: 'coral',
       ownerId,

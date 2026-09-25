@@ -24,7 +24,7 @@ createRoot(document.getElementById('root')!).render(
       <ErrorBoundary>
         <Notices>
           {client ? (
-            <ConvexAuthProvider client={client} storageNamespace="date-notes">
+            <ConvexAuthProvider client={client} storageNamespace="nico-notes">
               <App />
             </ConvexAuthProvider>
           ) : (

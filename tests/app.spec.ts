@@ -21,20 +21,28 @@ test('two people share a board, rate a dish, upload a photo, and lose access aft
   const bob = await b.newPage();
   const stranger = await outsider.newPage();
   const errors: string[] = [];
+  const photoRequests: string[] = [];
+  alice.on('request', (request) => {
+    if (new URL(request.url()).pathname.startsWith('/photos/')) photoRequests.push(request.url());
+  });
   alice.on('pageerror', (error) => errors.push(error.message));
   bob.on('pageerror', (error) => errors.push(error.message));
   await alice.goto('/');
   await expect(alice.getByRole('heading', { name: 'Boards', exact: true })).toBeVisible();
   await alice.getByRole('button', { name: 'Open menu' }).click();
   await alice.getByRole('button', { name: 'New board', exact: true }).click();
-  await alice.getByLabel('Board name').fill('Our food dates');
+  await alice.getByLabel('Board name').fill('Our food visits');
   await alice
     .getByLabel('Description (optional)')
     .fill('Little restaurants, long conversations, and one more bite.');
   await alice.getByRole('button', { name: 'Create board', exact: true }).click();
-  await expect(alice.getByRole('heading', { name: 'Our food dates', exact: true })).toBeVisible();
+  await expect(alice.getByRole('heading', { name: 'Our food visits', exact: true })).toBeVisible();
   const boardUrl = alice.url();
   await alice.getByRole('link', { name: 'Board settings' }).click();
+  await expect(alice.getByLabel('Store new photos in')).toHaveValue('convex');
+  await expect(
+    alice.getByLabel('Store new photos in').locator('option[value="local"]'),
+  ).toHaveCount(1);
   await alice.getByRole('button', { name: 'Create invitation link' }).click();
   const inviteLink = await alice.getByLabel('Invitation link', { exact: true }).inputValue();
   await bob.goto(inviteLink);
@@ -43,7 +51,10 @@ test('two people share a board, rate a dish, upload a photo, and lose access aft
   await expect(bob.getByRole('button', { name: 'Request pending' })).toBeDisabled();
   await alice.getByRole('button', { name: 'Accept', exact: true }).click();
   await bob.getByRole('button', { name: 'Open board', exact: true }).click();
-  await expect(bob.getByRole('heading', { name: 'Our food dates', exact: true })).toBeVisible();
+  await expect(bob.getByRole('heading', { name: 'Our food visits', exact: true })).toBeVisible();
+  await bob.goto(`${boardUrl}/settings`);
+  await expect(bob.getByRole('heading', { name: 'Board Settings' })).toBeVisible();
+  await expect(bob.getByLabel('Store new photos in')).toHaveCount(0);
   await alice.goto(boardUrl);
   await alice.getByRole('link', { name: 'Add visit', exact: true }).click();
   await alice.getByRole('button', { name: 'Choose place', exact: true }).click();
@@ -95,6 +106,8 @@ test('two people share a board, rate a dish, upload a photo, and lose access aft
   await alice.getByRole('button', { name: 'Save photo' }).click();
   await expect(alice.getByRole('img', { name: 'Our little table' })).toBeVisible();
   await expect(bob.getByRole('img', { name: 'Our little table' })).toBeVisible();
+  expect(photoRequests.some((url) => new URL(url).pathname === '/photos/upload')).toBe(true);
+  expect(photoRequests.every((url) => new URL(url).hostname.endsWith('.convex.site'))).toBe(true);
   await noOverflow(alice);
   await noOverflow(bob);
   await alice.screenshot({ path: 'test-results/desktop-visit.png', fullPage: true });
@@ -183,7 +196,7 @@ test('mobile visit types, keyboard dialogs, failed forms, and enlarged text', as
   await page.getByText('Enter place details manually or adjust the pin').click();
   await page.getByLabel('Place name', { exact: true }).fill('Sunrise at the summit');
   await page.getByRole('button', { name: 'Use this place' }).click();
-  await page.getByLabel('What kind of date?').selectOption({ label: 'Trek' });
+  await page.getByLabel('What kind of visit?').selectOption({ label: 'Trek' });
   await expect(page.getByLabel('Category 1', { exact: true })).toHaveValue('View');
   await expect(page.getByLabel('Category 2', { exact: true })).toHaveValue('Trail');
   await page.getByLabel('Category 2', { exact: true }).fill(' view ');

@@ -1,18 +1,18 @@
 {
-  "name": "date-notes",
+  "name": "nico-notes",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "pnpm -r --parallel dev",
-    "dev:web": "pnpm --filter @date-notes/web dev",
-    "dev:backend": "pnpm --filter @date-notes/backend dev",
-    "build": "pnpm --filter @date-notes/web build",
+    "dev:web": "pnpm --filter @nico-notes/web dev",
+    "dev:backend": "pnpm --filter @nico-notes/backend dev",
+    "build": "pnpm --filter @nico-notes/web build",
     "check": "vp check && tsc --noEmit && pnpm -r typecheck",
     "test": "vp test run",
     "test:e2e": "playwright test",
     "format": "vp fmt",
-    "deploy:backend": "pnpm --filter @date-notes/backend deploy",
-    "photos": "pnpm --filter @date-notes/backend photos",
+    "deploy:backend": "pnpm --filter @nico-notes/backend deploy",
+    "photos": "pnpm --filter @nico-notes/backend photos",
     "start": "node scripts/start-local.mjs"
   },
   "devDependencies": {

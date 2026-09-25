@@ -1,11 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAuthToken } from '@convex-dev/auth/react';
-import { useMutation } from 'convex/react';
+import { useConvex, useMutation, useQuery } from 'convex/react';
 import { Camera, ImagePlus, LoaderCircle, Trash2 } from 'lucide-react';
-import { api } from '@date-notes/backend/api';
-import type { Doc, Id } from '@date-notes/backend/dataModel';
-import { MAX_PHOTOS, MAX_PHOTO_BYTES, PHOTO_TYPES } from '@date-notes/backend/shared';
-const photoApi = import.meta.env.VITE_PHOTO_API_URL || '';
+import { api } from '@nico-notes/backend/api';
+import type { Doc, Id } from '@nico-notes/backend/dataModel';
+import { MAX_PHOTOS, MAX_PHOTO_BYTES, PHOTO_TYPES } from '@nico-notes/backend/shared';
+const localPhotoApi = import.meta.env.VITE_PHOTO_API_URL || '';
+const convexPhotoApi = import.meta.env.VITE_CONVEX_SITE_URL;
+
+function photoApi(provider: 'convex' | 'local') {
+  if (provider === 'local') return localPhotoApi.replace(/\/$/, '');
+  if (!convexPhotoApi) throw new Error('Convex photo storage is not configured.');
+  return convexPhotoApi.replace(/\/$/, '');
+}
 
 import { Confirm, ErrorNote, Field, Form, Modal, Submit, useNotice, useTask } from './ui';
 
@@ -19,6 +26,7 @@ export function Photo({
   className?: string;
 }) {
   const token = useAuthToken();
+  const provider = useQuery(api.photos.fileProvider, token ? { photoId: id } : 'skip');
   const [loaded, setLoaded] = useState<{
     id: string;
     token: string;
@@ -26,10 +34,10 @@ export function Photo({
     failed: boolean;
   } | null>(null);
   useEffect(() => {
-    if (!token) return;
+    if (!token || !provider) return;
     const abort = new AbortController();
     let objectUrl = '';
-    void fetch(`${photoApi}/photos/file?id=${id}`, {
+    void fetch(`${photoApi(provider)}/photos/file?id=${id}`, {
       headers: { Authorization: `Bearer ${token}` },
       signal: abort.signal,
     })
@@ -48,9 +56,9 @@ export function Photo({
       abort.abort();
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [id, token]);
+  }, [id, token, provider]);
   const current = loaded?.id === id && loaded.token === token ? loaded : null;
-  if (current?.failed)
+  if (current?.failed || provider === null)
     return (
       <span className="photo-loading">
         <Camera size={22} />
@@ -88,12 +96,14 @@ function upload(file: File, url: string, token: string, progress: (n: number) =>
 }
 export function usePhotoUpload() {
   const token = useAuthToken();
+  const convex = useConvex();
   const reserve = useMutation(api.photos.reserve);
   const [progress, setProgress] = useState(0);
   const pending = useRef<{
     file: File;
     visitId: Id<'visits'>;
     ticket: Id<'uploads'>;
+    provider?: 'convex' | 'local';
     createdAt: number;
   } | null>(null);
   async function send(visitId: Id<'visits'>, file: File, caption = '') {
@@ -110,9 +120,12 @@ export function usePhotoUpload() {
       const ticket = await reserve({ visitId, caption });
       pending.current = { file, visitId, ticket, createdAt: Date.now() };
     }
+    pending.current.provider ??= await convex.query(api.photos.uploadProvider, {
+      uploadId: pending.current.ticket,
+    });
     await upload(
       file,
-      `${photoApi}/photos/upload?ticket=${pending.current.ticket}`,
+      `${photoApi(pending.current.provider)}/photos/upload?ticket=${pending.current.ticket}`,
       token,
       setProgress,
     );

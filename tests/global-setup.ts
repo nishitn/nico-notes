@@ -26,7 +26,7 @@ export default async function setup() {
   const require = createRequire(path.join(backendDir, 'package.json'));
   const { importPKCS8, SignJWT } = await import(require.resolve('jose'));
   const privateKey = await importPKCS8(convex('env', 'get', 'JWT_PRIVATE_KEY'), 'RS256');
-  convex('env', 'set', 'DATE_NOTES_E2E_ENABLED', 'true');
+  convex('env', 'set', 'NICO_NOTES_E2E_ENABLED', 'true');
   fs.mkdirSync('test-results', { recursive: true });
   try {
     const users: { userId: string; sessionId: string; refreshTokenId: string; name: string }[] =
@@ -50,9 +50,9 @@ export default async function setup() {
             {
               origin: 'http://localhost:5173',
               localStorage: [
-                { name: '__convexAuthJWT_datenotes', value: token },
+                { name: '__convexAuthJWT_niconotes', value: token },
                 {
-                  name: '__convexAuthRefreshToken_datenotes',
+                  name: '__convexAuthRefreshToken_niconotes',
                   value: `${user.refreshTokenId}|${user.sessionId}`,
                 },
               ],
@@ -63,7 +63,7 @@ export default async function setup() {
       );
     }
   } catch (error) {
-    convex('env', 'remove', 'DATE_NOTES_E2E_ENABLED');
+    convex('env', 'remove', 'NICO_NOTES_E2E_ENABLED');
     throw error;
   }
 }

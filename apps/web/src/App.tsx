@@ -12,7 +12,7 @@ import {
   Menu,
   UserPlus,
 } from 'lucide-react';
-import { api } from '@date-notes/backend/api';
+import { api } from '@nico-notes/backend/api';
 import {
   Brand,
   ErrorBoundary,
@@ -42,7 +42,7 @@ export function Setup() {
   return (
     <div className="setup">
       <Brand />
-      <h1>Almost ready for your first date.</h1>
+      <h1>Almost ready for your first visit.</h1>
       <p>Connect your Convex deployment to start saving your memories.</p>
       <p>
         Set <code>VITE_CONVEX_URL</code> and <code>VITE_CONVEX_SITE_URL</code> in the frontend’s
@@ -73,8 +73,8 @@ function Login() {
             <span>second helping.</span>
           </h1>
           <p>
-            A favorite dish. A beautiful view. A day worth remembering. Keep your dates, photos, and
-            honest little ratings in one shared place.
+            A favorite dish. A beautiful view. A day worth remembering. Keep your visits, photos,
+            and honest little ratings in one shared place.
           </p>
           <div className="login-action">
             <button
@@ -131,7 +131,7 @@ function Login() {
           <span className="decorative-spark">✧</span>
         </section>
       </main>
-      <footer>date notes</footer>
+      <footer>nico notes</footer>
     </div>
   );
 }

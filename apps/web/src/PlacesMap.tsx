@@ -69,7 +69,7 @@ export function PlacesMap({
     const listeners: google.maps.MapsEventListener[] = [];
     const authFailure = () =>
       setError('Google Maps couldn’t connect. Check the Maps key and enabled APIs.');
-    window.addEventListener('date-notes:maps-auth-error', authFailure);
+    window.addEventListener('nico-notes:maps-auth-error', authFailure);
     setError('');
     void loadGoogleMaps()
       .then(({ maps }) => {
@@ -111,7 +111,7 @@ export function PlacesMap({
       disposed = true;
       listeners.forEach((listener) => listener.remove());
       if (map) google.maps.event.clearInstanceListeners(map);
-      window.removeEventListener('date-notes:maps-auth-error', authFailure);
+      window.removeEventListener('nico-notes:maps-auth-error', authFailure);
       element.replaceChildren();
     };
   }, [retry]);
@@ -125,7 +125,7 @@ export function PlacesMap({
     const listeners: google.maps.MapsEventListener[] = [];
     for (const place of places) {
       const content = document.createElement('div');
-      content.className = 'date-pin';
+      content.className = 'visit-pin';
       const heart = document.createElement('span');
       heart.setAttribute('aria-hidden', 'true');
       content.append(heart);

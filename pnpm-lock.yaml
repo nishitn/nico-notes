@@ -33,7 +33,7 @@ importers:
       '@convex-dev/auth':
         specifier: latest
         version: 0.0.95(@auth/core@0.41.3)(convex@1.46.0(react@19.3.0))(react@19.3.0)
-      '@date-notes/backend':
+      '@nico-notes/backend':
         specifier: workspace:*
         version: link:../../packages/backend
       '@fontsource/epilogue':

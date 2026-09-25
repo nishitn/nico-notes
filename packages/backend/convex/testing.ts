@@ -5,7 +5,7 @@ import { internalMutation } from './_generated/server';
 import { internal } from './_generated/api';
 
 function enabled() {
-  if (process.env.DATE_NOTES_E2E_ENABLED !== 'true')
+  if (process.env.NICO_NOTES_E2E_ENABLED !== 'true')
     throw new Error('Browser-test fixtures are disabled.');
 }
 export const createUsers = internalMutation({

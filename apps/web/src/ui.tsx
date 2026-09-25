@@ -66,12 +66,12 @@ export function Notices({ children }: { children: ReactNode }) {
 }
 export function Brand() {
   return (
-    <Link to="/" className="brand" aria-label="Date Notes home">
+    <Link to="/" className="brand" aria-label="nico notes home">
       <span className="brand-mark">
-        <Heart size={23} strokeWidth={2} />
+        <img src="/favicon.svg" alt="" width={39} height={39} />
       </span>
       <span>
-        date notes<span className="brand-dot">.</span>
+        nico notes<span className="brand-dot">.</span>
       </span>
     </Link>
   );

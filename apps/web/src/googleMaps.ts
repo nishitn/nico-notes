@@ -18,7 +18,7 @@ export async function loadGoogleMaps() {
     setOptions({ key: import.meta.env.VITE_GOOGLE_MAPS_API_KEY.trim(), v: 'weekly' });
     const previousAuthFailure = window.gm_authFailure;
     window.gm_authFailure = () => {
-      window.dispatchEvent(new Event('date-notes:maps-auth-error'));
+      window.dispatchEvent(new Event('nico-notes:maps-auth-error'));
       previousAuthFailure?.();
     };
     configured = true;

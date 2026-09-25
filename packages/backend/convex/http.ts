@@ -10,7 +10,9 @@ const http = httpRouter();
 auth.addHttpRoutes(http);
 function headers(request: Request) {
   const origin = request.headers.get('Origin');
-  const allowed = (process.env.ALLOWED_ORIGINS ?? process.env.SITE_URL ?? 'http://localhost:5173')
+  const allowed = [process.env.SITE_URL, process.env.ALLOWED_ORIGINS ?? 'http://localhost:5173']
+    .filter(Boolean)
+    .join(',')
     .split(',')
     .map((s) => s.trim());
   return {

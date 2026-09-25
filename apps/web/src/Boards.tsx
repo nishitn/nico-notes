@@ -13,8 +13,8 @@ import {
   Utensils,
   X,
 } from 'lucide-react';
-import { api } from '@date-notes/backend/api';
-import type { Doc, Id } from '@date-notes/backend/dataModel';
+import { api } from '@nico-notes/backend/api';
+import type { Doc, Id } from '@nico-notes/backend/dataModel';
 import { Artwork } from './Artwork';
 import { BoardDashboard, VisitCard, type DesignVariant } from './BoardDashboard';
 import { PlacesMap } from './PlacesMap';
@@ -120,7 +120,7 @@ export function JoinBoardModal({ onClose }: { onClose: () => void }) {
   );
 }
 function lastBoardKey(userId: string) {
-  return `date-notes:last-board:${userId}`;
+  return `nico-notes:last-board:${userId}`;
 }
 function readLastBoard(userId: string) {
   try {

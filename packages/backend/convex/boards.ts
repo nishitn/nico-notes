@@ -102,6 +102,17 @@ export const me = authedQuery({
   returns: personValidator,
   handler: (ctx) => person(ctx, ctx.userId),
 });
+export const updateProfile = authedMutation({
+  args: { name: v.string() },
+  returns: v.null(),
+  handler: async (ctx, { name }) => {
+    const displayName = name.trim();
+    if (!displayName || displayName.length > 80)
+      throw new ConvexError('Your name must be between 1 and 80 characters.');
+    await ctx.db.patch(ctx.userId, { displayName });
+    return null;
+  },
+});
 export const list = authedQuery({
   args: { paginationOpts: paginationOptsValidator },
   returns: v.object({

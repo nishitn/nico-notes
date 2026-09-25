@@ -274,7 +274,7 @@ export const create = authedMutation({
       date: args.date,
       place: args.place.trim().slice(0, 250),
       notes: args.notes.trim().slice(0, 5000),
-      typeName: type?.name ?? 'A date',
+      typeName: type?.name ?? 'A visit',
       showDishes: args.showDishes || dishes.length > 0,
       location: validateLocation(args.location),
     });

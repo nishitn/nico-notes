@@ -15,8 +15,8 @@ import {
   Utensils,
   X,
 } from 'lucide-react';
-import { api } from '@date-notes/backend/api';
-import type { Doc } from '@date-notes/backend/dataModel';
+import { api } from '@nico-notes/backend/api';
+import type { Doc } from '@nico-notes/backend/dataModel';
 import type { FunctionReturnType } from 'convex/server';
 import { Initials, Modal, Spinner, formatDate } from './ui';
 import { Invitations } from './Settings';
@@ -34,6 +34,27 @@ type NewPlace = {
   place: string;
   location: MapLocation;
 };
+
+function NoteCounter({ count }: { count: number }) {
+  return (
+    <span className="visit-counter">
+      <svg
+        width="26"
+        height="28"
+        viewBox="8 7 44 48"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M41 51H19a7 7 0 0 1-7-7V20a7 7 0 0 1 7-7h22a7 7 0 0 1 7 7v24a7 7 0 0 1-7 7ZM12 23h36M21 10v7m9-7v7m9-7v7M21 32h16M21 40h8" />
+      </svg>
+      <span className="visit-counter-number">{count}</span>
+    </span>
+  );
+}
 
 function placeKey(visit: Doc<'visits'>) {
   return `${visit.title.trim().toLowerCase()}|${visit.place.trim().toLowerCase()}`;
@@ -69,13 +90,13 @@ export function VisitCard({
   variant,
   members,
   isRow,
-  dateNumber,
+  visitNumber,
 }: {
   visit: VisitSummary;
   variant: DesignVariant;
   members: Detail['members'];
   isRow?: boolean;
-  dateNumber?: number;
+  visitNumber?: number;
 }) {
   const hasPhotos = visit.photoIds.length > 0;
   const showDishRatings = members.length <= 3;
@@ -87,7 +108,9 @@ export function VisitCard({
       }`}
     >
       <div className="memory-topline">
-        {dateNumber !== undefined && <span className="memory-date-number">Date #{dateNumber}</span>}
+        {visitNumber !== undefined && (
+          <span className="memory-visit-number">Visit #{visitNumber}</span>
+        )}
         {visit.date && <time dateTime={visit.date}>{formatDate(visit.date)}</time>}
       </div>
       <div className="memory-title-row">
@@ -238,7 +261,7 @@ export function BoardDashboard({
     if (placesStatus === 'CanLoadMore') loadPlaces(100);
   }, [placesStatus, loadPlaces]);
 
-  // Infinite scroll observer to automatically load more dates
+  // Infinite scroll observer to automatically load more visits
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -355,7 +378,7 @@ export function BoardDashboard({
 
   // Both visit queries use the same newest-first order. Wait for all lightweight
   // metadata so numbers stay consistent as more cards are loaded.
-  const dateNumbers = useMemo(
+  const visitNumbers = useMemo(
     () =>
       new Map(
         placesStatus === 'Exhausted'
@@ -434,10 +457,7 @@ export function BoardDashboard({
         <div className="places-heading">
           <h2>Your places</h2>
           <div className="places-explored-heading-right">
-            <span className="heart-counter-badge">
-              <Heart className="heading-heart-icon" aria-hidden="true" strokeWidth={1.4} />
-              <span className="heart-counter-number">{groups.length}</span>
-            </span>
+            <NoteCounter count={groups.length} />
             <span className="explored-word">explored</span>
           </div>
         </div>
@@ -759,15 +779,11 @@ export function BoardDashboard({
         })()}
       </section>
 
-      {/* Your dates Section (No dot, no subtitle) */}
-      <section className="recent-section" aria-label="Your dates">
+      <section className="recent-section" aria-label="Your Visits">
         <div className="recent-heading">
-          <h2>Your dates</h2>
+          <h2>Your Visits</h2>
           <div className="places-explored-heading-right">
-            <span className="heart-counter-badge">
-              <Heart className="heading-heart-icon" aria-hidden="true" strokeWidth={1.4} />
-              <span className="heart-counter-number">{visits.length}</span>
-            </span>
+            <NoteCounter count={visits.length} />
             <span className="explored-word">so far</span>
           </div>
         </div>
@@ -780,7 +796,7 @@ export function BoardDashboard({
               <VisitCard
                 key={visit._id}
                 visit={visit}
-                dateNumber={dateNumbers.get(visit._id)}
+                visitNumber={visitNumbers.get(visit._id)}
                 variant="editorial"
                 members={detail.members}
                 isRow={false}
@@ -790,7 +806,7 @@ export function BoardDashboard({
         ) : (
           <div className="first-memory">
             <Heart size={35} />
-            <h3>Your first date goes here</h3>
+            <h3>Your first visit goes here</h3>
             <p>Add a place, a few dishes, and your photos.</p>
             <Link className="button primary" to={`/boards/${id}/visits/new`}>
               <Plus size={18} />

@@ -4,7 +4,7 @@
 	}
 
 	handle {
-		root * /Users/nishitnagar/repos/date-notes/apps/web/dist
+		root * apps/web/dist
 		try_files {path} /index.html
 		file_server
 	}

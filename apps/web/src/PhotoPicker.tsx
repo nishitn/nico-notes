@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ImagePlus, X } from 'lucide-react';
-import { MAX_PHOTO_BYTES, PHOTO_TYPES } from '@date-notes/backend/shared';
+import { MAX_PHOTO_BYTES, PHOTO_TYPES } from '@nico-notes/backend/shared';
 import { ErrorNote } from './ui';
 
 export type PhotoSelection = { file: File; preview: string };

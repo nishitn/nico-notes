@@ -4,6 +4,7 @@ import { v } from 'convex/values';
 
 export const accent = v.union(v.literal('coral'), v.literal('sage'), v.literal('peach'));
 export const memberRole = v.union(v.literal('admin'), v.literal('member'));
+export const photoStorage = v.union(v.literal('convex'), v.literal('local'));
 export const targetKind = v.union(v.literal('overall'), v.literal('dish'), v.literal('category'));
 export const locationValidator = v.object({
   latitude: v.number(),
@@ -12,6 +13,12 @@ export const locationValidator = v.object({
 });
 const schema = defineSchema({
   ...authTables,
+  users: defineTable({
+    ...authTables.users.validator.fields,
+    displayName: v.optional(v.string()),
+  })
+    .index('email', ['email'])
+    .index('phone', ['phone']),
   boards: defineTable({
     name: v.string(),
     description: v.string(),
@@ -19,6 +26,7 @@ const schema = defineSchema({
     ownerId: v.id('users'),
     deleting: v.boolean(),
     inviteCode: v.optional(v.string()),
+    photoStorage: v.optional(photoStorage),
   }).index('by_inviteCode', ['inviteCode']),
   memberships: defineTable({
     boardId: v.id('boards'),
@@ -114,6 +122,7 @@ const schema = defineSchema({
     userId: v.id('users'),
     caption: v.string(),
     expiresAt: v.number(),
+    provider: v.optional(photoStorage),
   })
     .index('by_visitId', ['visitId'])
     .index('by_expiresAt', ['expiresAt']),

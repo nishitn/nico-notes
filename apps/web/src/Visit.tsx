@@ -13,9 +13,9 @@ import {
   Heart,
   Navigation,
 } from 'lucide-react';
-import { api } from '@date-notes/backend/api';
-import type { Doc, Id } from '@date-notes/backend/dataModel';
-import { average, validScore } from '@date-notes/backend/shared';
+import { api } from '@nico-notes/backend/api';
+import type { Doc, Id } from '@nico-notes/backend/dataModel';
+import { average, validScore } from '@nico-notes/backend/shared';
 import {
   Back,
   Confirm,
@@ -239,7 +239,7 @@ function Editor({
         <fieldset className="visit-editor-fields" disabled={task.busy || !!savedVisitId}>
           {!existing && (
             <>
-              <Field label="What kind of date?">
+              <Field label="What kind of visit?">
                 <div className="visit-type-select">
                   <select
                     value={typeId}
@@ -258,7 +258,7 @@ function Editor({
                       setShowDishes(type?.showDishes ?? false);
                     }}
                   >
-                    <option value="">Just a date · no preset</option>
+                    <option value="">Just a visit · no preset</option>
                     {types.map((type) => (
                       <option key={type._id} value={type._id}>
                         {type.name}
