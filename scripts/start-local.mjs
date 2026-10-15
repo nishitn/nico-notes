@@ -118,7 +118,7 @@ try {
   const reusePhotos = localPhotos && (await photoReady());
   if (localPhotos && !reusePhotos && (await portBusy(8788)))
     throw new Error('Port 8788 is already in use by another service.');
-  const build = start('web build', 'pnpm', ['build'], root, false);
+  const build = start('web build', 'pnpm', ['build:web'], root, false);
   const built = await new Promise((resolve) => {
     build.once('error', () => resolve(false));
     build.once('exit', (code) => resolve(code === 0));

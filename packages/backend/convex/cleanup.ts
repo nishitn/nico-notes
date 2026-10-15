@@ -44,6 +44,15 @@ export const board = internalMutation({
       await deleteVisit(ctx, visits[0]._id);
       await ctx.scheduler.runAfter(0, internal.cleanup.board, { boardId });
     } else {
+      const places = await ctx.db
+        .query('places')
+        .withIndex('by_boardId', (q) => q.eq('boardId', boardId))
+        .take(100);
+      if (places.length) {
+        for (const place of places) await ctx.db.delete(place._id);
+        await ctx.scheduler.runAfter(0, internal.cleanup.board, { boardId });
+        return null;
+      }
       for (const table of ['memberships', 'visitTypes', 'invitations', 'joinRequests'] as const) {
         const rows = await ctx.db
           .query(table)

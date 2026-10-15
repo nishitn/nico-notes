@@ -1,3 +1,5 @@
+import { ConvexError } from 'convex/values';
+
 export const MAX_PHOTOS = 10;
 export const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
 export const PHOTO_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
@@ -14,7 +16,7 @@ export function average(scores: number[]) {
 export function textValue(value: string, label: string, max = 120) {
   const clean = value.trim();
   if (!clean || clean.length > max)
-    throw new Error(`${label} must be between 1 and ${max} characters.`);
+    throw new ConvexError(`${label} must be between 1 and ${max} characters.`);
   return clean;
 }
 export function validDate(value: string) {

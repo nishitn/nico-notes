@@ -2,9 +2,11 @@ import { Plus, Utensils, X } from 'lucide-react';
 
 export function RatingCategories({
   value,
+  locked = [],
   onChange,
 }: {
   value: string[];
+  locked?: string[];
   onChange: (value: string[]) => void;
 }) {
   return (
@@ -21,6 +23,7 @@ export function RatingCategories({
               maxLength={50}
               autoFocus={!category}
               value={category}
+              readOnly={locked.includes(category)}
               placeholder="e.g. Ambience"
               ref={(input) => {
                 input?.setCustomValidity(
@@ -45,6 +48,7 @@ export function RatingCategories({
               type="button"
               className="icon-button"
               aria-label={`Remove category ${index + 1}`}
+              disabled={locked.includes(category)}
               onClick={() => onChange(value.filter((_, itemIndex) => itemIndex !== index))}
             >
               <X size={17} />

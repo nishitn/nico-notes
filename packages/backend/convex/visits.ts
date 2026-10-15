@@ -2,29 +2,27 @@ import { paginationOptsValidator } from 'convex/server';
 import { ConvexError, v } from 'convex/values';
 import schema, { locationValidator } from './schema';
 import { authedMutation, authedQuery, member, person, personValidator, visitAccess } from './lib';
+import {
+  linkVisit,
+  resolvePlace,
+  syncPlace,
+  updatePlaceDetails,
+  requireLinkedBoard,
+  validateLocation,
+  normalizedPlaceKey,
+} from './places';
 import { deleteVisit } from './cleanup';
 import { MAX_ITEMS, MAX_PHOTOS, MAX_MEMBERS, textValue, validDate, validScore } from '../shared';
 
 const fields = {
+  placeId: v.optional(v.id('places')),
+  googlePlaceId: v.optional(v.string()),
   title: v.string(),
   date: v.string(),
   place: v.string(),
   notes: v.string(),
   location: v.optional(v.union(locationValidator, v.null())),
 };
-function validateLocation(
-  location: { latitude: number; longitude: number; source?: string } | null | undefined,
-) {
-  if (
-    location &&
-    (!Number.isFinite(location.latitude) ||
-      !Number.isFinite(location.longitude) ||
-      Math.abs(location.latitude) > 90 ||
-      Math.abs(location.longitude) > 180)
-  )
-    throw new ConvexError('Choose a valid map location.');
-  return location ? { latitude: location.latitude, longitude: location.longitude } : undefined;
-}
 // Lightweight, paginated metadata lets the map include every visit, not just the first card page.
 export const places = authedQuery({
   args: { boardId: v.id('boards'), paginationOpts: paginationOptsValidator },
@@ -124,7 +122,7 @@ export const list = authedQuery({
         });
         return {
           ...visit,
-          photoIds: photos.slice(0, 3).map((p) => p._id),
+          photoIds: photos.map((p) => p._id),
           highlights: dishes.slice(0, 5).map((d) => d.name),
           dishes: dishItems,
           dishAverage: dishRatings.length
@@ -267,7 +265,11 @@ export const create = authedMutation({
       }
     }
     if (ratingCount > 2000) throw new ConvexError('A visit can have up to 2,000 ratings.');
+    const place = args.placeId ? await ctx.db.get(args.placeId) : await resolvePlace(ctx, args);
+    if (!place || place.boardId !== args.boardId)
+      throw new ConvexError('Choose a place from this board.');
     const visitId = await ctx.db.insert('visits', {
+      placeId: place._id,
       boardId: args.boardId,
       creatorId: ctx.userId,
       title: textValue(args.title, 'Visit title'),
@@ -278,6 +280,7 @@ export const create = authedMutation({
       showDishes: args.showDishes || dishes.length > 0,
       location: validateLocation(args.location),
     });
+    await syncPlace(ctx, place._id);
     const categoryIds = [];
     for (const [position, name] of categories.entries())
       categoryIds.push(await ctx.db.insert('categories', { visitId, name, position }));
@@ -318,15 +321,48 @@ export const update = authedMutation({
   handler: async (ctx, { visitId, ...args }) => {
     const { visit } = await visitAccess(ctx, visitId);
     if (args.date && !validDate(args.date)) throw new ConvexError('Choose a valid visit date.');
+    const title = textValue(args.title, 'Visit title');
+    const oldPlace = visit.placeId ? await ctx.db.get(visit.placeId) : null;
+    const explicitPlace = args.placeId ? await ctx.db.get(args.placeId) : null;
+    if (args.placeId && (!explicitPlace || explicitPlace.boardId !== visit.boardId))
+      throw new ConvexError('Choose a place from this board.');
+    const sameIdentity =
+      oldPlace &&
+      (!args.placeId || args.placeId === oldPlace._id) &&
+      (!args.googlePlaceId || args.googlePlaceId === oldPlace.googlePlaceId) &&
+      normalizedPlaceKey(title, '') === normalizedPlaceKey(visit.title, '');
+    let place;
+    if (sameIdentity) {
+      // Change canonical fields only when the visit form actually changed them.
+      const address =
+        args.place === visit.place ? oldPlace.address : args.place.trim().slice(0, 250);
+      const location =
+        args.location === undefined ||
+        JSON.stringify(args.location) === JSON.stringify(visit.location ?? null)
+          ? oldPlace.location
+          : validateLocation(args.location);
+      if (
+        address !== oldPlace.address ||
+        JSON.stringify(location) !== JSON.stringify(oldPlace.location)
+      )
+        await requireLinkedBoard(ctx, visit.boardId);
+      place = await updatePlaceDetails(ctx, oldPlace, address, location);
+    } else {
+      place =
+        explicitPlace && explicitPlace._id !== oldPlace?._id
+          ? explicitPlace
+          : await resolvePlace(ctx, { ...args, boardId: visit.boardId });
+    }
     await ctx.db.patch(visitId, {
-      ...args,
-      mapQuery:
-        args.title !== visit.title || args.place !== visit.place ? undefined : visit.mapQuery,
-      location: args.location === undefined ? visit.location : validateLocation(args.location),
-      title: textValue(args.title, 'Visit title'),
-      place: args.place.trim().slice(0, 250),
+      title,
+      date: args.date,
       notes: args.notes.trim().slice(0, 5000),
+      showDishes: args.showDishes,
+      placeId: place._id,
+      mapQuery: undefined,
     });
+    await linkVisit(ctx, visitId);
+    if (oldPlace && oldPlace._id !== place._id) await syncPlace(ctx, oldPlace._id);
     return null;
   },
 });
@@ -338,6 +374,7 @@ export const remove = authedMutation({
     if (visit.creatorId !== ctx.userId && !isAdmin)
       throw new ConvexError('Only the visit creator or board admin can delete this visit.');
     await deleteVisit(ctx, visitId);
+    if (visit.placeId) await syncPlace(ctx, visit.placeId);
     return null;
   },
 });

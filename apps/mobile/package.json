@@ -1,0 +1,45 @@
+{
+  "name": "@nico-notes/mobile",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.ts",
+  "scripts": {
+    "dev": "expo start --dev-client",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "build": "expo export --platform android",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@convex-dev/auth": "0.0.95",
+    "@expo/vector-icons": "^15.1.1",
+    "@nico-notes/backend": "workspace:*",
+    "@react-navigation/native": "^7.1.0",
+    "@react-navigation/native-stack": "^7.3.0",
+    "convex": "1.46.0",
+    "expo": "~57.0.29",
+    "expo-constants": "~57.0.22",
+    "expo-dev-client": "~57.0.20",
+    "expo-file-system": "~57.0.7",
+    "expo-image": "~57.0.5",
+    "expo-image-manipulator": "~57.0.21",
+    "expo-image-picker": "~57.0.20",
+    "expo-linking": "~57.0.13",
+    "expo-location": "~57.0.21",
+    "expo-secure-store": "~57.0.4",
+    "expo-status-bar": "~57.0.1",
+    "expo-system-ui": "~57.0.4",
+    "expo-web-browser": "~57.0.3",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native": "0.86.3",
+    "react-native-maps": "1.27.2",
+    "react-native-paper": "^5.15.3",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-screens": "~4.26.2"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.2",
+    "typescript": "~5.9.3"
+  }
+}

@@ -4,21 +4,33 @@ import { ErrorNote, Field, Modal } from './ui';
 import { PlacesMap, mapsLink, type MapLocation } from './PlacesMap';
 import { placeSearchErrorMessage, searchNearbyPlaces } from './googleMaps';
 
-type SelectedPlace = { title: string; place: string; location: MapLocation | null };
+type SelectedPlace = {
+  googlePlaceId?: string;
+  title: string;
+  place: string;
+  location: MapLocation | null;
+};
 
 export function LocationField({
   value,
+  googlePlaceId,
   onChange,
   title,
   place,
 }: {
   value: MapLocation | null;
+  googlePlaceId?: string;
   onChange: (place: SelectedPlace) => void;
   title: string;
   place: string;
 }) {
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState<SelectedPlace>({ title, place, location: value });
+  const [draft, setDraft] = useState<SelectedPlace>({
+    title,
+    place,
+    location: value,
+    googlePlaceId,
+  });
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Awaited<ReturnType<typeof searchNearbyPlaces>>>([]);
   const [searching, setSearching] = useState(false);
@@ -66,7 +78,7 @@ export function LocationField({
             type="button"
             className="button secondary visit-map-edit"
             onClick={() => {
-              setDraft({ title, place, location: value });
+              setDraft({ title, place, location: value, googlePlaceId });
               setQuery(title);
               setCoordinates('');
               setResults([]);
@@ -98,7 +110,7 @@ export function LocationField({
               {place && <p className="muted small">{place}</p>}
               {value && (
                 <a
-                  href={mapsLink({ title, place, location: value })}
+                  href={mapsLink({ title, place, location: value, googlePlaceId })}
                   target="_blank"
                   rel="noreferrer"
                   className="text-button small"
@@ -164,7 +176,7 @@ export function LocationField({
                     key={result.id}
                     className="place-search-result"
                     onClick={() => {
-                      setDraft(result);
+                      setDraft({ ...result, googlePlaceId: result.id });
                       setResults([]);
                       setSearched(false);
                       setCoordinates('');
@@ -199,7 +211,9 @@ export function LocationField({
                   <input
                     maxLength={120}
                     value={draft.title}
-                    onChange={(event) => setDraft({ ...draft, title: event.target.value })}
+                    onChange={(event) =>
+                      setDraft({ ...draft, title: event.target.value, googlePlaceId: undefined })
+                    }
                   />
                 </Field>
                 <Field label="Address (optional)">

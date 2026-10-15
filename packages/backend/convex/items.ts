@@ -68,7 +68,8 @@ export const remove = authedMutation({
   },
   returns: v.null(),
   handler: async (ctx, { visitId, target, confirmed }) => {
-    await visitAccess(ctx, visitId);
+    const { isAdmin } = await visitAccess(ctx, visitId);
+    if (!isAdmin) throw new ConvexError('Only a board admin can remove dishes or categories.');
     const item = await ctx.db.get(target);
     if (!item || item.visitId !== visitId)
       throw new ConvexError('This item is not part of this visit.');

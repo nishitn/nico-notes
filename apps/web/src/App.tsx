@@ -80,7 +80,14 @@ function Login() {
             <button
               className="button google"
               disabled={!config?.googleReady || task.busy}
-              onClick={() => task.run(() => signIn('google', { redirectTo: window.location.href }))}
+              onClick={() =>
+                task.run(() =>
+                  signIn('google', {
+                    redirectTo:
+                      window.location.pathname + window.location.search + window.location.hash,
+                  }),
+                )
+              }
             >
               <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
                 <path

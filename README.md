@@ -1,8 +1,21 @@
 # nico notes
 
-A private place for shared visits, visit photos, and each person's ratings. React + TypeScript + Vite+ on the frontend; Convex database, realtime functions and Google authentication on the backend. New photo files use Convex Storage by default. Board admins can opt into local storage on the Mac mini later.
+A private place for shared visits, visit photos, and each person's ratings. The primary Android client uses React Native + Expo in `apps/mobile`. The existing React + TypeScript + Vite+ web client remains in `apps/web`. Both share the Convex database, realtime functions and Google authentication. New photo files use Convex Storage by default. Board admins can opt into local storage on the Mac mini later.
 
 App URL: [notes.nishitnagar.com](https://notes.nishitnagar.com).
+
+## Android app
+
+See [the Android setup and build guide](apps/mobile/README.md) for environment variables, Google sign-in, native Maps configuration, APK/AAB builds and device checks.
+
+```sh
+pnpm install --frozen-lockfile
+cp apps/mobile/.env.example apps/mobile/.env.local
+# Fill in the existing Convex deployment's public URLs, then:
+pnpm android
+```
+
+`pnpm dev:mobile` starts Metro for an installed development build. `pnpm dev` runs the backend and mobile server together. `pnpm build:android` validates the Android bundle; `pnpm build:web` builds the retained website. `pnpm build` builds both clients. Android uses the native Credential Manager account chooser. Its backend token-verification provider must be deployed, and Google Cloud must have an Android OAuth client for the package and signing certificate; see the Android guide.
 
 ## Run locally
 
@@ -25,7 +38,7 @@ pnpm --filter @nico-notes/backend setup:auth
 pnpm dev:web
 ```
 
-Open [localhost:5173](http://localhost:5173). After initial configuration, `pnpm dev` runs both packages together. The frontend is local; its data lives in your Convex development deployment. Never put OAuth secrets or signing keys in a `VITE_` variable.
+Open [localhost:5173](http://localhost:5173). After initial configuration, run `pnpm dev:web` and `pnpm dev:backend` in separate terminals for web development. `pnpm dev` starts the backend and Android client. The frontend is local; its data lives in your Convex development deployment. Never put OAuth secrets or signing keys in a `VITE_` variable.
 
 This workspace has already been connected to the existing `opulent-partridge-532` development deployment. The frontend environment and development signing keys have been configured. **Google OAuth credentials still need to be supplied** before the two of you can sign in.
 
@@ -35,7 +48,7 @@ Install Node.js 24 and pnpm 10.33.3, then copy this repository (including `.git`
 
 To use the existing backend and data, securely copy `apps/web/.env.local` and `packages/backend/.env.local` from this computer to the same paths. These files are ignored by Git. The frontend file contains the Convex URLs and browser Maps key. Google OAuth credentials and signing keys already configured on the Convex deployment stay there; do not regenerate them for a computer move.
 
-Run `pnpm dev:web` and open `http://localhost:5173` to use the existing deployed backend. To work on backend code too, run `pnpm dev:backend`, authenticate with the Convex account that has project access, and select the existing development deployment. This syncs backend code to that deployment. After setup, `pnpm dev` runs both packages. A new Convex deployment has separate data and needs its own authentication setup.
+Run `pnpm dev:web` and open `http://localhost:5173` to use the existing deployed backend. To work on backend code too, run `pnpm dev:backend`, authenticate with the Convex account that has project access, and select the existing development deployment. This syncs backend code to that deployment. After setup, `pnpm dev` runs the backend and mobile server; use `pnpm dev:web` for the website. A new Convex deployment has separate data and needs its own authentication setup.
 
 To move the hosted app, also install Caddy and cloudflared, securely transfer `~/.cloudflared/config.yml` and its referenced tunnel credentials, and update machine-specific credential paths. Keep ingress pointed at `http://localhost:8080`. Stop the old host's tunnel before starting `pnpm start` on the new host. The startup script uses Unix process groups; use macOS, Linux, or WSL for this hosting workflow. If the public hostname changes, update the tunnel/DNS, Convex `SITE_URL`/`ALLOWED_ORIGINS`, Google OAuth origins, and Maps key referrers. The OAuth callback stays the same when the Convex deployment stays the same.
 
@@ -173,3 +186,24 @@ The operator-only `importNotes:bangalore` mutation imports into Nishit’s board
 ```sh
 pnpm --filter @nico-notes/backend exec convex run importNotes:bangalore '{"boardId":"YOUR_BOARD_ID"}'
 ```
+
+## Places and visit numbering
+
+Places belong to a board. Visits match a Google Maps Place ID first, then a normalized name and address. Different known Google IDs remain separate even when their labels match. A place owns its address and pin; visit documents keep copies so board cards and maps read them directly. Editing place details updates those copies. Choosing another place for a visit moves that visit. Edit a visit’s place details to correct its address or pin.
+
+Visit numbers are per place, ordered by visit date and then creation order. Undated visits sort first. Backdating, moving, and deleting visits recalculates the numbers. Atomic updates support up to 2,000 visits per place per board and reject changes above that limit rather than leaving partial numbering.
+
+Existing visits link automatically in scheduled batches when a member opens the board or its places pages. After deploying the new schema and functions, an operator can also run the idempotent backfill (no public migration endpoint):
+
+```sh
+# Current configured deployment; all boards
+pnpm --filter @nico-notes/backend exec convex run places:backfill '{}'
+# Or one board
+pnpm --filter @nico-notes/backend exec convex run places:backfill '{"boardId":"BOARD_ID"}'
+```
+
+The backfill schedules bounded work and can be rerun. Run it only after deployment is explicitly authorized.
+
+Deployments containing legacy place records with `key` instead of `matchKey` first need a lookup-key migration. Temporarily make `places.matchKey` optional, deploy, then run `migrations:placeMatchKeys` with `{"cursor":null}`. Pass each returned `nextCursor` into the next call until it is null. Restore the required validator and deploy again. The mutation only fills normalized lookup keys; it preserves every original ID, field and visit link. The optional legacy metadata fields remain accepted by the schema.
+
+Sign-in redirects accept root-relative paths or legacy absolute URLs with exactly the `SITE_URL` origin. `ALLOWED_ORIGINS` continues to control photo CORS; it does not expand sign-in redirect destinations.

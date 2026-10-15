@@ -20,7 +20,7 @@ import type { Doc } from '@nico-notes/backend/dataModel';
 import type { FunctionReturnType } from 'convex/server';
 import { Initials, Modal, Spinner, formatDate } from './ui';
 import { Invitations } from './Settings';
-import { Photo } from './Photos';
+import { PhotoCarousel } from './Photos';
 import { PlacesMap, mapsLink, type MapLocation } from './PlacesMap';
 import { googleMapsConfigured, placeSearchErrorMessage, searchNearbyPlaces } from './googleMaps';
 
@@ -56,8 +56,8 @@ function NoteCounter({ count }: { count: number }) {
   );
 }
 
-function placeKey(visit: Doc<'visits'>) {
-  return `${visit.title.trim().toLowerCase()}|${visit.place.trim().toLowerCase()}`;
+export function placeKey(visit: Doc<'visits'>) {
+  return visit.placeId ?? `${visit.title.trim().toLowerCase()}|${visit.place.trim().toLowerCase()}`;
 }
 
 function formatOrdinalVisit(n: number) {
@@ -125,7 +125,11 @@ export function VisitCard({
               <small>/10</small>
             </span>
           )}
-          <span className="memory-visit-badge">{formatOrdinalVisit(visit.visitNumber ?? 1)}</span>
+          {visit.visitNumber && (
+            <span className={`memory-visit-badge ${visit.visitNumber === 1 ? 'first-visit' : ''}`}>
+              {formatOrdinalVisit(visit.visitNumber)}
+            </span>
+          )}
         </div>
       </div>
       <div className="memory-place-row">
@@ -143,18 +147,10 @@ export function VisitCard({
 
       <div className="memory-card-body">
         {hasPhotos ? (
-          <Link
-            to={`/visits/${visit._id}`}
-            className="memory-photos"
-            aria-label={`Open ${visit.title}, visit ${visit.visitNumber ?? 1}`}
-          >
-            {visit.photoIds.map((id, index) => (
-              <Photo key={id} id={id} alt={`${visit.title} photo ${index + 1}`} />
-            ))}
-          </Link>
+          <PhotoCarousel ids={visit.photoIds} title={visit.title} visitId={visit._id} />
         ) : visit.dishes && visit.dishes.length > 0 ? (
           <div className="memory-dishes-list">
-            {visit.dishes.map((dish) => (
+            {visit.dishes.slice(0, 4).map((dish) => (
               <div key={dish._id} className="memory-dish-row">
                 <span className="memory-dish-name">
                   <Utensils size={13} />
@@ -190,7 +186,7 @@ export function VisitCard({
           </div>
         ) : visit.highlights.length > 0 ? (
           <div className="memory-dishes-list">
-            {visit.highlights.map((dishName) => (
+            {visit.highlights.slice(0, 4).map((dishName) => (
               <div key={dishName} className="memory-dish-row">
                 <span className="memory-dish-name">
                   <Utensils size={13} />
@@ -204,7 +200,7 @@ export function VisitCard({
         ) : null}
 
         {hasPhotos && visit.highlights.length > 0 && (
-          <p className="memory-dishes">{visit.highlights.join(' · ')}</p>
+          <p className="memory-dishes">{visit.highlights.slice(0, 2).join(' · ')}</p>
         )}
       </div>
 
@@ -231,7 +227,6 @@ export function BoardDashboard({
 
   const [query, setQuery] = useState('');
   const [selectedKey, setSelectedKey] = useState<string | null>(selectParam);
-  const [addingMember, setAddingMember] = useState(false);
   const isAdmin = detail.isAdmin;
   const pendingRequests =
     useQuery(api.boards.pendingRequests, isAdmin ? { boardId: id } : 'skip') ?? [];
@@ -392,47 +387,14 @@ export function BoardDashboard({
   const selectedPlaceUrl = selected
     ? `/boards/${id}/place?title=${encodeURIComponent(
         selected.visit.title,
-      )}&place=${encodeURIComponent(selected.visit.place || '')}&from=map`
+      )}&place=${encodeURIComponent(selected.visit.place || '')}&placeId=${selected.visit.placeId ?? ''}&from=map`
     : undefined;
   const unpinned = useMemo(() => groups.filter((p) => !p.visit.location).length, [groups]);
 
   return (
     <div className="page board-dashboard design-editorial">
       {/* Editorial Keepsake Header */}
-      <header className="board-heading dashboard-heading heading-editorial">
-        <div className="heading-content-editorial">
-          <h1 className="title-editorial">{detail.board.name}</h1>
-          <div className="members-inline members-editorial">
-            <div className="avatar-stack">
-              {detail.members.slice(0, 5).map((p) => (
-                <Initials key={p._id} name={p.name} image={p.image} small />
-              ))}
-            </div>
-            <span className="editorial-dot">·</span>
-            <span className="member-count-text">
-              {detail.members.length} {detail.members.length === 1 ? 'member' : 'members'}
-            </span>
-            <span className="editorial-dot">·</span>
-            <button
-              className="button text-button invite-editorial"
-              onClick={() => setAddingMember(true)}
-              disabled={detail.members.length >= 20}
-            >
-              <UserPlus size={14} /> + Invite
-            </button>
-          </div>
-        </div>
-        <div className="board-heading-actions">
-          <Link
-            className="icon-button soft-icon"
-            to={`/boards/${id}/settings`}
-            aria-label="Board settings"
-          >
-            <Settings2 size={19} />
-          </Link>
-        </div>
-        {detail.board.description && <p className="board-desc">{detail.board.description}</p>}
-      </header>
+      <BoardHeader detail={detail} />
 
       {pendingRequests.length > 0 && (
         <div className="pending-banner">
@@ -455,7 +417,7 @@ export function BoardDashboard({
       {/* Places Section */}
       <section className="places-section" aria-label="Places visited">
         <div className="places-heading">
-          <h2>Your places</h2>
+          <h2>Your Places</h2>
           <div className="places-explored-heading-right">
             <NoteCounter count={groups.length} />
             <span className="explored-word">explored</span>
@@ -541,7 +503,7 @@ export function BoardDashboard({
                             className="result-action-button"
                             to={`/boards/${id}/visits/new?title=${encodeURIComponent(
                               visit.title,
-                            )}&place=${encodeURIComponent(visit.place || '')}${
+                            )}&place=${encodeURIComponent(visit.place || '')}&placeId=${visit.placeId ?? ''}${
                               visit.location
                                 ? `&lat=${visit.location.latitude}&lng=${visit.location.longitude}`
                                 : ''
@@ -587,7 +549,7 @@ export function BoardDashboard({
                               place.title,
                             )}&place=${encodeURIComponent(place.place)}&lat=${
                               place.location.latitude
-                            }&lng=${place.location.longitude}`}
+                            }&lng=${place.location.longitude}&googlePlaceId=${encodeURIComponent(place.id)}`}
                             onClick={(e) => e.stopPropagation()}
                           >
                             <Plus size={14} /> Add visit
@@ -690,7 +652,7 @@ export function BoardDashboard({
                         searchedPlace.title,
                       )}&place=${encodeURIComponent(searchedPlace.place)}&lat=${
                         searchedPlace.location.latitude
-                      }&lng=${searchedPlace.location.longitude}`}
+                      }&lng=${searchedPlace.location.longitude}&googlePlaceId=${encodeURIComponent(searchedPlace.id)}`}
                     >
                       <Plus size={16} /> Add visit
                     </Link>
@@ -744,7 +706,7 @@ export function BoardDashboard({
                         className="button primary"
                         to={`/boards/${id}/visits/new?title=${encodeURIComponent(
                           selected.visit.title,
-                        )}&place=${encodeURIComponent(selected.visit.place || '')}${
+                        )}&place=${encodeURIComponent(selected.visit.place || '')}&placeId=${selected.visit.placeId ?? ''}${
                           selected.visit.location
                             ? `&lat=${selected.visit.location.latitude}&lng=${selected.visit.location.longitude}`
                             : ''
@@ -835,7 +797,49 @@ export function BoardDashboard({
         <Plus size={22} />
         <span>Add visit</span>
       </Link>
+    </div>
+  );
+}
 
+export function BoardHeader({ detail }: { detail: Detail }) {
+  const id = detail.board._id;
+  const [addingMember, setAddingMember] = useState(false);
+  return (
+    <>
+      <header className="board-heading dashboard-heading heading-editorial">
+        <div className="heading-content-editorial">
+          <h1 className="title-editorial">{detail.board.name}</h1>
+          <div className="members-inline members-editorial">
+            <div className="avatar-stack">
+              {detail.members.slice(0, 5).map((p) => (
+                <Initials key={p._id} name={p.name} image={p.image} small />
+              ))}
+            </div>
+            <span className="editorial-dot">·</span>
+            <span className="member-count-text">
+              {detail.members.length} {detail.members.length === 1 ? 'member' : 'members'}
+            </span>
+            <span className="editorial-dot">·</span>
+            <button
+              className="button text-button invite-editorial"
+              onClick={() => setAddingMember(true)}
+              disabled={detail.members.length >= 20}
+            >
+              <UserPlus size={14} /> + Invite
+            </button>
+          </div>
+        </div>
+        <div className="board-heading-actions">
+          <Link
+            className="icon-button soft-icon"
+            to={`/boards/${id}/settings`}
+            aria-label="Board settings"
+          >
+            <Settings2 size={19} />
+          </Link>
+        </div>
+        {detail.board.description && <p className="board-desc">{detail.board.description}</p>}
+      </header>
       {addingMember && (
         <Modal title="Add member" onClose={() => setAddingMember(false)}>
           <Invitations
@@ -845,6 +849,6 @@ export function BoardDashboard({
           />
         </Modal>
       )}
-    </div>
+    </>
   );
 }

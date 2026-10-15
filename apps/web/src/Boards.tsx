@@ -15,8 +15,15 @@ import {
 } from 'lucide-react';
 import { api } from '@nico-notes/backend/api';
 import type { Doc, Id } from '@nico-notes/backend/dataModel';
+import { usePlaceLinking } from './usePlaceLinking';
 import { Artwork } from './Artwork';
-import { BoardDashboard, VisitCard, type DesignVariant } from './BoardDashboard';
+import {
+  BoardDashboard,
+  BoardHeader,
+  VisitCard,
+  placeKey,
+  type DesignVariant,
+} from './BoardDashboard';
 import { PlacesMap } from './PlacesMap';
 import { Back, ErrorNote, Field, Form, Modal, Spinner, Submit, useNotice, useTask } from './ui';
 
@@ -275,6 +282,7 @@ export function BoardPage({ forcedDesign }: { forcedDesign?: DesignVariant } = {
   const id = boardId as Id<'boards'>;
   const me = useQuery(api.boards.me);
   const detail = useQuery(api.boards.get, { boardId: id });
+  usePlaceLinking(detail?.board._id);
   useEffect(() => {
     if (detail && me) {
       try {
@@ -355,6 +363,7 @@ export function PlacesPage() {
   const id = boardId as Id<'boards'>;
   const navigate = useNavigate();
   const detail = useQuery(api.boards.get, { boardId: id });
+  usePlaceLinking(detail?.board._id);
   const [params, setParams] = useSearchParams();
   const activeTab = params.get('tab') === 'unpinned' ? 'unpinned' : 'all';
   const [query, setQuery] = useState('');
@@ -372,7 +381,7 @@ export function PlacesPage() {
   const groups = useMemo(() => {
     const map = new globalThis.Map<string, Doc<'visits'>[]>();
     for (const visit of visits) {
-      const key = `${visit.title.trim().toLowerCase()}|${visit.place.trim().toLowerCase()}`;
+      const key = placeKey(visit);
       map.set(key, [...(map.get(key) ?? []), visit]);
     }
     return [...map.entries()].map(([key, entries]) => ({
@@ -398,14 +407,17 @@ export function PlacesPage() {
     activeTab === 'unpinned' ? matching.filter((p) => !p.visit.location) : matching;
 
   return (
-    <div className="page places-page">
-      <Back to={`/boards/${id}`}>Map View</Back>
-      <header className="page-heading">
-        <h1>{detail.board.name} places</h1>
-        <p className="subtitle">
-          {groups.length} explored places across {visits.length} visits
-        </p>
-      </header>
+    <div className="page places-page board-dashboard design-editorial">
+      <Back to={`/boards/${id}`}>{detail.board.name}</Back>
+      <BoardHeader detail={detail} />
+      <div className="section-heading places-list-heading">
+        <div>
+          <h2>Your Places</h2>
+          <p className="small muted">
+            {groups.length} explored places across {visits.length} visits
+          </p>
+        </div>
+      </div>
 
       <div className="places-page-toolbar">
         <div className="places-search">
@@ -448,7 +460,7 @@ export function PlacesPage() {
           displayList.map(({ key, entries, visit }) => {
             const placeDetailUrl = `/boards/${id}/place?title=${encodeURIComponent(
               visit.title,
-            )}&place=${encodeURIComponent(visit.place || '')}`;
+            )}&place=${encodeURIComponent(visit.place || '')}&placeId=${visit.placeId ?? ''}`;
 
             return (
               <article
@@ -512,6 +524,7 @@ export function PlaceDetailPage() {
   const placeParam = params.get('place') || '';
 
   const detail = useQuery(api.boards.get, { boardId: id });
+  usePlaceLinking(detail?.board._id);
   const {
     results: visitsList,
     status: visitsStatus,
@@ -522,13 +535,16 @@ export function PlaceDetailPage() {
     if (visitsStatus === 'CanLoadMore') loadVisits(50);
   }, [visitsStatus, loadVisits]);
 
+  const requestedPlaceId = params.get('placeId');
   const targetKey = `${titleParam.trim().toLowerCase()}|${placeParam.trim().toLowerCase()}`;
 
   const placeEntries = useMemo(() => {
-    return visitsList.filter(
-      (v) => `${v.title.trim().toLowerCase()}|${v.place.trim().toLowerCase()}` === targetKey,
+    return visitsList.filter((v) =>
+      requestedPlaceId
+        ? v.placeId === requestedPlaceId
+        : `${v.title.trim().toLowerCase()}|${v.place.trim().toLowerCase()}` === targetKey,
     );
-  }, [visitsList, targetKey]);
+  }, [visitsList, targetKey, requestedPlaceId]);
 
   if (!detail || visitsStatus === 'LoadingFirstPage') return <Spinner />;
 

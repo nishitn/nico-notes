@@ -2,6 +2,7 @@ import { ConvexError, v } from 'convex/values';
 import { internalMutation, type MutationCtx } from './_generated/server';
 import type { Id } from './_generated/dataModel';
 import { bangaloreNotes } from '../imports/bangalore';
+import { linkVisit } from './places';
 import { validScore } from '../shared';
 
 // Operator-only, idempotent import. Never exposed as an unauthenticated seed endpoint.
@@ -30,10 +31,11 @@ async function importBangalore(ctx: MutationCtx, boardId: Id<'boards'>, mansiUse
       .unique();
     if (existing) {
       // Fill newly verified locations without overwriting a pin or editing notes/ratings.
-      if (!existing.location && note.location)
+      if (!existing.placeId && !existing.location && note.location)
         await ctx.db.patch(existing._id, { location: note.location });
-      if (existing.place === 'Near Bangalore, Bangalore')
+      if (!existing.placeId && existing.place === 'Near Bangalore, Bangalore')
         await ctx.db.patch(existing._id, { place: 'Near Bangalore' });
+      await linkVisit(ctx, existing._id);
       skipped++;
       continue;
     }
@@ -56,6 +58,7 @@ async function importBangalore(ctx: MutationCtx, boardId: Id<'boards'>, mansiUse
       location: note.location,
       mapQuery: note.mapQuery ?? `${note.title} ${note.area ?? ''} Bangalore`,
     });
+    await linkVisit(ctx, visitId);
     for (const [position, item] of (note.dishes ?? note.categories ?? []).entries()) {
       const [name, mansi, nishit, description = '', mansiNote = '', nishitNote = ''] = item;
       const kind = note.categories ? ('category' as const) : ('dish' as const);

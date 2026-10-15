@@ -27,6 +27,7 @@ const schema = defineSchema({
     deleting: v.boolean(),
     inviteCode: v.optional(v.string()),
     photoStorage: v.optional(photoStorage),
+    placeLinkingStartedAt: v.optional(v.number()),
   }).index('by_inviteCode', ['inviteCode']),
   memberships: defineTable({
     boardId: v.id('boards'),
@@ -63,6 +64,23 @@ const schema = defineSchema({
     categories: v.array(v.string()),
     showDishes: v.boolean(),
   }).index('by_boardId', ['boardId']),
+  places: defineTable({
+    boardId: v.id('boards'),
+    name: v.string(),
+    address: v.string(),
+    matchKey: v.string(),
+    // Preserve metadata from the legacy places model during the lookup-key backfill.
+    key: v.optional(v.string()),
+    earlierVisits: v.optional(v.number()),
+    visitCount: v.optional(v.number()),
+    lastVisitDate: v.optional(v.string()),
+    mapQuery: v.optional(v.string()),
+    googlePlaceId: v.optional(v.string()),
+    location: v.optional(locationValidator),
+  })
+    .index('by_boardId', ['boardId'])
+    .index('by_boardId_and_googlePlaceId', ['boardId', 'googlePlaceId'])
+    .index('by_boardId_and_matchKey', ['boardId', 'matchKey']),
   visits: defineTable({
     boardId: v.id('boards'),
     creatorId: v.id('users'),
@@ -75,8 +93,12 @@ const schema = defineSchema({
     location: v.optional(locationValidator),
     mapQuery: v.optional(v.string()),
     visitNumber: v.optional(v.number()),
+    placeId: v.optional(v.id('places')),
+    googlePlaceId: v.optional(v.string()),
     importKey: v.optional(v.string()),
   })
+    .index('by_placeId_and_date', ['placeId', 'date'])
+    .index('by_boardId_and_placeId', ['boardId', 'placeId'])
     .index('by_boardId_and_importKey', ['boardId', 'importKey'])
     .index('by_boardId_and_date', ['boardId', 'date']),
   categories: defineTable({

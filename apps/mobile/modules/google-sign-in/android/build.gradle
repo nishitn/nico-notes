@@ -1,0 +1,25 @@
+apply plugin: 'com.android.library'
+apply plugin: 'expo-module-gradle-plugin'
+
+group = 'expo.modules.nicogooglesignin'
+version = '1.0.0'
+
+expoModule {
+  canBePublished false
+}
+
+android {
+  namespace 'expo.modules.nicogooglesignin'
+  defaultConfig {
+    versionCode 1
+    versionName '1.0.0'
+  }
+}
+
+dependencies {
+  // Compatible with Expo SDK 57's Kotlin 2.1 compiler. Newer Google ID releases
+  // require Kotlin 2.4; these stable versions expose the same native button flow.
+  implementation 'androidx.credentials:credentials:1.5.0'
+  implementation 'androidx.credentials:credentials-play-services-auth:1.5.0'
+  implementation 'com.google.android.libraries.identity.googleid:googleid:1.1.1'
+}

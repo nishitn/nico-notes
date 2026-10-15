@@ -371,10 +371,12 @@ export function Invitations({
 function TypeEditor({
   boardId,
   type,
+  isAdmin,
   onClose,
 }: {
   boardId: Id<'boards'>;
   type?: Doc<'visitTypes'>;
+  isAdmin: boolean;
   onClose: () => void;
 }) {
   const save = useMutation(api.visitTypes.save);
@@ -415,7 +417,11 @@ function TypeEditor({
             placeholder="e.g. Trek"
           />
         </Field>
-        <RatingCategories value={categories} onChange={setCategories} />
+        <RatingCategories
+          value={categories}
+          onChange={setCategories}
+          locked={isAdmin ? [] : type?.categories}
+        />
         <DishRatingsToggle checked={showDishes} onChange={setShowDishes} />
         {type && <small className="muted">Applies to new visits only.</small>}
         <ErrorNote text={task.error} />
@@ -437,6 +443,8 @@ export function Settings() {
   const removeMember = useMutation(api.boards.removeMember);
   const setMemberRole = useMutation(api.boards.setMemberRole);
   const roleTask = useTask();
+  const leave = useMutation(api.boards.leave);
+  const [leaving, setLeaving] = useState(false);
   const removeBoard = useMutation(api.boards.remove);
   const removeType = useMutation(api.visitTypes.remove);
   const navigate = useNavigate();
@@ -504,13 +512,15 @@ export function Settings() {
                   >
                     <Pencil size={16} />
                   </button>
-                  <button
-                    className="icon-button"
-                    aria-label={`Delete ${type.name} type`}
-                    onClick={() => setRemovingType(type)}
-                  >
-                    <Trash2 size={16} />
-                  </button>
+                  {isAdmin && (
+                    <button
+                      className="icon-button"
+                      aria-label={`Delete ${type.name} type`}
+                      onClick={() => setRemovingType(type)}
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
@@ -594,6 +604,9 @@ export function Settings() {
         </section>
       </div>
       <div className="settings-delete">
+        <button className="button secondary" onClick={() => setLeaving(true)}>
+          Leave board
+        </button>
         <button
           className="button danger"
           disabled={!isAdmin}
@@ -607,6 +620,7 @@ export function Settings() {
         <TypeEditor
           boardId={id}
           type={editingType === 'new' ? undefined : editingType}
+          isAdmin={isAdmin}
           onClose={() => setEditingType(null)}
         />
       )}
@@ -630,6 +644,20 @@ export function Settings() {
         >
           They will lose access to this board. Their existing contributions will remain. They will
           need your approval to rejoin.
+        </Confirm>
+      )}
+      {leaving && (
+        <Confirm
+          title="Leave this board?"
+          confirmLabel="Leave board"
+          onClose={() => setLeaving(false)}
+          onConfirm={async () => {
+            await leave({ boardId: id });
+            navigate('/boards');
+          }}
+        >
+          Your visits, photos, and ratings will remain. You’ll need an invitation and admin approval
+          to rejoin.
         </Confirm>
       )}
       {deleting && (

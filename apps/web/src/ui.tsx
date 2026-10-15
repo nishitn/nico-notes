@@ -13,12 +13,25 @@ import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { AlertCircle, ArrowLeft, Check, Heart, LoaderCircle, X } from 'lucide-react';
 
-export function message(error: unknown) {
+export function message(error: unknown, fallback = 'Something went wrong. Please try again.') {
   if (error && typeof error === 'object' && 'data' in error && typeof error.data === 'string')
     return error.data;
-  return error instanceof Error
-    ? error.message.split('\n')[0]
-    : 'Something went wrong. Please try again.';
+  if (
+    error &&
+    typeof error === 'object' &&
+    'data' in error &&
+    error.data &&
+    typeof error.data === 'object' &&
+    'message' in error.data &&
+    typeof error.data.message === 'string'
+  )
+    return error.data.message;
+  if (error instanceof Error) {
+    // Unexpected Convex failures contain transport details, not a user-facing message.
+    if (/\[CONVEX\b|\[Request ID:|^Server Error/.test(error.message)) return fallback;
+    return error.message.split('\n')[0];
+  }
+  return fallback;
 }
 export function useTask() {
   const [error, setError] = useState('');

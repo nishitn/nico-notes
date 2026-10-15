@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ImagePlus, X } from 'lucide-react';
-import { MAX_PHOTO_BYTES, PHOTO_TYPES } from '@nico-notes/backend/shared';
+import { MAX_PHOTOS, MAX_PHOTO_BYTES, PHOTO_TYPES } from '@nico-notes/backend/shared';
 import { ErrorNote } from './ui';
 
 export type PhotoSelection = { file: File; preview: string };
@@ -9,79 +9,91 @@ export function PhotoPicker({
   value,
   onChange,
   disabled = false,
+  max = MAX_PHOTOS,
 }: {
-  value: PhotoSelection | null;
-  onChange: (value: PhotoSelection | null) => void;
+  value: PhotoSelection[];
+  onChange: (value: PhotoSelection[]) => void;
   disabled?: boolean;
+  max?: number;
 }) {
   const input = useRef<HTMLInputElement>(null);
+  const previous = useRef(value);
   const [error, setError] = useState('');
+  useEffect(() => {
+    for (const photo of previous.current)
+      if (!value.includes(photo)) URL.revokeObjectURL(photo.preview);
+    previous.current = value;
+  }, [value]);
   useEffect(
     () => () => {
-      if (value) URL.revokeObjectURL(value.preview);
+      for (const photo of previous.current) URL.revokeObjectURL(photo.preview);
     },
-    [value],
+    [],
   );
   return (
-    <section className="visit-photo-picker" aria-label="Visit picture">
+    <section className="visit-photo-picker" aria-label="Visit pictures">
       <input
         ref={input}
         type="file"
         hidden
-        aria-label="Choose a picture"
+        multiple
+        aria-label="Choose pictures"
         accept="image/jpeg,image/png,image/webp"
         disabled={disabled}
         onChange={(event) => {
-          const file = event.target.files?.[0];
+          const files = Array.from(event.target.files ?? []);
           event.target.value = '';
-          if (!file) return;
-          if (!PHOTO_TYPES.includes(file.type)) {
-            setError('Choose a JPEG, PNG, or WebP picture.');
+          if (!files.length) return;
+          if (files.length + value.length > max) {
+            setError(`You can add up to ${max} more photos.`);
             return;
           }
-          if (file.size > MAX_PHOTO_BYTES) {
-            setError('Choose a picture up to 10 MB.');
+          if (files.some((file) => !PHOTO_TYPES.includes(file.type))) {
+            setError('Choose JPEG, PNG, or WebP pictures.');
+            return;
+          }
+          if (files.some((file) => file.size > MAX_PHOTO_BYTES)) {
+            setError('Choose pictures up to 10 MB each.');
             return;
           }
           setError('');
-          onChange({ file, preview: URL.createObjectURL(file) });
+          onChange([
+            ...value,
+            ...files.map((file) => ({ file, preview: URL.createObjectURL(file) })),
+          ]);
         }}
       />
-      <button
-        type="button"
-        className={`visit-picture-box ${value ? 'has-picture' : ''}`}
-        disabled={disabled}
-        onClick={() => input.current?.click()}
-      >
-        {value ? (
-          <>
-            <img src={value.preview} alt="Selected visit picture" />
-            <span className="change-picture">
-              <ImagePlus size={16} /> Change picture
-            </span>
-          </>
-        ) : (
-          <>
+      <div className="selected-photos">
+        {value.map((photo, index) => (
+          <div className="selected-photo" key={photo.preview}>
+            <img src={photo.preview} alt={`Selected visit picture ${index + 1}`} />
+            <button
+              type="button"
+              className="picture-remove icon-button"
+              aria-label={`Remove selected picture ${index + 1}`}
+              disabled={disabled}
+              onClick={() => {
+                onChange(value.filter((item) => item !== photo));
+                setError('');
+              }}
+            >
+              <X size={18} />
+            </button>
+          </div>
+        ))}
+        {value.length < max && (
+          <button
+            type="button"
+            className="visit-picture-box"
+            disabled={disabled}
+            onClick={() => input.current?.click()}
+          >
             <ImagePlus size={25} />
-            <strong>Add a picture</strong>
-            <small>JPEG, PNG or WebP · Up to 10 MB</small>
-          </>
+            <strong>Add pictures</strong>
+            <small>JPEG, PNG or WebP · Up to 10 MB each</small>
+          </button>
         )}
-      </button>
-      {value && (
-        <button
-          type="button"
-          className="picture-remove icon-button"
-          aria-label="Remove selected picture"
-          disabled={disabled}
-          onClick={() => {
-            onChange(null);
-            setError('');
-          }}
-        >
-          <X size={18} />
-        </button>
-      )}
+      </div>
       <ErrorNote text={error} />
     </section>
   );

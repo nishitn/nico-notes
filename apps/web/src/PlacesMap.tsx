@@ -18,12 +18,13 @@ export function mapsLink(place: {
   title: string;
   place: string;
   mapQuery?: string;
+  googlePlaceId?: string;
   location?: MapLocation;
 }) {
   const query = place.location
     ? `${place.location.latitude},${place.location.longitude}`
     : place.mapQuery || `${place.title} ${place.place}`;
-  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}${place.googlePlaceId ? `&query_place_id=${encodeURIComponent(place.googlePlaceId)}` : ''}`;
 }
 
 export function PlacesMap({

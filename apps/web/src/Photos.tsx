@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAuthToken } from '@convex-dev/auth/react';
 import { useConvex, useMutation, useQuery } from 'convex/react';
-import { Camera, ImagePlus, LoaderCircle, Trash2 } from 'lucide-react';
+import { PhotoPicker, type PhotoSelection } from './PhotoPicker';
+import { Link } from 'react-router-dom';
+import { Camera, ChevronLeft, ChevronRight, ImagePlus, LoaderCircle, Trash2 } from 'lucide-react';
 import { api } from '@nico-notes/backend/api';
 import type { Doc, Id } from '@nico-notes/backend/dataModel';
 import { MAX_PHOTOS, MAX_PHOTO_BYTES, PHOTO_TYPES } from '@nico-notes/backend/shared';
@@ -72,6 +74,151 @@ export function Photo({
       <LoaderCircle size={20} className="spin" />
       <span>Loading photo…</span>
     </span>
+  );
+}
+
+// Observe each tile separately: the horizontal scroller clips offscreen tiles,
+// so their authenticated photo fetches wait until they become visible.
+function CarouselPhoto({
+  id,
+  title,
+  visitId,
+  index,
+  count,
+}: {
+  id: Id<'photos'>;
+  title: string;
+  visitId: Id<'visits'>;
+  index: number;
+  count: number;
+}) {
+  const tile = useRef<HTMLAnchorElement>(null);
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    if (!tile.current) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setVisible(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: '200px 0px' },
+    );
+    observer.observe(tile.current);
+    return () => observer.disconnect();
+  }, []);
+  return (
+    <Link
+      ref={tile}
+      className="memory-carousel-photo"
+      to={`/visits/${visitId}`}
+      aria-label={`Open ${title}, photo ${index + 1} of ${count}`}
+    >
+      {visible ? (
+        <Photo id={id} alt={`${title} photo ${index + 1}`} />
+      ) : (
+        <span className="photo-loading">
+          <Camera size={22} />
+        </span>
+      )}
+    </Link>
+  );
+}
+
+export function PhotoCarousel({
+  ids,
+  title,
+  visitId,
+}: {
+  ids: Id<'photos'>[];
+  title: string;
+  visitId: Id<'visits'>;
+}) {
+  const track = useRef<HTMLDivElement>(null);
+  const [edges, setEdges] = useState({ back: false, next: false });
+  const updateEdges = () => {
+    const element = track.current;
+    if (element)
+      setEdges({
+        back: element.scrollLeft > 1,
+        next: element.scrollLeft + element.clientWidth < element.scrollWidth - 1,
+      });
+  };
+  useEffect(() => {
+    if (!track.current) return;
+    const observer = new ResizeObserver(updateEdges);
+    observer.observe(track.current);
+    return () => observer.disconnect();
+  }, [ids.length]);
+  const move = (direction: number) => {
+    const element = track.current;
+    if (!element) return;
+    const step =
+      (element.firstElementChild?.getBoundingClientRect().width ?? element.clientWidth) + 8;
+    element.scrollBy({
+      left: direction * step,
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches
+        ? 'instant'
+        : 'smooth',
+    });
+  };
+  return (
+    <div
+      className="memory-carousel"
+      role="region"
+      aria-roledescription="carousel"
+      aria-label={`${title} photos`}
+    >
+      <div
+        ref={track}
+        className="memory-carousel-track"
+        tabIndex={0}
+        role="group"
+        aria-label="Photo strip. Use the arrow keys to browse."
+        onScroll={updateEdges}
+        onKeyDown={(event) => {
+          if (event.target !== event.currentTarget) return;
+          if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+            event.preventDefault();
+            move(event.key === 'ArrowRight' ? 1 : -1);
+          }
+        }}
+      >
+        {ids.map((id, index) => (
+          <CarouselPhoto
+            key={id}
+            id={id}
+            title={title}
+            visitId={visitId}
+            index={index}
+            count={ids.length}
+          />
+        ))}
+      </div>
+      {ids.length > 1 && (
+        <>
+          <button
+            type="button"
+            className="memory-carousel-arrow memory-carousel-prev icon-button"
+            aria-label="Previous photos"
+            disabled={!edges.back}
+            onClick={() => move(-1)}
+          >
+            <ChevronLeft size={20} />
+          </button>
+          <button
+            type="button"
+            className="memory-carousel-arrow memory-carousel-next icon-button"
+            aria-label="Next photos"
+            disabled={!edges.next}
+            onClick={() => move(1)}
+          >
+            <ChevronRight size={20} />
+          </button>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -149,9 +296,8 @@ export function PhotoSection({
   const remove = useMutation(api.photos.remove);
   const updateCaption = useMutation(api.photos.updateCaption);
   const [adding, setAdding] = useState(false);
-  const [file, setFile] = useState<File | null>(null);
+  const [selectedPhotos, setSelectedPhotos] = useState<PhotoSelection[]>([]);
   const [caption, setCaption] = useState('');
-  const [preview, setPreview] = useState('');
   const progress = photoUpload.progress;
   const [viewing, setViewing] = useState<Id<'photos'> | null>(null);
   const [deleting, setDeleting] = useState<Id<'photos'> | null>(null);
@@ -161,20 +307,15 @@ export function PhotoSection({
   const captionTask = useTask();
   const notice = useNotice();
   const current = photos.find((p) => p._id === viewing);
-  useEffect(
-    () => () => {
-      if (preview) URL.revokeObjectURL(preview);
-    },
-    [preview],
-  );
   async function send() {
-    if (!file) throw new Error('Select a photo to upload.');
-    await photoUpload.send(visitId, file, caption);
+    if (!selectedPhotos.length) throw new Error('Select photos to upload.');
+    for (const photo of selectedPhotos) {
+      await photoUpload.send(visitId, photo.file, caption);
+      setSelectedPhotos((current) => current.filter((item) => item !== photo));
+    }
     setAdding(false);
-    setFile(null);
-    setPreview('');
     setCaption('');
-    notice('Picture saved.');
+    notice('Pictures saved.');
   }
   return (
     <section className="photo-section">
@@ -219,28 +360,21 @@ export function PhotoSection({
       )}
       {adding && (
         <Modal
-          title="Add photo"
+          title="Add photos"
           onClose={() => {
-            if (!task.busy) setAdding(false);
+            if (!task.busy) {
+              setAdding(false);
+              setSelectedPhotos([]);
+            }
           }}
         >
           <Form onSubmit={() => task.run(send)}>
-            <Field label="Choose a photo" hint="JPEG, PNG, or WebP · Up to 10 MB">
-              <input
-                type="file"
-                required
-                accept="image/jpeg,image/png,image/webp"
-                disabled={task.busy}
-                onChange={(e) => {
-                  const next = e.target.files?.[0] ?? null;
-                  setFile(next);
-                  setPreview(next ? URL.createObjectURL(next) : '');
-                }}
-              />
-            </Field>
-            {preview && (
-              <img className="upload-preview" src={preview} alt="Your selected photo preview" />
-            )}
+            <PhotoPicker
+              value={selectedPhotos}
+              onChange={setSelectedPhotos}
+              disabled={task.busy}
+              max={Math.max(0, MAX_PHOTOS - photos.length)}
+            />
             <Field label="Caption (optional)">
               <input
                 maxLength={300}
@@ -257,7 +391,9 @@ export function PhotoSection({
             )}
             <ErrorNote text={task.error} />
             <div className="form-actions">
-              <Submit busy={task.busy}>{task.error ? 'Retry upload' : 'Save photo'}</Submit>
+              <Submit busy={task.busy}>
+                {task.error ? 'Retry remaining photos' : 'Save photos'}
+              </Submit>
             </div>
           </Form>
         </Modal>

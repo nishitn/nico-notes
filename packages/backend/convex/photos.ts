@@ -132,8 +132,10 @@ export const remove = authedMutation({
 });
 export const configuration = query({
   args: {},
-  returns: v.object({ googleReady: v.boolean() }),
+  returns: v.object({ googleReady: v.boolean(), googleClientId: v.optional(v.string()) }),
   handler: async () => ({
+    // OAuth client IDs are public. Credentials and signing keys stay server-side.
+    ...(process.env.AUTH_GOOGLE_ID ? { googleClientId: process.env.AUTH_GOOGLE_ID } : {}),
     googleReady:
       !!process.env.AUTH_GOOGLE_ID &&
       !!process.env.AUTH_GOOGLE_SECRET &&

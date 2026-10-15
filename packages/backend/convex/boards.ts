@@ -255,6 +255,23 @@ export const setMemberRole = authedMutation({
   },
 });
 
+export const leave = authedMutation({
+  args: { boardId: v.id('boards') },
+  returns: v.null(),
+  handler: async (ctx, { boardId }) => {
+    const { board } = await member(ctx, boardId);
+    const membership = await ctx.db
+      .query('memberships')
+      .withIndex('by_boardId_and_userId', (q) => q.eq('boardId', boardId).eq('userId', ctx.userId))
+      .unique();
+    if (membership) {
+      await keepAdmin(ctx, board, membership);
+      await ctx.db.delete(membership._id);
+    }
+    return null;
+  },
+});
+
 export const removeMember = authedMutation({
   args: { boardId: v.id('boards'), userId: v.id('users') },
   returns: v.null(),

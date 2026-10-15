@@ -57,6 +57,7 @@ export function VisitEditor() {
       userId={me._id}
       userName={me.name}
       existing={existing?.visit}
+      photoCount={existing?.photos.length ?? 0}
     />
   );
 }
@@ -67,6 +68,7 @@ function Editor({
   userId,
   userName,
   existing,
+  photoCount,
 }: {
   boardId: Id<'boards'>;
   boardName: string;
@@ -74,10 +76,11 @@ function Editor({
   userId: Id<'users'>;
   userName: string;
   existing?: Doc<'visits'>;
+  photoCount: number;
 }) {
   const create = useMutation(api.visits.create);
   const photoUpload = usePhotoUpload();
-  const [photo, setPhoto] = useState<PhotoSelection | null>(null);
+  const [photos, setPhotos] = useState<PhotoSelection[]>([]);
   const [savedVisitId, setSavedVisitId] = useState<Id<'visits'> | null>(null);
   const update = useMutation(api.visits.update);
   const task = useTask();
@@ -99,6 +102,12 @@ function Editor({
   const [title, setTitle] = useState(initialTitle);
   const [date, setDate] = useState(existing?.date ?? today());
   const [place, setPlace] = useState(initialPlace);
+  const [placeId, setPlaceId] = useState<Id<'places'> | undefined>(
+    existing?.placeId ?? ((searchParams.get('placeId') || undefined) as Id<'places'> | undefined),
+  );
+  const [googlePlaceId, setGooglePlaceId] = useState(
+    existing?.googlePlaceId ?? searchParams.get('googlePlaceId') ?? undefined,
+  );
   const [notes, setNotes] = useState(existing?.notes ?? '');
   const [location, setLocation] = useState<MapLocation | null>(initialLocation);
   const [typeId, setTypeId] = useState<string>(types[0]?._id ?? '');
@@ -117,9 +126,12 @@ function Editor({
     return score;
   };
   async function finishSave(id: Id<'visits'>) {
-    if (photo) {
+    if (photos.length) {
       setSavedVisitId(id);
-      await photoUpload.send(id, photo.file);
+      for (const photo of photos) {
+        await photoUpload.send(id, photo.file);
+        setPhotos((current) => current.filter((item) => item !== photo));
+      }
     }
     notice(existing ? 'Visit updated.' : 'Visit saved.');
     navigate(`/visits/${id}`, { replace: !existing });
@@ -176,6 +188,8 @@ function Editor({
                 notes,
                 showDishes,
                 location,
+                placeId,
+                googlePlaceId,
               });
               await finishSave(existing._id);
             } else {
@@ -187,6 +201,8 @@ function Editor({
                 notes,
                 showDishes,
                 location,
+                placeId,
+                googlePlaceId,
                 ...(typeId ? { typeId: typeId as Id<'visitTypes'> } : {}),
                 categories: categories.map((category) => category.name.trim()),
                 dishes: dishes.map((dish) => dish.name.trim()),
@@ -211,7 +227,11 @@ function Editor({
         <fieldset className="visit-editor-fields" disabled={task.busy || !!savedVisitId}>
           <LocationField
             value={location}
+            googlePlaceId={googlePlaceId}
             onChange={(selected) => {
+              if (selected.googlePlaceId !== googlePlaceId || selected.title !== title)
+                setPlaceId(undefined);
+              setGooglePlaceId(selected.googlePlaceId);
               setTitle(selected.title);
               setPlace(selected.place);
               setLocation(selected.location);
@@ -229,7 +249,12 @@ function Editor({
             />
           </Field>
         </fieldset>
-        <PhotoPicker value={photo} onChange={setPhoto} disabled={task.busy} />
+        <PhotoPicker
+          value={photos}
+          onChange={setPhotos}
+          disabled={task.busy}
+          max={Math.max(0, 10 - photoCount)}
+        />
         {savedVisitId && task.busy && (
           <div className="upload-progress" role="status">
             <progress value={photoUpload.progress} max={100} />
@@ -294,7 +319,7 @@ function Editor({
         </fieldset>
         {savedVisitId && task.error && (
           <p className="small muted">
-            Your visit is saved. Retry the picture upload or open the visit.
+            Your visit is saved. Retry the remaining picture uploads or open the visit.
           </p>
         )}
         <ErrorNote text={task.error} />
@@ -304,8 +329,8 @@ function Editor({
           </Link>
           <Submit busy={task.busy}>
             {savedVisitId
-              ? photo
-                ? 'Retry picture upload'
+              ? photos.length > 0
+                ? 'Retry remaining pictures'
                 : 'Finish'
               : existing
                 ? 'Save changes'
@@ -530,7 +555,7 @@ function RatingCard({
               <Pencil size={15} />
             </button>
           )}
-          {onRemove && (
+          {isAdmin && onRemove && (
             <button className="icon-button" aria-label={`Remove ${name}`} onClick={onRemove}>
               <Trash2 size={15} />
             </button>

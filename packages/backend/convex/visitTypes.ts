@@ -1,5 +1,5 @@
 import { ConvexError, v } from 'convex/values';
-import { authedMutation, member } from './lib';
+import { admin, authedMutation, member } from './lib';
 import { textValue } from '../shared';
 
 export const save = authedMutation({
@@ -12,7 +12,7 @@ export const save = authedMutation({
   },
   returns: v.id('visitTypes'),
   handler: async (ctx, { id, ...args }) => {
-    await member(ctx, args.boardId);
+    const { isAdmin } = await member(ctx, args.boardId);
     const categories = args.categories.map((s) => textValue(s, 'Category', 50));
     if (
       categories.length > 20 ||
@@ -24,6 +24,8 @@ export const save = authedMutation({
       const old = await ctx.db.get(id);
       if (!old || old.boardId !== args.boardId)
         throw new ConvexError('This type does not belong to this board.');
+      if (!isAdmin && old.categories.some((name) => !categories.includes(name)))
+        throw new ConvexError('Only a board admin can remove preset categories.');
       await ctx.db.patch(id, fields);
       return id;
     }
@@ -41,7 +43,7 @@ export const remove = authedMutation({
   handler: async (ctx, { id }) => {
     const type = await ctx.db.get(id);
     if (!type) return null;
-    await member(ctx, type.boardId);
+    await admin(ctx, type.boardId);
     await ctx.db.delete(id);
     return null;
   },
