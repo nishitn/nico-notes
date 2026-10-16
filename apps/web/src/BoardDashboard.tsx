@@ -722,7 +722,7 @@ export function BoardDashboard({
 
               <div className="map-summary">
                 <Link to={`/boards/${id}/places`} className="text-button">
-                  <List size={16} /> View list <ArrowRight size={15} />
+                  <List size={16} /> View All Places <ArrowRight size={15} />
                 </Link>
                 {unpinned > 0 && (
                   <Link className="map-unpinned" to={`/boards/${id}/places?tab=unpinned`}>

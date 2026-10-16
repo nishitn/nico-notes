@@ -63,7 +63,7 @@ export function PlacePreview({
               accessibilityLabel={isWishlisted ? 'Saved to wishlist' : 'Save to wishlist'}
               onPress={onWishlist}
               style={[
-                preview.secondary,
+                preview.iconButton,
                 isWishlisted && {
                   backgroundColor: colors.peachLight,
                   borderColor: colors.peachBorder,
@@ -72,10 +72,9 @@ export function PlacePreview({
             >
               <Icon
                 source={isWishlisted ? 'bookmark' : 'bookmark-outline'}
-                size={16}
+                size={18}
                 color={colors.rust}
               />
-              <Text style={preview.link}>{isWishlisted ? 'Saved' : 'Wishlist'}</Text>
             </Pressable>
           )}
           {onOpen && (
@@ -136,6 +135,15 @@ const preview = StyleSheet.create({
     borderRadius: 24,
     borderWidth: 1,
     borderColor: colors.border,
+    justifyContent: 'center',
+  },
+  iconButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
     justifyContent: 'center',
   },
   primary: {

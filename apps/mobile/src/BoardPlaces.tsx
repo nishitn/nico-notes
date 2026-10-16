@@ -321,7 +321,7 @@ export function BoardPlaces({
             <Icon source="map-marker-outline" size={42} color={colors.rust} />
             <Heading>Your places, together.</Heading>
             <Text style={[styles.muted, { textAlign: 'center' }]}>
-              Open View list to browse your saved places and get directions.
+              Open View All Places to browse your saved places and get directions.
             </Text>
           </View>
         )}
@@ -479,7 +479,7 @@ export function BoardPlaces({
         {onViewAll && (
           <Pressable accessibilityRole="button" onPress={onViewAll} style={styles.textButton}>
             <Icon source="format-list-bulleted" size={17} color={colors.rust} />
-            <Text style={styles.link}>View list</Text>
+            <Text style={styles.link}>View All Places</Text>
             <Icon source="arrow-right" size={16} color={colors.rust} />
           </Pressable>
         )}
@@ -528,7 +528,7 @@ const placeStyles = StyleSheet.create({
     borderColor: colors.border,
     backgroundColor: colors.sageLight,
   },
-  map: { width: '100%', aspectRatio: 4 / 3 },
+  map: { width: '100%', aspectRatio: 1.15 },
   mapFallback: {
     minHeight: 220,
     padding: 24,
