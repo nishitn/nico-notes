@@ -6,6 +6,7 @@ export type GooglePlace = {
   name: string;
   address: string;
   location: Coordinate;
+  distance?: number;
 };
 const native = requireOptionalNativeModule<{
   search(query: string, latitude: number | null, longitude: number | null): Promise<GooglePlace[]>;

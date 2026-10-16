@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vite-plus/test';
-import { matchingPlaces, placeSearchError, withinSearchRadius } from './placeSearch';
+import {
+  distanceBetween,
+  formatDistance,
+  matchingPlaces,
+  placeSearchError,
+  withinSearchRadius,
+} from './placeSearch';
 
 const places = [
   {
@@ -29,11 +35,24 @@ describe('native place search', () => {
     expect(matchingPlaces(places, '   ')).toEqual(places);
     expect(matchingPlaces(places, 'unknown restaurant')).toEqual([]);
   });
-  it('restricts new Google results to 10 km rather than the bounding-box corners', () => {
+  it('calculates distance between coordinates accurately', () => {
     const center = { latitude: 12.97, longitude: 77.59 };
-    expect(withinSearchRadius({ latitude: 13.04, longitude: 77.59 }, center)).toBe(true);
-    expect(withinSearchRadius({ latitude: 13.05, longitude: 77.67 }, center)).toBe(false);
-    expect(withinSearchRadius({ latitude: 13.07, longitude: 77.59 }, center)).toBe(false);
+    expect(distanceBetween(center, center)).toBe(0);
+    const nearbyPoint = { latitude: 13.04, longitude: 77.59 };
+    const distance = distanceBetween(nearbyPoint, center);
+    expect(distance).toBeGreaterThan(7000);
+    expect(distance).toBeLessThan(8500);
+  });
+  it('formats distance into user-friendly strings', () => {
+    expect(formatDistance(50)).toBe('< 100 m');
+    expect(formatDistance(450)).toBe('450 m');
+    expect(formatDistance(1420)).toBe('1.4 km');
+    expect(formatDistance(12400)).toBe('12 km');
+  });
+  it('supports checking search radius bounds', () => {
+    const center = { latitude: 12.97, longitude: 77.59 };
+    expect(withinSearchRadius({ latitude: 13.04, longitude: 77.59 }, center, 10000)).toBe(true);
+    expect(withinSearchRadius({ latitude: 13.07, longitude: 77.59 }, center, 10000)).toBe(false);
   });
   it('gives actionable errors for a missing Places permission or quota', () => {
     expect(placeSearchError(new Error('Google place search: REQUEST_DENIED'))).toContain(

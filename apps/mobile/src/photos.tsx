@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
-import { Text, View } from 'react-native';
-import { Image } from 'expo-image';
+import { Text, View, type StyleProp } from 'react-native';
+import { Image, type ImageStyle } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import { File } from 'expo-file-system';
@@ -25,7 +25,17 @@ export function photoOrigin(provider: 'convex' | 'local') {
   if (parsed.protocol !== 'https:') throw new Error('Photos require a reachable HTTPS server.');
   return origin.replace(/\/$/, '');
 }
-export function Photo({ id, alt }: { id: Id<'photos'>; alt: string }) {
+export function Photo({
+  id,
+  alt,
+  height = 220,
+  style,
+}: {
+  id: Id<'photos'>;
+  alt: string;
+  height?: number | `${number}%`;
+  style?: StyleProp<ImageStyle>;
+}) {
   const token = useAuthToken();
   const provider = useQuery(api.photos.fileProvider, token ? { photoId: id } : 'skip');
   const [failed, setFailed] = useState(false);
@@ -37,7 +47,13 @@ export function Photo({ id, alt }: { id: Id<'photos'>; alt: string }) {
   }
   if (!token || !provider || !origin || failed)
     return (
-      <View style={{ height: 150, justifyContent: 'center', gap: 8 }}>
+      <View
+        style={{
+          height: typeof height === 'number' ? height : 150,
+          justifyContent: 'center',
+          gap: 8,
+        }}
+      >
         <Text style={styles.muted}>
           {provider === undefined ? 'Loading photo…' : 'Photo unavailable.'}
         </Text>
@@ -52,7 +68,7 @@ export function Photo({ id, alt }: { id: Id<'photos'>; alt: string }) {
         headers: { Authorization: `Bearer ${token}` },
       }}
       accessibilityLabel={alt}
-      style={{ height: 220, width: '100%', borderRadius: 12 }}
+      style={[{ height, width: '100%', borderRadius: 12 }, style]}
       contentFit="cover"
       cachePolicy="none"
       onError={() => setFailed(true)}

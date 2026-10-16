@@ -3,6 +3,7 @@ import { Image } from 'expo-image';
 import { Icon } from 'react-native-paper';
 import type { GooglePlace } from '../modules/google-places';
 import type { SavedPlace } from './BoardPlaces';
+import { formatDistance } from './placeSearch';
 import { colors, styles } from './ui';
 
 export function PlaceSearchResults({
@@ -18,7 +19,7 @@ export function PlaceSearchResults({
   onAddSaved,
   onAddNew,
   onManual,
-  hasLocation,
+  hasLocation: _hasLocation,
 }: {
   query: string;
   saved: SavedPlace[];
@@ -26,7 +27,7 @@ export function PlaceSearchResults({
   nearby: GooglePlace[];
   loading: boolean;
   error: string;
-  hasLocation: boolean;
+  hasLocation?: boolean;
   onRetry: () => void;
   onSaved: (place: SavedPlace) => void;
   onNew: (place: GooglePlace) => void;
@@ -35,12 +36,13 @@ export function PlaceSearchResults({
   onManual: () => void;
 }) {
   function row(
-    place: { name: string; address: string; location?: unknown },
+    place: { name: string; address: string; location?: unknown; distance?: number },
     key: string,
     onSelect: () => void,
     onAdd: () => void,
     icon: string,
   ) {
+    const distanceText = place.distance !== undefined ? formatDistance(place.distance) : null;
     return (
       <View key={key} style={searchStyles.row}>
         <Pressable
@@ -55,6 +57,7 @@ export function PlaceSearchResults({
               {place.name}
             </Text>
             <Text numberOfLines={1} style={searchStyles.address}>
+              {distanceText ? `${distanceText} · ` : ''}
               {place.address || 'Address not recorded'}
               {!place.location ? ' · No map pin' : ''}
             </Text>
@@ -78,18 +81,22 @@ export function PlaceSearchResults({
         keyboardShouldPersistTaps="handled"
         style={{ maxHeight: 260 }}
       >
-        <View style={searchStyles.heading}>
-          <Text style={styles.eyebrow}>SAVED PLACES · {saved.length}</Text>
-          {loadingSaved && <ActivityIndicator size="small" color={colors.rust} />}
-        </View>
-        {saved.slice(0, 5).map((p) =>
-          row(
-            p,
-            p._id,
-            () => onSaved(p),
-            () => onAddSaved(p),
-            'map-marker-outline',
-          ),
+        {saved.length > 0 && (
+          <>
+            <View style={searchStyles.heading}>
+              <Text style={styles.eyebrow}>SAVED PLACES · {saved.length}</Text>
+              {loadingSaved && <ActivityIndicator size="small" color={colors.rust} />}
+            </View>
+            {saved.slice(0, 5).map((p) =>
+              row(
+                p,
+                p._id,
+                () => onSaved(p),
+                () => onAddSaved(p),
+                'map-marker-outline',
+              ),
+            )}
+          </>
         )}
         {!saved.length && (
           <Text style={searchStyles.message}>
@@ -102,7 +109,7 @@ export function PlaceSearchResults({
               source={require('../assets/google/g-logo.png')}
               style={{ width: 16, height: 16 }}
             />
-            <Text style={styles.eyebrow}>{hasLocation ? 'NEARBY · 10 KM' : 'GOOGLE MAPS'}</Text>
+            <Text style={styles.eyebrow}>GOOGLE MAPS</Text>
           </View>
           {loading && <ActivityIndicator size="small" color={colors.rust} />}
         </View>
@@ -121,10 +128,7 @@ export function PlaceSearchResults({
               ? 'Type at least two characters to find a new place.'
               : loading
                 ? 'Searching Google Places…'
-                : error ||
-                  (hasLocation
-                    ? 'No matching places within 10 km.'
-                    : 'No matching places. Try adding a city or area.')}
+                : error || 'No matching places found on Google Maps.'}
           </Text>
         )}
         {!!error && (
@@ -149,7 +153,7 @@ const searchStyles = StyleSheet.create({
     borderColor: colors.border,
     borderRadius: 16,
     overflow: 'hidden',
-    marginTop: -8,
+    marginTop: 0,
   },
   heading: {
     paddingHorizontal: 14,

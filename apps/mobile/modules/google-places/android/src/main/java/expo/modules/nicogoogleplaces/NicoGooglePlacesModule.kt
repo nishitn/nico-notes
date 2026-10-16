@@ -34,10 +34,10 @@ class NicoGooglePlacesModule : Module() {
           Place.Field.ID, Place.Field.DISPLAY_NAME, Place.Field.FORMATTED_ADDRESS, Place.Field.LOCATION
         )).setMaxResultCount(20)
         if (latitude != null && longitude != null) {
-          val dLat = 10000.0 / 111320.0
+          val dLat = 50000.0 / 111320.0
           val dLng = dLat / maxOf(0.01, cos(Math.toRadians(latitude)))
           fun wrap(value: Double) = ((value + 540.0) % 360.0) - 180.0
-          request.setLocationRestriction(RectangularBounds.newInstance(
+          request.setLocationBias(RectangularBounds.newInstance(
             LatLng(maxOf(-90.0, latitude - dLat), wrap(longitude - dLng)),
             LatLng(minOf(90.0, latitude + dLat), wrap(longitude + dLng))
           ))

@@ -16,7 +16,7 @@ import { Icon, Searchbar } from 'react-native-paper';
 import { clusterPlaces, nearbyRegion, type MapRegion, type MapSize } from './mapGeometry';
 import { PlacePreview } from './PlacePreview';
 import { PlaceSearchResults } from './PlaceSearchResults';
-import { matchingPlaces } from './placeSearch';
+import { distanceBetween, matchingPlaces } from './placeSearch';
 import { usePlaceSearch } from './usePlaceSearch';
 import type { GooglePlace } from '../modules/google-places';
 import { useCurrentLocation } from './useCurrentLocation';
@@ -37,6 +37,7 @@ export type SavedPlace = {
   name: string;
   address: string;
   location?: { latitude: number; longitude: number };
+  distance?: number;
 };
 
 export function BoardPlaces({
@@ -74,6 +75,7 @@ export function BoardPlaces({
   });
   const [selectedClusterIds, setSelectedClusterIds] = useState<string[]>([]);
   const fallbackApplied = useRef(false);
+  const initialCenterApplied = useRef(false);
   useEffect(() => {
     void run(() => link({ boardId }));
   }, [boardId, link, run]);
@@ -91,6 +93,17 @@ export function BoardPlaces({
   const selected = results.find((p) => p._id === selectedId);
   const hasMap = Platform.OS === 'ios' || Constants.expoConfig?.extra?.hasAndroidMapsKey;
   const current = useCurrentLocation(!!hasMap);
+  const savedWithDistance = useMemo(
+    () =>
+      filtered.map((p) => ({
+        ...p,
+        distance:
+          p.location && current.location
+            ? distanceBetween(p.location, current.location)
+            : undefined,
+      })),
+    [filtered, current.location],
+  );
   const nearby = usePlaceSearch(search, current.location, searchOpen);
   const clusters = useMemo(
     () => clusterPlaces(located, region, mapSize),
@@ -98,9 +111,10 @@ export function BoardPlaces({
   );
   const selectedCluster = located.filter((p) => selectedClusterIds.includes(p._id));
   useEffect(() => {
-    if (!mapReady || !mapSize.width || !current.location || search.trim()) return;
+    if (!mapReady || !mapSize.width || !current.location || initialCenterApplied.current) return;
+    initialCenterApplied.current = true;
     map.current?.animateToRegion(nearbyRegion(current.location, mapSize), 450);
-  }, [mapReady, mapSize, current.location, search]);
+  }, [mapReady, mapSize, current.location]);
   // A saved place is a useful fallback when permission or GPS is unavailable.
   // Data updates never override a pan, zoom, or the current-location view.
   useEffect(() => {
@@ -116,20 +130,6 @@ export function BoardPlaces({
     fallbackApplied.current = true;
     map.current?.animateToRegion(nearbyRegion(located[0].location, mapSize), 450);
   }, [mapReady, mapSize, current.locating, current.location, located]);
-  useEffect(() => {
-    if (!search.trim() || !mapReady || !mapSize.width || selectedId || newPlace || !located.length)
-      return;
-    const timer = setTimeout(() => {
-      if (located.length === 1)
-        map.current?.animateToRegion(nearbyRegion(located[0].location, mapSize, 1), 350);
-      else
-        map.current?.fitToCoordinates(
-          located.map((p) => p.location),
-          { edgePadding: { top: 65, right: 55, bottom: 65, left: 55 }, animated: true },
-        );
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [search, mapReady, mapSize, selectedId, newPlace, located]);
   function selectSaved(place: SavedPlace) {
     setNewPlace(undefined);
     setSelectedId(place._id);
@@ -191,45 +191,49 @@ export function BoardPlaces({
         count={`${results.length}${status !== 'Exhausted' ? '+' : ''}`}
         suffix="explored"
       />
-      <Searchbar
-        placeholder="Search places…"
-        accessibilityLabel="Search places"
-        value={search}
-        onChangeText={(value) => {
-          setSearch(value);
-          setSearchOpen(!!value.trim());
-          setNewPlace(undefined);
-          setSelectedId(undefined);
-          setSelectedClusterIds([]);
-        }}
-        onFocus={() => setSearchOpen(!!search.trim())}
-        onSubmitEditing={() => {
-          if (filtered.length === 1) selectSaved(filtered[0]);
-          else Keyboard.dismiss();
-        }}
-        returnKeyType="search"
-        autoCorrect={false}
-        style={placeStyles.search}
-        inputStyle={styles.body}
-        iconColor={colors.rust}
-      />
-      {searchOpen && !!search.trim() && (
-        <PlaceSearchResults
-          query={search}
-          saved={filtered}
-          loadingSaved={status !== 'Exhausted'}
-          nearby={nearby.places}
-          loading={nearby.loading}
-          error={nearby.error}
-          hasLocation={!!current.location}
-          onRetry={nearby.retry}
-          onSaved={selectSaved}
-          onNew={selectNew}
-          onAddSaved={(place) => add(place)}
-          onAddNew={(place) => add({ ...place, googlePlaceId: place.id })}
-          onManual={() => add(undefined, search.trim())}
+      <View style={placeStyles.searchContainer}>
+        <Searchbar
+          placeholder="Search places…"
+          accessibilityLabel="Search places"
+          value={search}
+          onChangeText={(value) => {
+            setSearch(value);
+            setSearchOpen(!!value.trim());
+            setNewPlace(undefined);
+            setSelectedId(undefined);
+            setSelectedClusterIds([]);
+          }}
+          onFocus={() => setSearchOpen(!!search.trim())}
+          onSubmitEditing={() => {
+            if (filtered.length === 1) selectSaved(filtered[0]);
+            else Keyboard.dismiss();
+          }}
+          returnKeyType="search"
+          autoCorrect={false}
+          style={placeStyles.search}
+          inputStyle={styles.body}
+          iconColor={colors.rust}
         />
-      )}
+        {searchOpen && !!search.trim() && (
+          <View style={placeStyles.dropdown}>
+            <PlaceSearchResults
+              query={search}
+              saved={savedWithDistance}
+              loadingSaved={status !== 'Exhausted'}
+              nearby={nearby.places}
+              loading={nearby.loading}
+              error={nearby.error}
+              hasLocation={!!current.location}
+              onRetry={nearby.retry}
+              onSaved={selectSaved}
+              onNew={selectNew}
+              onAddSaved={(place) => add(place)}
+              onAddNew={(place) => add({ ...place, googlePlaceId: place.id })}
+              onManual={() => add(undefined, search.trim())}
+            />
+          </View>
+        )}
+      </View>
       <ErrorNote error={error || current.error} />
       <View style={placeStyles.mapShell}>
         {hasMap ? (
@@ -242,6 +246,18 @@ export function BoardPlaces({
             }
             onMapReady={() => setMapReady(true)}
             onRegionChangeComplete={setRegion}
+            onPress={() => {
+              if (searchOpen) {
+                setSearchOpen(false);
+                Keyboard.dismiss();
+              }
+            }}
+            onPanDrag={() => {
+              if (searchOpen) {
+                setSearchOpen(false);
+                Keyboard.dismiss();
+              }
+            }}
             showsUserLocation={!!current.location}
             showsMyLocationButton={false}
             toolbarEnabled={false}
@@ -456,6 +472,23 @@ export function BoardPlaces({
   );
 }
 const placeStyles = StyleSheet.create({
+  searchContainer: {
+    position: 'relative',
+    zIndex: 100,
+  },
+  dropdown: {
+    position: 'absolute',
+    top: '100%',
+    left: 0,
+    right: 0,
+    marginTop: 6,
+    zIndex: 1000,
+    elevation: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+  },
   search: {
     backgroundColor: colors.paper,
     borderWidth: 1,

@@ -18,14 +18,26 @@ export function matchingPlaces<T extends { name: string; address: string }>(
     return words.every((word) => text.includes(word));
   });
 }
-export function withinSearchRadius(point: Coordinate, center: Coordinate) {
+export function distanceBetween(point: Coordinate, center: Coordinate): number {
   const rad = Math.PI / 180;
   const h =
     Math.sin(((point.latitude - center.latitude) * rad) / 2) ** 2 +
     Math.cos(point.latitude * rad) *
       Math.cos(center.latitude * rad) *
       Math.sin(((point.longitude - center.longitude) * rad) / 2) ** 2;
-  return 6371000 * 2 * Math.asin(Math.min(1, Math.sqrt(h))) <= 10000;
+  return 6371000 * 2 * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+export function formatDistance(meters: number): string {
+  if (meters < 100) return '< 100 m';
+  if (meters < 1000) return `${Math.round(meters / 50) * 50} m`;
+  const km = meters / 1000;
+  if (km < 10) return `${km.toFixed(1)} km`;
+  return `${Math.round(km)} km`;
+}
+
+export function withinSearchRadius(point: Coordinate, center: Coordinate, maxMeters = 50000) {
+  return distanceBetween(point, center) <= maxMeters;
 }
 export function placeSearchError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
