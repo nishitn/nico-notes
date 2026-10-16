@@ -3,6 +3,7 @@ import {
   BackHandler,
   FlatList,
   Keyboard,
+  Linking,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -21,15 +22,17 @@ import {
   List,
   Searchbar,
 } from 'react-native-paper';
-import { usePaginatedQuery, useQuery } from 'convex/react';
+import { useMutation, usePaginatedQuery, useQuery } from 'convex/react';
 import { api } from '@nico-notes/backend/api';
 import type { Id } from '@nico-notes/backend/dataModel';
 import type { ScreenProps } from './navigation';
-import { Card, colors, Heading, Loading, SectionHeading, styles, Title } from './ui';
+import { Card, colors, confirm, Heading, Loading, SectionHeading, styles, Title } from './ui';
 import { BoardPlaces } from './BoardPlaces';
 import { VisitCard } from './VisitCard';
 import { BoardPicker } from './BoardPicker';
 import { journalTabs as tabs } from './journalNavigation';
+import { distanceBetween, formatDistance } from './placeSearch';
+import { useCurrentLocation } from './useCurrentLocation';
 
 type Props = {
   navigation: ScreenProps<'Boards'>['navigation'] | ScreenProps<'Board'>['navigation'];
@@ -47,6 +50,11 @@ export function JournalScreen({ navigation, initialBoardId }: Props) {
   const visits = usePaginatedQuery(api.visits.list, boardId ? { boardId } : 'skip', {
     initialNumItems: 24,
   });
+  const wishlist = usePaginatedQuery(api.wishlist.list, boardId ? { boardId } : 'skip', {
+    initialNumItems: 50,
+  });
+  const removeWishlist = useMutation(api.wishlist.remove);
+  const current = useCurrentLocation(true);
   const pending = useQuery(
     api.boards.pendingRequests,
     board?.isAdmin && boardId ? { boardId } : 'skip',
@@ -54,6 +62,7 @@ export function JournalScreen({ navigation, initialBoardId }: Props) {
   const [index, setIndex] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
   const [search, setSearch] = useState('');
+  const [wishlistSearch, setWishlistSearch] = useState('');
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   useEffect(() => {
     const show = Keyboard.addListener('keyboardDidShow', () => setKeyboardOpen(true));
@@ -312,6 +321,165 @@ export function JournalScreen({ navigation, initialBoardId }: Props) {
     );
   }
 
+  function renderWishlist() {
+    const filtered = wishlist.results.filter((item) =>
+      `${item.title} ${item.place ?? ''} ${item.notes ?? ''}`
+        .toLowerCase()
+        .includes(wishlistSearch.toLowerCase()),
+    );
+    return (
+      <FlatList
+        style={styles.page}
+        contentContainerStyle={journal.content}
+        data={emptyBoards ? [] : filtered}
+        keyExtractor={(item) => item._id}
+        keyboardShouldPersistTaps="handled"
+        ListHeaderComponent={
+          <View style={{ gap: 16 }}>
+            <View style={journal.boardTitleRow}>
+              <View style={{ flex: 1, gap: 4 }}>
+                <Title>Wishlist</Title>
+                <Text style={styles.muted}>
+                  {board?.board.name ?? 'Your shared board'} · {wishlist.results.length}{' '}
+                  {wishlist.results.length === 1 ? 'place' : 'places'} to visit
+                </Text>
+              </View>
+              {boardId && (
+                <MaterialButton
+                  mode="contained"
+                  buttonColor={colors.rust}
+                  textColor={colors.paper}
+                  icon="plus"
+                  onPress={() => navigation.navigate('WishlistForm', { boardId })}
+                >
+                  Add place
+                </MaterialButton>
+              )}
+            </View>
+            {wishlist.results.length > 0 && (
+              <Searchbar
+                placeholder="Search wishlist…"
+                value={wishlistSearch}
+                onChangeText={setWishlistSearch}
+                style={journal.search}
+                inputStyle={styles.body}
+                iconColor={colors.rust}
+              />
+            )}
+          </View>
+        }
+        renderItem={({ item }) => {
+          const distance =
+            item.location && current.location
+              ? formatDistance(distanceBetween(item.location, current.location))
+              : null;
+          return (
+            <Card style={journal.wishlistCard}>
+              <View style={{ gap: 8 }}>
+                <View style={journal.wishlistHeader}>
+                  <View style={{ flex: 1, gap: 4 }}>
+                    <Text style={journal.wishlistTitle}>{item.title}</Text>
+                    <Text style={styles.muted} numberOfLines={2}>
+                      {distance ? `${distance} · ` : ''}
+                      {item.place || 'Address not recorded'}
+                    </Text>
+                  </View>
+                  <IconButton
+                    icon="delete-outline"
+                    iconColor={colors.muted}
+                    size={20}
+                    onPress={() =>
+                      confirm(
+                        `Remove “${item.title}” from your wishlist?`,
+                        () => void removeWishlist({ id: item._id, confirmed: true }),
+                      )
+                    }
+                  />
+                </View>
+                {!!item.notes && (
+                  <View style={journal.wishlistNotes}>
+                    <Text style={journal.wishlistNotesText}>{item.notes}</Text>
+                  </View>
+                )}
+                {!!item.link && (
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => void Linking.openURL(item.link!)}
+                    style={journal.wishlistLink}
+                  >
+                    <Icon source="link-variant" size={14} color={colors.rust} />
+                    <Text style={journal.wishlistLinkText} numberOfLines={1}>
+                      {item.link}
+                    </Text>
+                  </Pressable>
+                )}
+                <View style={journal.wishlistActions}>
+                  {boardId && (
+                    <MaterialButton
+                      mode="contained"
+                      buttonColor={colors.rust}
+                      textColor={colors.paper}
+                      icon="plus"
+                      onPress={() =>
+                        navigation.navigate('VisitForm', {
+                          boardId,
+                          title: item.title,
+                          place: item.place,
+                          location: item.location,
+                          googlePlaceId: item.googlePlaceId,
+                        })
+                      }
+                    >
+                      Log visit
+                    </MaterialButton>
+                  )}
+                  <MaterialButton
+                    mode="outlined"
+                    textColor={colors.rust}
+                    style={{ borderColor: colors.border }}
+                    icon="navigation-variant-outline"
+                    onPress={() =>
+                      void Linking.openURL(
+                        `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+                          item.location
+                            ? `${item.location.latitude},${item.location.longitude}`
+                            : `${item.title} ${item.place ?? ''}`,
+                        )}${item.googlePlaceId ? `&query_place_id=${encodeURIComponent(item.googlePlaceId)}` : ''}`,
+                      )
+                    }
+                  >
+                    Maps
+                  </MaterialButton>
+                </View>
+              </View>
+            </Card>
+          );
+        }}
+        ListEmptyComponent={
+          <View style={journal.emptyWishlist}>
+            <Icon source="bookmark-outline" size={48} color={colors.rust} />
+            <Heading>Your wishlist is empty</Heading>
+            <Text style={[styles.muted, { textAlign: 'center', maxWidth: 280 }]}>
+              Save spots you’re excited to try next. Find them on the map or tap “Add place”.
+            </Text>
+            {boardId && (
+              <MaterialButton
+                mode="contained"
+                buttonColor={colors.rust}
+                textColor={colors.paper}
+                icon="plus"
+                style={{ marginTop: 8 }}
+                onPress={() => navigation.navigate('WishlistForm', { boardId })}
+              >
+                Add to wishlist
+              </MaterialButton>
+            )}
+          </View>
+        }
+      />
+    );
+  }
+
   return (
     <View style={styles.page}>
       <View style={journal.topbar}>
@@ -351,6 +519,8 @@ export function JournalScreen({ navigation, initialBoardId }: Props) {
             renderVisits(true)
           ) : route.key === 'visits' ? (
             renderVisits(false)
+          ) : route.key === 'wishlist' ? (
+            renderWishlist()
           ) : (
             <ScrollView contentContainerStyle={journal.content}>
               <Title>Your little world.</Title>
@@ -430,13 +600,13 @@ export function JournalScreen({ navigation, initialBoardId }: Props) {
         labeled
         shifting={false}
       />
-      {index === 0 && (
+      {(index === 0 || index === 2) && (
         <FAB.Group
           open={createOpen}
           visible={!keyboardOpen}
           icon={createOpen ? 'close' : 'plus'}
           label={createOpen ? undefined : 'New'}
-          accessibilityLabel="Create a new visit or board"
+          accessibilityLabel="Create a new visit, wishlist place, or board"
           actions={[
             {
               icon: 'view-dashboard-outline',
@@ -451,6 +621,14 @@ export function JournalScreen({ navigation, initialBoardId }: Props) {
                     icon: 'book-plus-outline',
                     label: 'New visit',
                     onPress: newVisit,
+                    color: colors.primary,
+                    style: { backgroundColor: colors.paper },
+                  },
+                  {
+                    icon: 'bookmark-outline',
+                    label: 'Add to wishlist',
+                    onPress: () =>
+                      closeThen(() => navigation.navigate('WishlistForm', { boardId })),
                     color: colors.primary,
                     style: { backgroundColor: colors.paper },
                   },
@@ -524,6 +702,69 @@ const journal = StyleSheet.create({
     backgroundColor: colors.paper,
     borderWidth: 1,
     borderColor: colors.border,
+  },
+  wishlistCard: {
+    padding: 16,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.paper,
+  },
+  wishlistHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  wishlistTitle: {
+    fontFamily: 'EpilogueSemiBold',
+    fontSize: 18,
+    lineHeight: 24,
+    color: colors.ink,
+    letterSpacing: -0.4,
+  },
+  wishlistNotes: {
+    backgroundColor: colors.peachLight,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.peachBorder,
+  },
+  wishlistNotesText: {
+    fontFamily: 'Jakarta',
+    fontSize: 13,
+    lineHeight: 19,
+    color: colors.ink,
+  },
+  wishlistLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 4,
+  },
+  wishlistLinkText: {
+    fontFamily: 'JakartaSemiBold',
+    fontSize: 12,
+    color: colors.rust,
+    textDecorationLine: 'underline',
+  },
+  wishlistActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingTop: 8,
+  },
+  emptyWishlist: {
+    padding: 36,
+    alignItems: 'center',
+    gap: 12,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: colors.border,
+    borderRadius: 24,
+    backgroundColor: colors.paper,
+    marginTop: 12,
   },
   tools: {
     backgroundColor: colors.paper,

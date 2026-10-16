@@ -6,18 +6,22 @@ export function PlacePreview({
   name,
   address,
   isNew,
+  isWishlisted,
   onClose,
   onOpen,
   onMaps,
   onAdd,
+  onWishlist,
 }: {
   name: string;
   address: string;
   isNew?: boolean;
+  isWishlisted?: boolean;
   onClose: () => void;
   onOpen?: () => void;
   onMaps: () => void;
   onAdd: () => void;
+  onWishlist?: () => void;
 }) {
   return (
     <View style={preview.card}>
@@ -53,6 +57,27 @@ export function PlacePreview({
           <Text style={preview.link}>Maps</Text>
         </Pressable>
         <View style={preview.actionGroup}>
+          {onWishlist && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={isWishlisted ? 'Saved to wishlist' : 'Save to wishlist'}
+              onPress={onWishlist}
+              style={[
+                preview.secondary,
+                isWishlisted && {
+                  backgroundColor: colors.peachLight,
+                  borderColor: colors.peachBorder,
+                },
+              ]}
+            >
+              <Icon
+                source={isWishlisted ? 'bookmark' : 'bookmark-outline'}
+                size={16}
+                color={colors.rust}
+              />
+              <Text style={preview.link}>{isWishlisted ? 'Saved' : 'Wishlist'}</Text>
+            </Pressable>
+          )}
           {onOpen && (
             <Pressable accessibilityRole="button" onPress={onOpen} style={preview.secondary}>
               <Text style={preview.link}>View place</Text>

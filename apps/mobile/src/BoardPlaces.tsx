@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import MapView, { Marker } from 'react-native-maps';
 import Constants from 'expo-constants';
-import { useMutation, usePaginatedQuery } from 'convex/react';
+import { useMutation, usePaginatedQuery, useQuery } from 'convex/react';
 import { Icon, Searchbar } from 'react-native-paper';
 import { clusterPlaces, nearbyRegion, type MapRegion, type MapSize } from './mapGeometry';
 import { PlacePreview } from './PlacePreview';
@@ -59,6 +59,8 @@ export function BoardPlaces({
     { initialNumItems: 100 },
   );
   const link = useMutation(api.places.ensureLinked);
+  const wishlistPlaceIds = useQuery(api.wishlist.savedPlaceIds, { boardId });
+  const addToWishlist = useMutation(api.wishlist.add);
   const { run, error } = useTask();
   const [search, setSearch] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
@@ -399,19 +401,41 @@ export function BoardPlaces({
           name={newPlace.name}
           address={newPlace.address}
           isNew
+          isWishlisted={wishlistPlaceIds?.includes(newPlace.id)}
           onClose={() => setNewPlace(undefined)}
           onMaps={() => openMaps({ ...newPlace, googlePlaceId: newPlace.id })}
           onAdd={() => add({ ...newPlace, googlePlaceId: newPlace.id })}
+          onWishlist={() =>
+            void addToWishlist({
+              boardId,
+              title: newPlace.name,
+              place: newPlace.address,
+              location: newPlace.location,
+              googlePlaceId: newPlace.id,
+            })
+          }
         />
       ) : (
         selected && (
           <PlacePreview
             name={selected.name}
             address={selected.address}
+            isWishlisted={
+              !!selected.googlePlaceId && wishlistPlaceIds?.includes(selected.googlePlaceId)
+            }
             onClose={() => setSelectedId(undefined)}
             onOpen={() => onOpen(selected)}
             onMaps={() => openMaps(selected)}
             onAdd={() => add(selected)}
+            onWishlist={() =>
+              void addToWishlist({
+                boardId,
+                title: selected.name,
+                place: selected.address,
+                location: selected.location,
+                googlePlaceId: selected.googlePlaceId,
+              })
+            }
           />
         )
       )}
@@ -497,13 +521,14 @@ const placeStyles = StyleSheet.create({
     elevation: 0,
   },
   mapShell: {
-    borderRadius: 22,
+    marginHorizontal: -22,
     overflow: 'hidden',
-    borderWidth: 1,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.sageLight,
   },
-  map: { width: '100%', height: 300 },
+  map: { width: '100%', aspectRatio: 4 / 3 },
   mapFallback: {
     minHeight: 220,
     padding: 24,

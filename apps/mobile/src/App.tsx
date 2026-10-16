@@ -30,6 +30,7 @@ import {
 import { VisitScreen, VisitFormScreen } from './screens/Visits';
 import { SettingsScreen } from './screens/Settings';
 import { PlacesScreen, PlaceScreen } from './screens/Places';
+import { WishlistFormScreen } from './screens/WishlistForm';
 import { WelcomeScreen } from './screens/Welcome';
 import { signInWithNativeGoogle } from '../modules/google-sign-in';
 
@@ -206,6 +207,11 @@ function AuthenticatedApp() {
           name="VisitForm"
           component={VisitFormScreen}
           options={{ title: 'Visit details', presentation: 'modal' }}
+        />
+        <Stack.Screen
+          name="WishlistForm"
+          component={WishlistFormScreen}
+          options={{ title: 'Add to wishlist', presentation: 'modal' }}
         />
         <Stack.Screen name="Places" component={PlacesScreen} options={{ title: 'Places' }} />
         <Stack.Screen name="Place" component={PlaceScreen} options={{ title: 'Place visits' }} />

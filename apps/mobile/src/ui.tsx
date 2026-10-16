@@ -13,7 +13,9 @@ import {
   Text,
   TextInput,
   View,
+  type StyleProp,
   type TextInputProps,
+  type ViewStyle,
 } from 'react-native';
 
 export const colors = {
@@ -213,8 +215,8 @@ export function SectionCard({
     </Card>
   );
 }
-export function Card({ children }: { children: ReactNode }) {
-  return <View style={styles.card}>{children}</View>;
+export function Card({ children, style }: { children: ReactNode; style?: StyleProp<ViewStyle> }) {
+  return <View style={[styles.card, style]}>{children}</View>;
 }
 export function Button({
   title,

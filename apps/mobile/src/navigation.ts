@@ -18,6 +18,15 @@ export type Routes = {
     place?: string;
     location?: { latitude: number; longitude: number };
   };
+  WishlistForm: {
+    boardId: Id<'boards'>;
+    title?: string;
+    place?: string;
+    notes?: string;
+    googlePlaceId?: string;
+    location?: { latitude: number; longitude: number };
+    link?: string;
+  };
   Places: { boardId: Id<'boards'> };
   Place: { boardId: Id<'boards'>; placeId: Id<'places'>; name: string };
 };

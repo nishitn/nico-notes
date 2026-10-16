@@ -148,5 +148,19 @@ const schema = defineSchema({
   })
     .index('by_visitId', ['visitId'])
     .index('by_expiresAt', ['expiresAt']),
+  wishlist: defineTable({
+    boardId: v.id('boards'),
+    creatorId: v.id('users'),
+    title: v.string(),
+    notes: v.optional(v.string()),
+    place: v.optional(v.string()),
+    location: v.optional(locationValidator),
+    googlePlaceId: v.optional(v.string()),
+    link: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index('by_boardId', ['boardId'])
+    .index('by_boardId_and_createdAt', ['boardId', 'createdAt'])
+    .index('by_boardId_and_googlePlaceId', ['boardId', 'googlePlaceId']),
 });
 export default schema;

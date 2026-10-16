@@ -23,6 +23,7 @@ import type * as ratings from "../ratings.js";
 import type * as testing from "../testing.js";
 import type * as visitTypes from "../visitTypes.js";
 import type * as visits from "../visits.js";
+import type * as wishlist from "../wishlist.js";
 
 import type {
   ApiFromModules,
@@ -46,6 +47,7 @@ declare const fullApi: ApiFromModules<{
   testing: typeof testing;
   visitTypes: typeof visitTypes;
   visits: typeof visits;
+  wishlist: typeof wishlist;
 }>;
 
 /**
