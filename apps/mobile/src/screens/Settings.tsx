@@ -5,7 +5,9 @@ import { api } from '@nico-notes/backend/api';
 import type { Doc, Id } from '@nico-notes/backend/dataModel';
 import type { ScreenProps } from '../navigation';
 import {
+  Avatar,
   Button,
+  SectionCard,
   Card,
   confirm,
   ErrorNote,
@@ -44,7 +46,8 @@ export function SettingsScreen({ route, navigation }: ScreenProps<'Settings'>) {
   if (!data) return <Loading />;
   return (
     <Page>
-      <Title>{data.board.name}</Title>
+      <Title>Board settings</Title>
+      <Text style={styles.muted}>{data.board.name} · Make this space your own.</Text>
       {data.isAdmin && (
         <Button
           secondary
@@ -52,8 +55,7 @@ export function SettingsScreen({ route, navigation }: ScreenProps<'Settings'>) {
           onPress={() => navigation.navigate('BoardForm', { boardId })}
         />
       )}
-      <Card>
-        <Heading>Invite your people</Heading>
+      <SectionCard title="Invite your people" icon="account-plus-outline">
         <Text selectable style={styles.body}>
           {data.board.inviteCode ?? 'Create an invite code to share this board.'}
         </Text>
@@ -115,10 +117,9 @@ export function SettingsScreen({ route, navigation }: ScreenProps<'Settings'>) {
               />
             </View>
           ))}
-      </Card>
+      </SectionCard>
       {data.isAdmin && (
-        <Card>
-          <Heading>Join requests</Heading>
+        <SectionCard title="Join requests" icon="account-clock-outline">
           {requests?.length === 0 && <Text style={styles.muted}>All caught up.</Text>}
           {requests?.map((request) => (
             <View key={request._id} style={{ gap: 10 }}>
@@ -138,15 +139,20 @@ export function SettingsScreen({ route, navigation }: ScreenProps<'Settings'>) {
               </View>
             </View>
           ))}
-        </Card>
+        </SectionCard>
       )}
-      <Card>
-        <Heading>Your people</Heading>
+      <SectionCard title="Your people" icon="account-multiple-outline">
         {data.members.map((person) => (
           <View key={person._id} style={{ gap: 10 }}>
-            <Text style={styles.body}>
-              {person.name} · {person.role}
-            </Text>
+            <View style={styles.row}>
+              <Avatar name={person.name} image={person.image} />
+              <View style={{ flex: 1, gap: 3 }}>
+                <Text style={styles.label}>{person.name}</Text>
+                <Text style={styles.muted}>
+                  {person.role === 'admin' ? 'Board admin' : 'Member'}
+                </Text>
+              </View>
+            </View>
             {data.isAdmin && (
               <View style={styles.row}>
                 <Button
@@ -180,15 +186,14 @@ export function SettingsScreen({ route, navigation }: ScreenProps<'Settings'>) {
             )}
           </View>
         ))}
-      </Card>
+      </SectionCard>
       <Heading>Visit types</Heading>
       {data.types.map((type) => (
         <TypeForm key={type._id} boardId={boardId} initial={type} isAdmin={data.isAdmin} />
       ))}
       <TypeForm boardId={boardId} isAdmin={data.isAdmin} />
       {data.isAdmin && (
-        <Card>
-          <Heading>Photo storage</Heading>
+        <SectionCard title="Photo storage" icon="image-outline">
           <Text style={styles.muted}>
             Store new pictures in {data.board.photoStorage === 'local' ? 'the Mac mini' : 'Convex'}.
             Existing photos keep their original storage.
@@ -204,7 +209,7 @@ export function SettingsScreen({ route, navigation }: ScreenProps<'Settings'>) {
               />
             ))}
           </View>
-        </Card>
+        </SectionCard>
       )}
       <ErrorNote error={task.error} />
       <Button

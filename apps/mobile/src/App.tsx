@@ -5,6 +5,7 @@ import { ConvexAuthProvider, useAuthActions } from '@convex-dev/auth/react';
 import * as SecureStore from 'expo-secure-store';
 import * as WebBrowser from 'expo-web-browser';
 import * as Linking from 'expo-linking';
+import { useFonts } from 'expo-font';
 import { StatusBar } from 'expo-status-bar';
 import { MD3LightTheme, PaperProvider } from 'react-native-paper';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
@@ -49,7 +50,15 @@ function ConnectionNotice() {
   return (
     <Text
       accessibilityLiveRegion="polite"
-      style={[styles.muted, { padding: 12, backgroundColor: colors.peach }]}
+      style={[
+        styles.muted,
+        {
+          padding: 12,
+          backgroundColor: colors.coralLight,
+          color: colors.primary,
+          textAlign: 'center',
+        },
+      ]}
     >
       {connection.hasEverConnected
         ? 'Reconnecting… Changes will finish saving when you’re back online.'
@@ -206,6 +215,14 @@ function AuthenticatedApp() {
 }
 export default function App() {
   const [resetKey, setResetKey] = useState(0);
+  const [fontsLoaded, fontError] = useFonts({
+    Epilogue: require('../assets/fonts/Epilogue.ttf'),
+    EpilogueItalic: require('../assets/fonts/EpilogueItalic.ttf'),
+    EpilogueSemiBold: require('../assets/fonts/EpilogueSemiBold.ttf'),
+    Jakarta: require('../assets/fonts/Jakarta.ttf'),
+    JakartaSemiBold: require('../assets/fonts/JakartaSemiBold.ttf'),
+  });
+  if (!fontsLoaded && !fontError) return null;
   return (
     <PaperProvider
       theme={{
@@ -213,17 +230,18 @@ export default function App() {
         colors: {
           ...MD3LightTheme.colors,
           primary: colors.primary,
-          onPrimary: colors.ink,
-          primaryContainer: '#F9DDD3',
-          onPrimaryContainer: colors.ink,
-          secondaryContainer: colors.sage,
-          onSecondaryContainer: colors.ink,
+          onPrimary: colors.paper,
+          primaryContainer: colors.coralLight,
+          onPrimaryContainer: colors.coral,
+          secondaryContainer: colors.coralLight,
+          onSecondaryContainer: colors.coral,
           background: colors.background,
-          surface: colors.background,
+          surface: colors.paper,
+          surfaceVariant: colors.coralSubtle,
           onSurface: colors.ink,
           onSurfaceVariant: colors.muted,
           outline: colors.border,
-          elevation: { ...MD3LightTheme.colors.elevation, level2: '#F3EEE7' },
+          elevation: { ...MD3LightTheme.colors.elevation, level2: '#F5EFEB' },
         },
       }}
       settings={{

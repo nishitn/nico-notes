@@ -5,7 +5,19 @@ import { useAuthActions } from '@convex-dev/auth/react';
 import { api } from '@nico-notes/backend/api';
 import type { Doc, Id } from '@nico-notes/backend/dataModel';
 import type { ScreenProps } from '../navigation';
-import { Button, ErrorNote, Field, Heading, Loading, Page, styles, Title, useTask } from '../ui';
+import {
+  Avatar,
+  Card,
+  Button,
+  ErrorNote,
+  Field,
+  Heading,
+  Loading,
+  Page,
+  styles,
+  Title,
+  useTask,
+} from '../ui';
 import { JournalScreen } from '../JournalScreen';
 import { clearNativeGoogleSession } from '../../modules/google-sign-in';
 
@@ -139,23 +151,32 @@ export function AccountScreen() {
     <Page>
       <Title>Your account</Title>
       <Text style={styles.muted}>Your profile is shared with the people on your boards.</Text>
-      <Field
-        label="Display name"
-        value={name ?? me?.name ?? ''}
-        onChangeText={setName}
-        maxLength={80}
-      />
-      <ErrorNote error={task.error} />
-      <Button
-        title={task.busy ? 'Saving…' : 'Save name'}
-        disabled={task.busy || !(name ?? me?.name)?.trim()}
-        onPress={() =>
-          void task.run(async () => {
-            await update({ name: name ?? me?.name ?? '' });
-            setName(undefined);
-          })
-        }
-      />
+      <Card>
+        <View style={styles.row}>
+          <Avatar name={me?.name} image={me?.image} size={64} />
+          <View style={{ flex: 1, gap: 4 }}>
+            <Heading>{me?.name ?? 'Your profile'}</Heading>
+            <Text style={styles.muted}>Your shared journal profile</Text>
+          </View>
+        </View>
+        <Field
+          label="Display name"
+          value={name ?? me?.name ?? ''}
+          onChangeText={setName}
+          maxLength={80}
+        />
+        <ErrorNote error={task.error} />
+        <Button
+          title={task.busy ? 'Saving…' : 'Save name'}
+          disabled={task.busy || !(name ?? me?.name)?.trim()}
+          onPress={() =>
+            void task.run(async () => {
+              await update({ name: name ?? me?.name ?? '' });
+              setName(undefined);
+            })
+          }
+        />
+      </Card>
       <Button
         secondary
         title="Sign out"

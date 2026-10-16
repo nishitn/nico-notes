@@ -16,3 +16,5 @@ apps/mobile/ios/
 apps/mobile/modules/*/android/build/
 *.apk
 *.aab
+.gradle/
+**/.gradle/

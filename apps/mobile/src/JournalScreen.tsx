@@ -1,5 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
-import { BackHandler, FlatList, Keyboard, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  BackHandler,
+  FlatList,
+  Keyboard,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { Image } from 'expo-image';
 import { useFocusEffect } from '@react-navigation/native';
 import {
@@ -8,17 +17,18 @@ import {
   Divider,
   FAB,
   Icon,
+  IconButton,
   List,
-  Menu,
   Searchbar,
-  TouchableRipple,
 } from 'react-native-paper';
 import { usePaginatedQuery, useQuery } from 'convex/react';
 import { api } from '@nico-notes/backend/api';
 import type { Id } from '@nico-notes/backend/dataModel';
 import type { ScreenProps } from './navigation';
-import { Card, colors, Heading, Loading, styles, Title } from './ui';
+import { Card, colors, Heading, Loading, SectionHeading, styles, Title } from './ui';
+import { BoardPlaces } from './BoardPlaces';
 import { VisitCard } from './VisitCard';
+import { BoardPicker } from './BoardPicker';
 import { journalTabs as tabs } from './journalNavigation';
 
 type Props = {
@@ -37,8 +47,11 @@ export function JournalScreen({ navigation, initialBoardId }: Props) {
   const visits = usePaginatedQuery(api.visits.list, boardId ? { boardId } : 'skip', {
     initialNumItems: 24,
   });
+  const pending = useQuery(
+    api.boards.pendingRequests,
+    board?.isAdmin && boardId ? { boardId } : 'skip',
+  );
   const [index, setIndex] = useState(0);
-  const [menuOpen, setMenuOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [keyboardOpen, setKeyboardOpen] = useState(false);
@@ -53,10 +66,6 @@ export function JournalScreen({ navigation, initialBoardId }: Props) {
   useFocusEffect(
     useCallback(() => {
       const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-        if (menuOpen) {
-          setMenuOpen(false);
-          return true;
-        }
         if (createOpen) {
           setCreateOpen(false);
           return true;
@@ -68,14 +77,13 @@ export function JournalScreen({ navigation, initialBoardId }: Props) {
         return false;
       });
       return () => subscription.remove();
-    }, [menuOpen, createOpen, index]),
+    }, [createOpen, index]),
   );
   const switchTab = (next: number) => {
     setCreateOpen(false);
     setIndex(next);
   };
   const closeThen = (action: () => void) => {
-    setMenuOpen(false);
     setCreateOpen(false);
     action();
   };
@@ -88,7 +96,7 @@ export function JournalScreen({ navigation, initialBoardId }: Props) {
 
   function renderVisits(home: boolean) {
     const filtered = home
-      ? visits.results.slice(0, 3)
+      ? visits.results
       : visits.results.filter((visit) =>
           `${visit.title} ${visit.place} ${visit.notes}`
             .toLowerCase()
@@ -105,23 +113,106 @@ export function JournalScreen({ navigation, initialBoardId }: Props) {
           <View style={{ gap: 18 }}>
             {home ? (
               <>
-                <Text style={journal.eyebrow}>YOUR SHARED LITTLE WORLD</Text>
-                <Title>Hello, {me?.name?.split(' ')[0] ?? 'you'}.</Title>
-                <Text style={styles.body}>
-                  Good places. Great company. All your memories, together.
-                </Text>
-                {board && (
-                  <View style={journal.boardSummary}>
-                    <Text style={journal.eyebrow}>YOUR BOARD</Text>
-                    <Heading>{board.board.name}</Heading>
+                {board ? (
+                  <View style={journal.boardHeader}>
+                    <View style={journal.boardTitleRow}>
+                      <Text accessibilityRole="header" style={journal.boardTitle}>
+                        {board.board.name}
+                      </Text>
+                      <IconButton
+                        icon="tune-variant"
+                        accessibilityLabel="Board settings"
+                        iconColor={colors.rust}
+                        style={journal.settingsButton}
+                        onPress={() =>
+                          navigation.navigate('Settings', { boardId: board.board._id })
+                        }
+                      />
+                    </View>
+                    <View style={styles.row}>
+                      <View style={journal.avatars}>
+                        {board.members.slice(0, 5).map((person, i) => (
+                          <View
+                            key={person._id}
+                            style={[journal.avatar, { marginLeft: i ? -8 : 0 }]}
+                          >
+                            {person.image ? (
+                              <Image
+                                source={{ uri: person.image }}
+                                style={{ width: 28, height: 28, borderRadius: 14 }}
+                              />
+                            ) : (
+                              <Text style={journal.initials}>
+                                {person.name
+                                  ?.trim()
+                                  .split(/\s+/)
+                                  .map((p) => p[0])
+                                  .slice(0, 2)
+                                  .join('') || '?'}
+                              </Text>
+                            )}
+                          </View>
+                        ))}
+                      </View>
+                      <Text style={styles.muted}>
+                        {board.members.length} {board.members.length === 1 ? 'member' : 'members'}
+                      </Text>
+                      <Pressable
+                        accessibilityRole="button"
+                        onPress={() =>
+                          navigation.navigate('Settings', { boardId: board.board._id })
+                        }
+                        style={styles.textButton}
+                      >
+                        <Icon source="account-plus-outline" size={15} color={colors.rust} />
+                        <Text style={[styles.link, { textDecorationLine: 'underline' }]}>
+                          Invite
+                        </Text>
+                      </Pressable>
+                    </View>
                     {!!board.board.description && (
                       <Text style={styles.muted}>{board.board.description}</Text>
                     )}
-                    <Text style={styles.muted}>
-                      {board.members.length} {board.members.length === 1 ? 'person' : 'people'} · A
-                      place for your memories
-                    </Text>
                   </View>
+                ) : (
+                  <Title>Your shared journal.</Title>
+                )}
+                {!!pending?.length && boardId && (
+                  <Card>
+                    <Text style={styles.label}>
+                      {pending.length} pending join {pending.length === 1 ? 'request' : 'requests'}
+                    </Text>
+                    <MaterialButton
+                      textColor={colors.rust}
+                      onPress={() => navigation.navigate('Settings', { boardId })}
+                    >
+                      Review requests
+                    </MaterialButton>
+                  </Card>
+                )}
+                {boardId && (
+                  <BoardPlaces
+                    key={boardId}
+                    boardId={boardId}
+                    onOpen={(place) =>
+                      navigation.navigate('Place', {
+                        boardId,
+                        placeId: place._id,
+                        name: place.name,
+                      })
+                    }
+                    onAdd={(place, title) =>
+                      navigation.navigate('VisitForm', {
+                        boardId,
+                        placeId: place?._id,
+                        googlePlaceId: place?.googlePlaceId,
+                        title: place?.name ?? title,
+                        place: place?.address,
+                        location: place?.location,
+                      })
+                    }
+                    onViewAll={() => navigation.navigate('Places', { boardId })}
+                  />
                 )}
                 {requests?.map((request) => (
                   <Text key={request._id} style={styles.muted}>
@@ -129,9 +220,12 @@ export function JournalScreen({ navigation, initialBoardId }: Props) {
                   </Text>
                 ))}
                 {!!boardId && (
-                  <View style={journal.sectionHeading}>
-                    <Heading>Recent visits</Heading>
-                    <MaterialButton onPress={() => setIndex(1)}>View all</MaterialButton>
+                  <View style={{ paddingTop: 20 }}>
+                    <SectionHeading
+                      title="Your Visits"
+                      count={`${visits.results.length}${visits.status === 'Exhausted' ? '' : '+'}`}
+                      suffix="so far"
+                    />
                   </View>
                 )}
               </>
@@ -157,6 +251,12 @@ export function JournalScreen({ navigation, initialBoardId }: Props) {
         renderItem={({ item }) => (
           <VisitCard
             visit={item}
+            members={board?.members}
+            number={
+              visits.status === 'Exhausted'
+                ? visits.results.length - visits.results.indexOf(item)
+                : undefined
+            }
             onPress={() => navigation.navigate('Visit', { visitId: item._id })}
           />
         )}
@@ -198,9 +298,7 @@ export function JournalScreen({ navigation, initialBoardId }: Props) {
           )
         }
         ListFooterComponent={
-          !home &&
-          boardId &&
-          (visits.status === 'CanLoadMore' || visits.status === 'LoadingMore') ? (
+          boardId && (visits.status === 'CanLoadMore' || visits.status === 'LoadingMore') ? (
             <MaterialButton
               loading={visits.status === 'LoadingMore'}
               disabled={visits.status === 'LoadingMore'}
@@ -229,58 +327,20 @@ export function JournalScreen({ navigation, initialBoardId }: Props) {
           </Text>
         </View>
         <View style={journal.boardPickerSlot}>
-          <Menu
-            visible={menuOpen}
-            onDismiss={() => setMenuOpen(false)}
-            anchorPosition="bottom"
-            anchor={
-              <TouchableRipple
-                style={journal.boardPicker}
-                borderless
-                accessibilityRole="button"
-                accessibilityLabel={`Switch board, ${boardName}`}
-                accessibilityState={{ expanded: menuOpen }}
-                onPress={() => setMenuOpen(true)}
-              >
-                <View style={journal.boardPickerContent}>
-                  <Text numberOfLines={1} ellipsizeMode="tail" style={journal.boardLabel}>
-                    {boardName}
-                  </Text>
-                  <Icon source="chevron-down" size={20} color={colors.coral} />
-                </View>
-              </TouchableRipple>
-            }
-          >
-            <ScrollView style={{ maxHeight: 280 }}>
-              {boards.results.map((item) => (
-                <Menu.Item
-                  key={item._id}
-                  title={item.name}
-                  leadingIcon={item._id === boardId ? 'check' : 'view-dashboard-outline'}
-                  onPress={() =>
-                    closeThen(() => {
-                      setSelectedId(item._id);
-                      setSearch('');
-                    })
-                  }
-                />
-              ))}
-              {(boards.status === 'CanLoadMore' || boards.status === 'LoadingMore') && (
-                <Menu.Item
-                  title={boards.status === 'LoadingMore' ? 'Loading…' : 'More boards'}
-                  disabled={boards.status === 'LoadingMore'}
-                  onPress={() => boards.loadMore(24)}
-                />
-              )}
-            </ScrollView>
-            <Divider />
-            <Menu.Item title="New board" leadingIcon="plus" onPress={newBoard} />
-            <Menu.Item
-              title="Join board"
-              leadingIcon="account-multiple-plus-outline"
-              onPress={joinBoard}
-            />
-          </Menu>
+          <BoardPicker
+            boards={boards.results}
+            boardId={boardId}
+            boardName={boardName}
+            canLoadMore={boards.status === 'CanLoadMore'}
+            loadingMore={boards.status === 'LoadingMore'}
+            onLoadMore={() => boards.loadMore(24)}
+            onSelect={(id) => {
+              setSelectedId(id);
+              setSearch('');
+            }}
+            onNewBoard={newBoard}
+            onJoinBoard={joinBoard}
+          />
         </View>
       </View>
       <BottomNavigation
@@ -293,13 +353,15 @@ export function JournalScreen({ navigation, initialBoardId }: Props) {
             renderVisits(false)
           ) : (
             <ScrollView contentContainerStyle={journal.content}>
-              <Title>More</Title>
+              <Title>Your little world.</Title>
               <Text style={styles.muted}>Your boards, your people, your preferences.</Text>
               <View style={journal.tools}>
                 <List.Item
                   title="Your account"
                   description={me?.name ?? 'Profile and sign-in'}
-                  left={(props) => <List.Icon {...props} icon="account-outline" />}
+                  left={(props) => (
+                    <List.Icon {...props} icon="account-outline" color={colors.primary} />
+                  )}
                   onPress={() => navigation.navigate('Account')}
                 />
                 {boardId && (
@@ -308,14 +370,18 @@ export function JournalScreen({ navigation, initialBoardId }: Props) {
                     <List.Item
                       title="Places"
                       description="Explore the places on this board"
-                      left={(props) => <List.Icon {...props} icon="map-marker-outline" />}
+                      left={(props) => (
+                        <List.Icon {...props} icon="map-marker-outline" color={colors.primary} />
+                      )}
                       onPress={() => navigation.navigate('Places', { boardId })}
                     />
                     <Divider />
                     <List.Item
                       title="Board settings"
                       description={board?.board.name}
-                      left={(props) => <List.Icon {...props} icon="cog-outline" />}
+                      left={(props) => (
+                        <List.Icon {...props} icon="cog-outline" color={colors.primary} />
+                      )}
                       onPress={() => navigation.navigate('Settings', { boardId })}
                     />
                   </>
@@ -323,28 +389,38 @@ export function JournalScreen({ navigation, initialBoardId }: Props) {
                 <Divider />
                 <List.Item
                   title="New board"
-                  left={(props) => <List.Icon {...props} icon="plus" />}
+                  left={(props) => <List.Icon {...props} icon="plus" color={colors.primary} />}
                   onPress={newBoard}
                 />
                 <Divider />
                 <List.Item
                   title="Join board"
-                  left={(props) => <List.Icon {...props} icon="account-multiple-plus-outline" />}
+                  left={(props) => (
+                    <List.Icon
+                      {...props}
+                      icon="account-multiple-plus-outline"
+                      color={colors.primary}
+                    />
+                  )}
                   onPress={joinBoard}
                 />
               </View>
             </ScrollView>
           )
         }
-        barStyle={{ backgroundColor: colors.primary }}
-        activeIndicatorStyle={{ backgroundColor: colors.navHighlight }}
-        activeColor={colors.ink}
-        inactiveColor={colors.onNavMuted}
+        barStyle={{
+          backgroundColor: colors.paper,
+          borderTopWidth: 1,
+          borderTopColor: colors.border,
+        }}
+        activeIndicatorStyle={{ backgroundColor: colors.coralLight }}
+        activeColor={colors.primary}
+        inactiveColor={colors.muted}
         renderIcon={({ route, focused }) => (
           <Icon
             source={focused ? route.focusedIcon : route.unfocusedIcon}
             size={24}
-            color={focused ? colors.paper : colors.onNavMuted}
+            color={focused ? colors.primary : colors.muted}
           />
         )}
         safeAreaInsets={{ bottom: 0 }}
@@ -366,8 +442,8 @@ export function JournalScreen({ navigation, initialBoardId }: Props) {
               icon: 'view-dashboard-outline',
               label: 'New board',
               onPress: newBoard,
-              color: colors.paper,
-              style: { backgroundColor: colors.ink },
+              color: colors.primary,
+              style: { backgroundColor: colors.paper },
             },
             ...(boardId
               ? [
@@ -375,15 +451,15 @@ export function JournalScreen({ navigation, initialBoardId }: Props) {
                     icon: 'book-plus-outline',
                     label: 'New visit',
                     onPress: newVisit,
-                    color: colors.paper,
-                    style: { backgroundColor: colors.ink },
+                    color: colors.primary,
+                    style: { backgroundColor: colors.paper },
                   },
                 ]
               : []),
           ]}
           onStateChange={({ open }) => setCreateOpen(open)}
           style={journal.createActions}
-          fabStyle={{ backgroundColor: colors.ink }}
+          fabStyle={{ backgroundColor: colors.primary }}
           color={colors.paper}
         />
       )}
@@ -410,23 +486,45 @@ const journal = StyleSheet.create({
     letterSpacing: -1.1,
     flexShrink: 1,
   },
-  boardPickerSlot: { flex: 1, minWidth: 100, maxWidth: 180 },
-  boardPicker: { borderWidth: 1, borderColor: colors.border, borderRadius: 24, overflow: 'hidden' },
-  boardPickerContent: {
-    minHeight: 44,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 8,
+  boardPickerSlot: { flex: 1, minWidth: 100, maxWidth: 180, alignItems: 'flex-end' },
+  content: {
+    padding: 22,
+    paddingTop: 24,
+    gap: 22,
+    paddingBottom: 112,
+    width: '100%',
+    maxWidth: 840,
+    alignSelf: 'center',
   },
-  boardLabel: { flexShrink: 1, color: colors.ink, fontSize: 14, fontWeight: '600' },
-  content: { padding: 20, paddingTop: 24, gap: 18, paddingBottom: 112 },
-  eyebrow: { fontSize: 11, fontWeight: '600', letterSpacing: 1.4, color: colors.muted },
-  boardSummary: { backgroundColor: colors.sage, padding: 20, borderRadius: 24, gap: 10 },
-  sectionHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  search: { backgroundColor: '#F0EBE4' },
+  boardHeader: { gap: 8, paddingBottom: 24, borderBottomWidth: 1, borderColor: colors.border },
+  boardTitleRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
+  boardTitle: {
+    fontFamily: 'EpilogueItalic',
+    fontSize: 36,
+    lineHeight: 45,
+    letterSpacing: -1.5,
+    color: colors.rust,
+    flex: 1,
+  },
+  settingsButton: { backgroundColor: '#F3E8DE', borderRadius: 16, margin: 0 },
+  avatars: { flexDirection: 'row', alignItems: 'center' },
+  avatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 2,
+    borderColor: colors.background,
+    backgroundColor: colors.peach,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  initials: { fontFamily: 'JakartaSemiBold', fontSize: 10, color: colors.rust },
+  search: {
+    backgroundColor: colors.paper,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
   tools: {
     backgroundColor: colors.paper,
     borderRadius: 20,

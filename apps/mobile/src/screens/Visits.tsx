@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Linking, ScrollView, Switch, Text, View } from 'react-native';
+import { Linking, Pressable, ScrollView, Switch, Text, View } from 'react-native';
+import { Icon } from 'react-native-paper';
 import * as Location from 'expo-location';
 import { useMutation, useQuery } from 'convex/react';
 import { api } from '@nico-notes/backend/api';
@@ -8,7 +9,10 @@ import { validDate, validScore } from '@nico-notes/backend/shared';
 import type { FunctionReturnType } from 'convex/server';
 import type { ScreenProps } from '../navigation';
 import {
+  Avatar,
   Button,
+  colors,
+  SectionCard,
   Card,
   confirm,
   ErrorNote,
@@ -34,11 +38,31 @@ export function VisitScreen({ route, navigation }: ScreenProps<'Visit'>) {
   const { visit } = data;
   return (
     <Page>
-      <Text style={styles.muted}>
-        {data.board.name} · {visit.date || 'Undated'} · {visit.typeName}
-      </Text>
-      <Title>{visit.title}</Title>
-      <Text style={styles.body}>{visit.place}</Text>
+      <View
+        style={{ gap: 14, paddingBottom: 24, borderBottomWidth: 1, borderColor: colors.border }}
+      >
+        <Text style={styles.eyebrow}>{data.board.name.toUpperCase()}</Text>
+        <Title>{visit.title}</Title>
+        <View style={styles.row}>
+          <Text
+            style={{
+              ...styles.muted,
+              backgroundColor: colors.sageLight,
+              color: colors.green,
+              borderRadius: 20,
+              paddingHorizontal: 12,
+              paddingVertical: 6,
+            }}
+          >
+            {visit.typeName}
+          </Text>
+          <Text style={styles.muted}>{visit.date || 'Undated'}</Text>
+        </View>
+        <View style={{ flexDirection: 'row', gap: 7, alignItems: 'center' }}>
+          <Icon source="map-marker-outline" size={18} color={colors.muted} />
+          <Text style={[styles.muted, { flex: 1 }]}>{visit.place || 'Location not recorded'}</Text>
+        </View>
+      </View>
       {!!visit.notes && (
         <Card>
           <Text style={styles.body}>{visit.notes}</Text>
@@ -156,6 +180,7 @@ function RatingEditor({
   targetId: Id<'visits'> | Id<'categories'> | Id<'dishes'>;
   label: string;
 }) {
+  const [editing, setEditing] = useState(false);
   const [forUser, setForUser] = useState<Id<'users'>>();
   const selectedUser = forUser ?? userId;
   const ratings = data.ratings.filter(
@@ -168,96 +193,151 @@ function RatingEditor({
   const task = useTask();
   return (
     <Card>
-      <Heading>{label}</Heading>
-      {ratings.map((rating) => (
-        <Text key={rating._id} style={styles.muted}>
-          {data.people.find((person) => person._id === rating.userId)?.name ??
-            rating.importedName ??
-            'Member'}{' '}
-          · {rating.score}/10{rating.note ? ` · ${rating.note}` : ''}
-        </Text>
-      ))}
-      {data.isAdmin && (
-        <ScrollView horizontal>
-          <View style={styles.row}>
-            {data.members.map((person) => (
-              <Button
-                key={person._id}
-                secondary={selectedUser !== person._id}
-                title={person.name}
-                disabled={task.busy}
-                onPress={() => {
-                  setForUser(person._id);
-                  setScore(undefined);
-                  setNote(undefined);
-                }}
-              />
-            ))}
-          </View>
-        </ScrollView>
+      <View style={styles.sectionRow}>
+        <Heading>{label}</Heading>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => setEditing(!editing)}
+          style={styles.textButton}
+        >
+          <Icon source={editing ? 'close' : 'pencil-outline'} size={17} color={colors.rust} />
+          <Text style={styles.link}>{editing ? 'Close' : 'Rate'}</Text>
+        </Pressable>
+      </View>
+      {ratings.length === 0 && (
+        <Text style={styles.muted}>No ratings yet. Add the first little note.</Text>
       )}
-      <Field
-        label={
-          data.isAdmin
-            ? 'Selected member’s score (1–10, half points)'
-            : 'Your score (1–10, half points)'
-        }
-        keyboardType="decimal-pad"
-        value={score ?? (mine ? String(mine.score) : '')}
-        onChangeText={setScore}
-        placeholder="8.5"
-      />
-      <Field
-        label="Rating note"
-        value={note ?? mine?.note ?? ''}
-        onChangeText={setNote}
-        maxLength={1000}
-      />
-      <ErrorNote error={task.error} />
-      <View style={styles.row}>
-        <Button
-          title="Save rating"
-          disabled={task.busy || !selectedUser}
-          onPress={() =>
-            void task.run(async () => {
-              const value = Number(score ?? mine?.score ?? '');
-              if (!validScore(value))
-                throw new Error('Use a score from 1 to 10 in half-point steps.');
-              await save({
-                visitId: data.visit._id,
-                kind,
-                targetId,
-                score: value,
-                note: note ?? mine?.note ?? '',
-                userId: selectedUser,
-              });
-              setScore(undefined);
-              setNote(undefined);
-            })
-          }
-        />
-        {mine && (
-          <Button
-            secondary
-            title="Clear rating"
-            disabled={task.busy}
-            onPress={() =>
-              void task.run(async () => {
-                await save({
-                  visitId: data.visit._id,
-                  kind,
-                  targetId,
-                  score: null,
-                  note: '',
-                  userId: selectedUser,
-                });
+      {ratings.map((rating) => {
+        const person = data.people.find((p) => p._id === rating.userId);
+        const name = person?.name ?? rating.importedName ?? 'Member';
+        const canEdit = !!rating.userId && (data.isAdmin || rating.userId === userId);
+        return (
+          <View
+            key={rating._id}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 10,
+              paddingTop: 12,
+              borderTopWidth: 1,
+              borderColor: colors.border,
+            }}
+          >
+            <Avatar name={name} size={34} />
+            <View style={{ flex: 1, gap: 3 }}>
+              <Text style={styles.label}>{name}</Text>
+              {!!rating.note && <Text style={styles.muted}>{rating.note}</Text>}
+            </View>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`${name}, ${rating.score} out of 10${canEdit ? ', edit rating' : ''}`}
+              disabled={!canEdit}
+              onPress={() => {
+                setForUser(rating.userId);
                 setScore(undefined);
                 setNote(undefined);
-              })
+                setEditing(true);
+              }}
+              style={{
+                backgroundColor: colors.peachLight,
+                borderWidth: 1,
+                borderColor: colors.border,
+                borderRadius: 12,
+                padding: 12,
+                minHeight: 44,
+              }}
+            >
+              <Text style={styles.link}>{rating.score.toFixed(1)} /10</Text>
+            </Pressable>
+          </View>
+        );
+      })}
+      {editing && (
+        <>
+          {data.isAdmin && (
+            <ScrollView horizontal>
+              <View style={styles.row}>
+                {data.members.map((person) => (
+                  <Button
+                    key={person._id}
+                    secondary={selectedUser !== person._id}
+                    title={person.name}
+                    disabled={task.busy}
+                    onPress={() => {
+                      setForUser(person._id);
+                      setScore(undefined);
+                      setNote(undefined);
+                    }}
+                  />
+                ))}
+              </View>
+            </ScrollView>
+          )}
+          <Field
+            label={
+              data.isAdmin
+                ? 'Selected member’s score (1–10, half points)'
+                : 'Your score (1–10, half points)'
             }
+            keyboardType="decimal-pad"
+            value={score ?? (mine ? String(mine.score) : '')}
+            onChangeText={setScore}
+            placeholder="8.5"
           />
-        )}
-      </View>
+          <Field
+            label="Rating note"
+            value={note ?? mine?.note ?? ''}
+            onChangeText={setNote}
+            maxLength={1000}
+          />
+          <ErrorNote error={task.error} />
+          <View style={styles.row}>
+            <Button
+              title="Save rating"
+              disabled={task.busy || !selectedUser}
+              onPress={() =>
+                void task.run(async () => {
+                  const value = Number(score ?? mine?.score ?? '');
+                  if (!validScore(value))
+                    throw new Error('Use a score from 1 to 10 in half-point steps.');
+                  await save({
+                    visitId: data.visit._id,
+                    kind,
+                    targetId,
+                    score: value,
+                    note: note ?? mine?.note ?? '',
+                    userId: selectedUser,
+                  });
+                  setScore(undefined);
+                  setNote(undefined);
+                  setEditing(false);
+                })
+              }
+            />
+            {mine && (
+              <Button
+                secondary
+                title="Clear rating"
+                disabled={task.busy}
+                onPress={() =>
+                  void task.run(async () => {
+                    await save({
+                      visitId: data.visit._id,
+                      kind,
+                      targetId,
+                      score: null,
+                      note: '',
+                      userId: selectedUser,
+                    });
+                    setScore(undefined);
+                    setNote(undefined);
+                  })
+                }
+              />
+            )}
+          </View>
+        </>
+      )}
     </Card>
   );
 }
@@ -421,44 +501,45 @@ function VisitForm({
   return (
     <Page>
       <Title>{initial ? 'A memory, refined.' : 'Make a little memory.'}</Title>
-      <Field label="Place / visit name" value={title} onChangeText={setTitle} maxLength={120} />
-      <Field label="Address" value={place} onChangeText={setPlace} maxLength={250} />
-      <Field
-        label="Date (YYYY-MM-DD, or leave empty)"
-        value={date}
-        onChangeText={setDate}
-        placeholder="2026-10-15"
-        autoCapitalize="none"
-        maxLength={10}
-      />
-      {!initial && (
-        <>
-          <Heading>Visit type</Heading>
-          <View style={styles.row}>
-            {types.map((entry) => (
-              <Button
-                key={entry._id}
-                title={entry.name}
-                secondary={typeId !== entry._id}
-                onPress={() => {
-                  setTypeId(entry._id);
-                  setShowDishes(entry.showDishes);
-                }}
-              />
-            ))}
-          </View>
-          <Text style={styles.muted}>
-            Categories: {type?.categories.join(', ') || 'Add categories after saving.'}
-          </Text>
-        </>
-      )}
-      <Field label="Notes" multiline value={notes} onChangeText={setNotes} maxLength={5000} />
-      <View style={styles.row}>
-        <Text style={styles.body}>Track dishes</Text>
-        <Switch value={showDishes} onValueChange={setShowDishes} />
-      </View>
-      <Card>
-        <Heading>Location</Heading>
+      <SectionCard title="The visit" icon="notebook-outline">
+        <Field label="Place / visit name" value={title} onChangeText={setTitle} maxLength={120} />
+        <Field label="Address" value={place} onChangeText={setPlace} maxLength={250} />
+        <Field
+          label="Date (YYYY-MM-DD, or leave empty)"
+          value={date}
+          onChangeText={setDate}
+          placeholder="2026-10-15"
+          autoCapitalize="none"
+          maxLength={10}
+        />
+        {!initial && (
+          <>
+            <Heading>Visit type</Heading>
+            <View style={styles.row}>
+              {types.map((entry) => (
+                <Button
+                  key={entry._id}
+                  title={entry.name}
+                  secondary={typeId !== entry._id}
+                  onPress={() => {
+                    setTypeId(entry._id);
+                    setShowDishes(entry.showDishes);
+                  }}
+                />
+              ))}
+            </View>
+            <Text style={styles.muted}>
+              Categories: {type?.categories.join(', ') || 'Add categories after saving.'}
+            </Text>
+          </>
+        )}
+        <Field label="Notes" multiline value={notes} onChangeText={setNotes} maxLength={5000} />
+        <View style={styles.row}>
+          <Text style={styles.body}>Track dishes</Text>
+          <Switch value={showDishes} onValueChange={setShowDishes} />
+        </View>
+      </SectionCard>
+      <SectionCard title="Location" icon="map-marker-outline">
         {initial?.placeId && (
           <Text style={styles.muted}>
             Address and location changes update this shared place across its visits.
@@ -496,7 +577,7 @@ function VisitForm({
             onPress={() => setLocation(null)}
           />
         )}
-      </Card>
+      </SectionCard>
       <Text style={styles.muted}>Save the visit to add pictures and ratings.</Text>
       <ErrorNote error={task.error} />
       <Button
@@ -516,6 +597,7 @@ function VisitForm({
                 boardId: params.boardId,
                 typeId,
                 placeId: params.placeId,
+                googlePlaceId: params.googlePlaceId,
               });
               onDone(id);
             }

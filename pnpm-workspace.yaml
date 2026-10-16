@@ -7,3 +7,5 @@ onlyBuiltDependencies:
 overrides:
   'vite@*': npm:@voidzero-dev/vite-plus-core@0.3.3
   'vitest@*': 4.1.11
+patchedDependencies:
+  '@expo/ui@57.0.25': patches/@expo__ui@57.0.25.patch

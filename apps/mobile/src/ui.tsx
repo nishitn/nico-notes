@@ -1,4 +1,6 @@
 import React, { Component, useCallback, useRef, useState, type ReactNode } from 'react';
+import { Image } from 'expo-image';
+import { Icon } from 'react-native-paper';
 import { ConvexError } from 'convex/values';
 import {
   ActivityIndicator,
@@ -16,29 +18,61 @@ import {
 
 export const colors = {
   background: '#FAF7F2',
-  paper: '#FFFFFF',
-  ink: '#292C27',
-  muted: '#686D63',
+  paper: '#FFFDF9',
+  ink: '#302B26',
+  muted: '#786D64',
   primary: '#E06D53',
-  coral: '#A93E32',
-  navHighlight: '#A93E32',
-  onNavMuted: '#472F29',
+  primaryDark: '#C8533B',
+  primaryLight: '#FDEEE9',
+  coral: '#E06D53',
+  coralLight: '#FDEEE9',
+  coralBorder: '#F5D6CE',
+  coralSubtle: '#FDF6F3',
+  navHighlight: '#FDEEE9',
+  onNavMuted: '#7D736A',
   sage: '#DCE5D6',
-  peach: '#F3D9BA',
-  border: '#D8D6CE',
+  sageLight: '#F0F4EE',
+  sageBorder: '#D8E2D4',
+  peach: '#F8DEC3',
+  peachLight: '#FDF5EC',
+  peachBorder: '#F6E4D2',
+  border: '#E5DED4',
+  rust: '#A33E27',
+  green: '#46674F',
+  error: '#D63D33',
 };
 export const styles = StyleSheet.create({
   page: { flex: 1, backgroundColor: colors.background },
-  content: { padding: 20, gap: 18, paddingBottom: 48 },
-  title: { fontSize: 30, fontWeight: '700', color: colors.ink, letterSpacing: -1 },
-  subtitle: { fontSize: 20, fontWeight: '600', color: colors.ink },
-  body: { fontSize: 16, lineHeight: 24, color: colors.ink },
-  muted: { fontSize: 14, lineHeight: 21, color: colors.muted },
+  content: {
+    padding: 22,
+    paddingTop: 28,
+    gap: 22,
+    paddingBottom: 48,
+    width: '100%',
+    maxWidth: 840,
+    alignSelf: 'center',
+  },
+  title: {
+    fontFamily: 'Epilogue',
+    fontSize: 30,
+    lineHeight: 39,
+    color: colors.ink,
+    letterSpacing: -1.2,
+  },
+  subtitle: {
+    fontFamily: 'EpilogueSemiBold',
+    fontSize: 18,
+    lineHeight: 26,
+    color: colors.ink,
+    letterSpacing: -0.4,
+  },
+  body: { fontFamily: 'Jakarta', fontSize: 15, lineHeight: 25, color: colors.ink },
+  muted: { fontFamily: 'Jakarta', fontSize: 13, lineHeight: 21, color: colors.muted },
   card: {
     backgroundColor: colors.paper,
-    borderRadius: 20,
-    padding: 18,
-    gap: 12,
+    borderRadius: 22,
+    padding: 22,
+    gap: 16,
     borderWidth: 1,
     borderColor: colors.border,
   },
@@ -52,8 +86,21 @@ export const styles = StyleSheet.create({
     minHeight: 50,
     color: colors.ink,
     fontSize: 16,
+    fontFamily: 'Jakarta',
   },
-  error: { color: '#A52C24', fontSize: 14, lineHeight: 21 },
+  eyebrow: { fontFamily: 'JakartaSemiBold', fontSize: 10, letterSpacing: 1.8, color: colors.muted },
+  label: { fontFamily: 'JakartaSemiBold', fontSize: 14, lineHeight: 22, color: colors.ink },
+  link: { fontFamily: 'JakartaSemiBold', fontSize: 13, color: colors.rust },
+  textButton: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 7 },
+  iconButton: { minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
+  sectionRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 12,
+    flexWrap: 'wrap',
+  },
+  error: { color: colors.error, fontSize: 14, lineHeight: 21 },
 });
 export function Page({ children }: { children: ReactNode }) {
   return (
@@ -81,6 +128,91 @@ export function Heading({ children }: { children: ReactNode }) {
     </Text>
   );
 }
+export function SectionHeading({
+  title,
+  count,
+  suffix,
+}: {
+  title: string;
+  count?: string | number;
+  suffix?: string;
+}) {
+  return (
+    <View style={styles.sectionRow}>
+      <Heading>{title}</Heading>
+      {count !== undefined && (
+        <View style={styles.row}>
+          <Text style={{ fontFamily: 'Epilogue', fontSize: 24, color: colors.rust }}>{count}</Text>
+          <Text style={styles.muted}>{suffix}</Text>
+        </View>
+      )}
+    </View>
+  );
+}
+export function Avatar({
+  name,
+  image,
+  size = 40,
+}: {
+  name?: string;
+  image?: string;
+  size?: number;
+}) {
+  return (
+    <View
+      style={{
+        width: size,
+        height: size,
+        borderRadius: size / 2,
+        overflow: 'hidden',
+        backgroundColor: colors.peach,
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+    >
+      {image ? (
+        <Image source={{ uri: image }} style={{ width: size, height: size }} />
+      ) : (
+        <Text style={{ fontFamily: 'JakartaSemiBold', fontSize: size * 0.3, color: colors.rust }}>
+          {name
+            ?.trim()
+            .split(/\s+/)
+            .map((p) => p[0])
+            .slice(0, 2)
+            .join('') || '?'}
+        </Text>
+      )}
+    </View>
+  );
+}
+export function SectionCard({
+  title,
+  icon,
+  children,
+}: {
+  title: string;
+  icon: string;
+  children: ReactNode;
+}) {
+  return (
+    <Card>
+      <View
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 10,
+          paddingBottom: 16,
+          borderBottomWidth: 1,
+          borderColor: colors.border,
+        }}
+      >
+        <Icon source={icon} size={22} color={colors.rust} />
+        <Heading>{title}</Heading>
+      </View>
+      {children}
+    </Card>
+  );
+}
 export function Card({ children }: { children: ReactNode }) {
   return <View style={styles.card}>{children}</View>;
 }
@@ -102,25 +234,34 @@ export function Button({
       disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => ({
-        backgroundColor: secondary ? colors.paper : colors.primary,
+        backgroundColor: secondary ? colors.paper : colors.rust,
         paddingHorizontal: 18,
         paddingVertical: 14,
-        borderRadius: 14,
+        borderRadius: 999,
         minHeight: 48,
         alignItems: 'center',
+        justifyContent: 'center',
         borderWidth: 1,
-        borderColor: secondary ? colors.border : colors.primary,
-        opacity: disabled ? 0.5 : pressed ? 0.75 : 1,
+        borderColor: secondary ? colors.border : colors.rust,
+        opacity: disabled ? 0.5 : pressed ? 0.8 : 1,
       })}
     >
-      <Text style={{ color: colors.ink, fontWeight: '600', fontSize: 15 }}>{title}</Text>
+      <Text
+        style={{
+          color: secondary ? colors.ink : colors.paper,
+          fontFamily: 'JakartaSemiBold',
+          fontSize: 15,
+        }}
+      >
+        {title}
+      </Text>
     </Pressable>
   );
 }
 export function Field({ label, ...props }: TextInputProps & { label: string }) {
   return (
     <View style={{ gap: 7 }}>
-      <Text style={styles.body}>{label}</Text>
+      <Text style={styles.label}>{label}</Text>
       <TextInput
         accessibilityLabel={label}
         placeholderTextColor={colors.muted}

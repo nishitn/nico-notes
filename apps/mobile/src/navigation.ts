@@ -13,6 +13,7 @@ export type Routes = {
     boardId: Id<'boards'>;
     visitId?: Id<'visits'>;
     placeId?: Id<'places'>;
+    googlePlaceId?: string;
     title?: string;
     place?: string;
     location?: { latitude: number; longitude: number };

@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@convex-dev/auth": "0.0.95",
+    "@expo/ui": "~57.0.25",
     "@expo/vector-icons": "^15.1.1",
     "@nico-notes/backend": "workspace:*",
     "@react-navigation/native": "^7.1.0",
@@ -21,6 +22,7 @@
     "expo-constants": "~57.0.22",
     "expo-dev-client": "~57.0.20",
     "expo-file-system": "~57.0.7",
+    "expo-font": "~57.0.4",
     "expo-image": "~57.0.5",
     "expo-image-manipulator": "~57.0.21",
     "expo-image-picker": "~57.0.20",
@@ -41,5 +43,14 @@
   "devDependencies": {
     "@types/react": "~19.2.2",
     "typescript": "~5.9.3"
+  },
+  "expo": {
+    "autolinking": {
+      "android": {
+        "buildFromSource": [
+          "expo-ui"
+        ]
+      }
+    }
   }
 }

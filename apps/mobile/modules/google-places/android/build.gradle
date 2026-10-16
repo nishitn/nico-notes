@@ -1,0 +1,16 @@
+apply plugin: 'com.android.library'
+apply plugin: 'expo-module-gradle-plugin'
+
+group = 'expo.modules.nicogoogleplaces'
+version = '1.0.0'
+
+expoModule { canBePublished false }
+android {
+  namespace 'expo.modules.nicogoogleplaces'
+  defaultConfig { versionCode 1; versionName '1.0.0' }
+}
+
+dependencies {
+  // Supports Text Search (New) and the app's Kotlin 2.1 toolchain.
+  implementation 'com.google.android.libraries.places:places:4.3.1'
+}
