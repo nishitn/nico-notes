@@ -42,7 +42,11 @@ export const places = authedQuery({
   },
 });
 export const list = authedQuery({
-  args: { boardId: v.id('boards'), paginationOpts: paginationOptsValidator },
+  args: {
+    boardId: v.id('boards'),
+    placeId: v.optional(v.id('places')),
+    paginationOpts: paginationOptsValidator,
+  },
   returns: v.object({
     page: v.array(
       v.object({
@@ -77,9 +81,20 @@ export const list = authedQuery({
   }),
   handler: async (ctx, args) => {
     await member(ctx, args.boardId);
-    const result = await ctx.db
-      .query('visits')
-      .withIndex('by_boardId_and_date', (q) => q.eq('boardId', args.boardId))
+    if (args.placeId) {
+      const p = await ctx.db.get(args.placeId);
+      if (!p || p.boardId !== args.boardId) {
+        return { isDone: true, continueCursor: '', page: [] };
+      }
+    }
+    const query = args.placeId
+      ? ctx.db
+          .query('visits')
+          .withIndex('by_placeId_and_date', (q) => q.eq('placeId', args.placeId))
+      : ctx.db
+          .query('visits')
+          .withIndex('by_boardId_and_date', (q) => q.eq('boardId', args.boardId));
+    const result = await query
       .order('desc')
       .paginate({ ...args.paginationOpts, numItems: Math.min(args.paginationOpts.numItems, 24) });
     const page = await Promise.all(

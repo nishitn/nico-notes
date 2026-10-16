@@ -15,6 +15,7 @@ import {
   View,
   type StyleProp,
   type TextInputProps,
+  type TextStyle,
   type ViewStyle,
 } from 'react-native';
 
@@ -116,9 +117,9 @@ export function Page({ children }: { children: ReactNode }) {
     </KeyboardAvoidingView>
   );
 }
-export function Title({ children }: { children: ReactNode }) {
+export function Title({ children, style }: { children: ReactNode; style?: StyleProp<TextStyle> }) {
   return (
-    <Text accessibilityRole="header" style={styles.title}>
+    <Text accessibilityRole="header" style={[styles.title, style]}>
       {children}
     </Text>
   );

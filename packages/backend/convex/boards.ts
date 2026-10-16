@@ -134,6 +134,63 @@ export const list = authedQuery({
     };
   },
 });
+export const summaries = authedQuery({
+  args: {},
+  returns: v.array(
+    v.object({
+      _id: v.id('boards'),
+      name: v.string(),
+      description: v.string(),
+      accent,
+      memberCount: v.number(),
+      visitCount: v.number(),
+      members: v.array(
+        v.object({
+          _id: v.id('users'),
+          name: v.optional(v.string()),
+          image: v.optional(v.string()),
+        }),
+      ),
+    }),
+  ),
+  handler: async (ctx) => {
+    const memberships = await ctx.db
+      .query('memberships')
+      .withIndex('by_userId', (q) => q.eq('userId', ctx.userId))
+      .order('desc')
+      .take(100);
+    const boards = await Promise.all(
+      memberships.map(async (m) => {
+        const board = await ctx.db.get(m.boardId);
+        if (!board || board.deleting) return null;
+        const boardMemberships = await ctx.db
+          .query('memberships')
+          .withIndex('by_boardId', (q) => q.eq('boardId', board._id))
+          .take(MAX_MEMBERS);
+        const members = await Promise.all(
+          boardMemberships.slice(0, 5).map(async (bm) => {
+            const p = await person(ctx, bm.userId);
+            return { _id: bm.userId, name: p.name, image: p.image };
+          }),
+        );
+        const visits = await ctx.db
+          .query('visits')
+          .withIndex('by_boardId_and_date', (q) => q.eq('boardId', board._id))
+          .collect();
+        return {
+          _id: board._id,
+          name: board.name,
+          description: board.description,
+          accent: board.accent,
+          memberCount: boardMemberships.length,
+          visitCount: visits.length,
+          members,
+        };
+      }),
+    );
+    return boards.filter((b): b is NonNullable<typeof b> => b !== null);
+  },
+});
 export const get = authedQuery({
   args: { boardId: v.id('boards') },
   returns: v.object({

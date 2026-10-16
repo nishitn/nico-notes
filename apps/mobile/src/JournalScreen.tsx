@@ -26,7 +26,17 @@ import { useMutation, usePaginatedQuery, useQuery } from 'convex/react';
 import { api } from '@nico-notes/backend/api';
 import type { Id } from '@nico-notes/backend/dataModel';
 import type { ScreenProps } from './navigation';
-import { Card, colors, confirm, Heading, Loading, SectionHeading, styles, Title } from './ui';
+import {
+  Avatar,
+  Card,
+  colors,
+  confirm,
+  Heading,
+  Loading,
+  SectionHeading,
+  styles,
+  Title,
+} from './ui';
 import { BoardPlaces } from './BoardPlaces';
 import { VisitCard } from './VisitCard';
 import { BoardPicker } from './BoardPicker';
@@ -42,6 +52,7 @@ type Props = {
 export function JournalScreen({ navigation, initialBoardId }: Props) {
   const me = useQuery(api.boards.me);
   const boards = usePaginatedQuery(api.boards.list, {}, { initialNumItems: 24 });
+  const summaries = useQuery(api.boards.summaries);
   const requests = useQuery(api.boards.myOutgoingRequests);
   const [selectedId, setSelectedId] = useState(initialBoardId);
   // An explicit board may be beyond the loaded page; keep it until it is switched.
@@ -103,14 +114,147 @@ export function JournalScreen({ navigation, initialBoardId }: Props) {
     board?.board.name ?? boards.results.find((item) => item._id === boardId)?.name ?? 'Boards';
   const emptyBoards = boards.status !== 'LoadingFirstPage' && !boardId;
 
-  function renderVisits(home: boolean) {
-    const filtered = home
+  const { loadMore: loadMoreVisits, status: visitsStatus } = visits;
+  useEffect(() => {
+    if (search.trim() && visitsStatus === 'CanLoadMore') {
+      loadMoreVisits(100);
+    }
+  }, [search, visitsStatus, loadMoreVisits]);
+
+  function renderHome() {
+    return (
+      <ScrollView
+        style={styles.page}
+        contentContainerStyle={journal.content}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View style={{ gap: 18 }}>
+          {board ? (
+            <View style={journal.boardHeader}>
+              <View style={journal.boardTitleRow}>
+                <Text accessibilityRole="header" style={journal.boardTitle}>
+                  {board.board.name}
+                </Text>
+                <IconButton
+                  icon="tune-variant"
+                  accessibilityLabel="Board settings"
+                  iconColor={colors.rust}
+                  style={journal.settingsButton}
+                  onPress={() => navigation.navigate('Settings', { boardId: board.board._id })}
+                />
+              </View>
+              <View style={styles.row}>
+                <View style={journal.avatars}>
+                  {board.members.slice(0, 5).map((person, i) => (
+                    <View key={person._id} style={[journal.avatar, { marginLeft: i ? -8 : 0 }]}>
+                      {person.image ? (
+                        <Image
+                          source={{ uri: person.image }}
+                          style={{ width: 28, height: 28, borderRadius: 14 }}
+                        />
+                      ) : (
+                        <Text style={journal.initials}>
+                          {person.name
+                            ?.trim()
+                            .split(/\s+/)
+                            .map((p) => p[0])
+                            .slice(0, 2)
+                            .join('') || '?'}
+                        </Text>
+                      )}
+                    </View>
+                  ))}
+                </View>
+                <Text style={styles.muted}>
+                  {board.members.length} {board.members.length === 1 ? 'member' : 'members'}
+                </Text>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => navigation.navigate('Settings', { boardId: board.board._id })}
+                  style={styles.textButton}
+                >
+                  <Icon source="account-plus-outline" size={15} color={colors.rust} />
+                  <Text style={[styles.link, { textDecorationLine: 'underline' }]}>Invite</Text>
+                </Pressable>
+              </View>
+              {!!board.board.description && (
+                <Text style={styles.muted}>{board.board.description}</Text>
+              )}
+            </View>
+          ) : (
+            <Title>Your shared journal.</Title>
+          )}
+          {!!pending?.length && boardId && (
+            <Card>
+              <Text style={styles.label}>
+                {pending.length} pending join {pending.length === 1 ? 'request' : 'requests'}
+              </Text>
+              <MaterialButton
+                textColor={colors.rust}
+                onPress={() => navigation.navigate('Settings', { boardId })}
+              >
+                Review requests
+              </MaterialButton>
+            </Card>
+          )}
+          {boardId ? (
+            <BoardPlaces
+              key={boardId}
+              boardId={boardId}
+              onOpen={(place) =>
+                navigation.navigate('Place', {
+                  boardId,
+                  placeId: place._id,
+                  name: place.name,
+                })
+              }
+              onAdd={(place, title) =>
+                navigation.navigate('VisitForm', {
+                  boardId,
+                  placeId: place?._id,
+                  googlePlaceId: place?.googlePlaceId,
+                  title: place?.name ?? title,
+                  place: place?.address,
+                  location: place?.location,
+                })
+              }
+              onViewAll={() => navigation.navigate('Places', { boardId })}
+            />
+          ) : emptyBoards ? (
+            <Card>
+              <Heading>A little world of your own.</Heading>
+              <Text style={styles.muted}>
+                Create a board or join your people to start saving memories together.
+              </Text>
+              <View style={styles.row}>
+                <MaterialButton mode="contained" onPress={newBoard}>
+                  New board
+                </MaterialButton>
+                <MaterialButton onPress={joinBoard}>Join board</MaterialButton>
+              </View>
+            </Card>
+          ) : null}
+          {requests?.map((request) => (
+            <Text key={request._id} style={styles.muted}>
+              Waiting for approval · {request.boardName}
+            </Text>
+          ))}
+        </View>
+      </ScrollView>
+    );
+  }
+
+  function renderVisits() {
+    const query = search.trim().toLowerCase();
+    const filtered = !query
       ? visits.results
-      : visits.results.filter((visit) =>
-          `${visit.title} ${visit.place} ${visit.notes}`
-            .toLowerCase()
-            .includes(search.toLowerCase()),
-        );
+      : visits.results.filter((visit) => {
+          const dishes = visit.dishes?.map((d) => d.name).join(' ') ?? '';
+          const highlights = visit.highlights?.join(' ') ?? '';
+          const haystack =
+            `${visit.title} ${visit.place} ${visit.notes} ${dishes} ${highlights}`.toLowerCase();
+          return haystack.includes(query);
+        });
     return (
       <FlatList
         style={styles.page}
@@ -120,140 +264,15 @@ export function JournalScreen({ navigation, initialBoardId }: Props) {
         keyboardShouldPersistTaps="handled"
         ListHeaderComponent={
           <View style={{ gap: 18 }}>
-            {home ? (
-              <>
-                {board ? (
-                  <View style={journal.boardHeader}>
-                    <View style={journal.boardTitleRow}>
-                      <Text accessibilityRole="header" style={journal.boardTitle}>
-                        {board.board.name}
-                      </Text>
-                      <IconButton
-                        icon="tune-variant"
-                        accessibilityLabel="Board settings"
-                        iconColor={colors.rust}
-                        style={journal.settingsButton}
-                        onPress={() =>
-                          navigation.navigate('Settings', { boardId: board.board._id })
-                        }
-                      />
-                    </View>
-                    <View style={styles.row}>
-                      <View style={journal.avatars}>
-                        {board.members.slice(0, 5).map((person, i) => (
-                          <View
-                            key={person._id}
-                            style={[journal.avatar, { marginLeft: i ? -8 : 0 }]}
-                          >
-                            {person.image ? (
-                              <Image
-                                source={{ uri: person.image }}
-                                style={{ width: 28, height: 28, borderRadius: 14 }}
-                              />
-                            ) : (
-                              <Text style={journal.initials}>
-                                {person.name
-                                  ?.trim()
-                                  .split(/\s+/)
-                                  .map((p) => p[0])
-                                  .slice(0, 2)
-                                  .join('') || '?'}
-                              </Text>
-                            )}
-                          </View>
-                        ))}
-                      </View>
-                      <Text style={styles.muted}>
-                        {board.members.length} {board.members.length === 1 ? 'member' : 'members'}
-                      </Text>
-                      <Pressable
-                        accessibilityRole="button"
-                        onPress={() =>
-                          navigation.navigate('Settings', { boardId: board.board._id })
-                        }
-                        style={styles.textButton}
-                      >
-                        <Icon source="account-plus-outline" size={15} color={colors.rust} />
-                        <Text style={[styles.link, { textDecorationLine: 'underline' }]}>
-                          Invite
-                        </Text>
-                      </Pressable>
-                    </View>
-                    {!!board.board.description && (
-                      <Text style={styles.muted}>{board.board.description}</Text>
-                    )}
-                  </View>
-                ) : (
-                  <Title>Your shared journal.</Title>
-                )}
-                {!!pending?.length && boardId && (
-                  <Card>
-                    <Text style={styles.label}>
-                      {pending.length} pending join {pending.length === 1 ? 'request' : 'requests'}
-                    </Text>
-                    <MaterialButton
-                      textColor={colors.rust}
-                      onPress={() => navigation.navigate('Settings', { boardId })}
-                    >
-                      Review requests
-                    </MaterialButton>
-                  </Card>
-                )}
-                {boardId && (
-                  <BoardPlaces
-                    key={boardId}
-                    boardId={boardId}
-                    onOpen={(place) =>
-                      navigation.navigate('Place', {
-                        boardId,
-                        placeId: place._id,
-                        name: place.name,
-                      })
-                    }
-                    onAdd={(place, title) =>
-                      navigation.navigate('VisitForm', {
-                        boardId,
-                        placeId: place?._id,
-                        googlePlaceId: place?.googlePlaceId,
-                        title: place?.name ?? title,
-                        place: place?.address,
-                        location: place?.location,
-                      })
-                    }
-                    onViewAll={() => navigation.navigate('Places', { boardId })}
-                  />
-                )}
-                {requests?.map((request) => (
-                  <Text key={request._id} style={styles.muted}>
-                    Waiting for approval · {request.boardName}
-                  </Text>
-                ))}
-                {!!boardId && (
-                  <View style={{ paddingTop: 20 }}>
-                    <SectionHeading
-                      title="Your Visits"
-                      count={`${visits.results.length}${visits.status === 'Exhausted' ? '' : '+'}`}
-                      suffix="so far"
-                    />
-                  </View>
-                )}
-              </>
-            ) : (
-              <>
-                <Title>Visits</Title>
-                <Text style={styles.muted}>
-                  {board?.board.name ?? 'Your shared journal'} · Latest first
-                </Text>
-                {!!boardId && (
-                  <Searchbar
-                    placeholder="Search loaded visits…"
-                    accessibilityLabel="Find a visit"
-                    value={search}
-                    onChangeText={setSearch}
-                    style={journal.search}
-                  />
-                )}
-              </>
+            <Title>Visits</Title>
+            {!!boardId && (
+              <Searchbar
+                placeholder="Search visits…"
+                accessibilityLabel="Search visits"
+                value={search}
+                onChangeText={setSearch}
+                style={journal.search}
+              />
             )}
           </View>
         }
@@ -278,15 +297,17 @@ export function JournalScreen({ navigation, initialBoardId }: Props) {
               <Heading>
                 {emptyBoards
                   ? 'A little world of your own.'
-                  : search && !home
+                  : search
                     ? 'No matching visits.'
                     : 'Your next adventure starts here.'}
               </Heading>
               <Text style={styles.muted}>
                 {emptyBoards
                   ? 'Create a board or join your people to start saving memories together.'
-                  : search && !home
-                    ? 'Search applies to loaded visits. Load more to include older memories.'
+                  : search
+                    ? visits.status === 'LoadingMore'
+                      ? 'Searching visits…'
+                      : 'No visits found matching your search.'
                     : 'Save a place, a photo, and the little details you want to remember.'}
               </Text>
               {emptyBoards ? (
@@ -297,7 +318,7 @@ export function JournalScreen({ navigation, initialBoardId }: Props) {
                   <MaterialButton onPress={joinBoard}>Join board</MaterialButton>
                 </View>
               ) : (
-                (home || !search) && (
+                !search && (
                   <MaterialButton mode="text" onPress={newVisit}>
                     Add your first visit
                   </MaterialButton>
@@ -494,37 +515,39 @@ export function JournalScreen({ navigation, initialBoardId }: Props) {
             nico notes<Text style={{ color: colors.primary }}>.</Text>
           </Text>
         </View>
-        <View style={journal.boardPickerSlot}>
-          <BoardPicker
-            boards={boards.results}
-            boardId={boardId}
-            boardName={boardName}
-            canLoadMore={boards.status === 'CanLoadMore'}
-            loadingMore={boards.status === 'LoadingMore'}
-            onLoadMore={() => boards.loadMore(24)}
-            onSelect={(id) => {
-              setSelectedId(id);
-              setSearch('');
-            }}
-            onNewBoard={newBoard}
-            onJoinBoard={joinBoard}
-          />
-        </View>
+        {tabs[index]?.key !== 'settings' && (
+          <View style={journal.boardPickerSlot}>
+            <BoardPicker
+              boards={boards.results}
+              boardId={boardId}
+              boardName={boardName}
+              canLoadMore={boards.status === 'CanLoadMore'}
+              loadingMore={boards.status === 'LoadingMore'}
+              onLoadMore={() => boards.loadMore(24)}
+              onSelect={(id) => {
+                setSelectedId(id);
+                setSearch('');
+              }}
+              onNewBoard={newBoard}
+              onJoinBoard={joinBoard}
+            />
+          </View>
+        )}
       </View>
       <BottomNavigation
         navigationState={{ index, routes: tabs }}
         onIndexChange={switchTab}
         renderScene={({ route }) =>
           route.key === 'home' ? (
-            renderVisits(true)
+            renderHome()
           ) : route.key === 'visits' ? (
-            renderVisits(false)
+            renderVisits()
           ) : route.key === 'wishlist' ? (
             renderWishlist()
           ) : (
             <ScrollView contentContainerStyle={journal.content}>
-              <Title>Your little world.</Title>
-              <Text style={styles.muted}>Your boards, your people, your preferences.</Text>
+              <Title>Settings</Title>
+              <Text style={styles.muted}>Your account, your boards, and your preferences.</Text>
               <View style={journal.tools}>
                 <List.Item
                   title="Your account"
@@ -532,30 +555,11 @@ export function JournalScreen({ navigation, initialBoardId }: Props) {
                   left={(props) => (
                     <List.Icon {...props} icon="account-outline" color={colors.primary} />
                   )}
+                  right={(props) => (
+                    <List.Icon {...props} icon="chevron-right" color={colors.muted} />
+                  )}
                   onPress={() => navigation.navigate('Account')}
                 />
-                {boardId && (
-                  <>
-                    <Divider />
-                    <List.Item
-                      title="Places"
-                      description="Explore the places on this board"
-                      left={(props) => (
-                        <List.Icon {...props} icon="map-marker-outline" color={colors.primary} />
-                      )}
-                      onPress={() => navigation.navigate('Places', { boardId })}
-                    />
-                    <Divider />
-                    <List.Item
-                      title="Board settings"
-                      description={board?.board.name}
-                      left={(props) => (
-                        <List.Icon {...props} icon="cog-outline" color={colors.primary} />
-                      )}
-                      onPress={() => navigation.navigate('Settings', { boardId })}
-                    />
-                  </>
-                )}
                 <Divider />
                 <List.Item
                   title="New board"
@@ -575,6 +579,142 @@ export function JournalScreen({ navigation, initialBoardId }: Props) {
                   onPress={joinBoard}
                 />
               </View>
+
+              {!!summaries && summaries.length > 0 && (
+                <View style={{ gap: 14 }}>
+                  <SectionHeading title="Your Boards" count={summaries.length} />
+                  {summaries.map((b) => (
+                    <Pressable
+                      key={b._id}
+                      onPress={() => {
+                        setSelectedId(b._id);
+                        setSearch('');
+                        switchTab(0);
+                      }}
+                    >
+                      <Card style={{ gap: 12 }}>
+                        <View
+                          style={{
+                            flexDirection: 'row',
+                            alignItems: 'flex-start',
+                            justifyContent: 'space-between',
+                            gap: 8,
+                          }}
+                        >
+                          <View style={{ flex: 1, gap: 4 }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                              <Text
+                                style={{
+                                  fontFamily: 'EpilogueSemiBold',
+                                  fontSize: 18,
+                                  lineHeight: 24,
+                                  color: colors.ink,
+                                  letterSpacing: -0.4,
+                                }}
+                              >
+                                {b.name}
+                              </Text>
+                              {b._id === boardId && (
+                                <View
+                                  style={{
+                                    backgroundColor: colors.coralLight,
+                                    paddingHorizontal: 8,
+                                    paddingVertical: 2,
+                                    borderRadius: 10,
+                                  }}
+                                >
+                                  <Text
+                                    style={{
+                                      fontFamily: 'JakartaSemiBold',
+                                      fontSize: 11,
+                                      color: colors.rust,
+                                    }}
+                                  >
+                                    Active
+                                  </Text>
+                                </View>
+                              )}
+                            </View>
+                            {!!b.description && (
+                              <Text numberOfLines={2} style={styles.muted}>
+                                {b.description}
+                              </Text>
+                            )}
+                          </View>
+                          <Icon source="chevron-right" size={20} color={colors.rust} />
+                        </View>
+
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <Icon source="book-open-outline" size={16} color={colors.rust} />
+                            <Text
+                              style={{
+                                fontFamily: 'JakartaSemiBold',
+                                fontSize: 13,
+                                color: colors.rust,
+                              }}
+                            >
+                              {b.visitCount} {b.visitCount === 1 ? 'visit' : 'visits'}
+                            </Text>
+                          </View>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <Icon source="account-group-outline" size={16} color={colors.rust} />
+                            <Text
+                              style={{
+                                fontFamily: 'JakartaSemiBold',
+                                fontSize: 13,
+                                color: colors.rust,
+                              }}
+                            >
+                              {b.memberCount} {b.memberCount === 1 ? 'member' : 'members'}
+                            </Text>
+                          </View>
+                        </View>
+
+                        {b.members.length > 0 && (
+                          <View
+                            style={{
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              gap: 10,
+                              paddingTop: 6,
+                              borderTopWidth: 1,
+                              borderTopColor: colors.border,
+                            }}
+                          >
+                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                              {b.members.map((m, i) => (
+                                <View
+                                  key={m._id}
+                                  style={{
+                                    borderRadius: 14,
+                                    borderWidth: 2,
+                                    borderColor: colors.paper,
+                                    marginLeft: i ? -8 : 0,
+                                  }}
+                                >
+                                  <Avatar name={m.name} image={m.image} size={28} />
+                                </View>
+                              ))}
+                            </View>
+                            <Text
+                              numberOfLines={1}
+                              style={{
+                                fontFamily: 'Jakarta',
+                                fontSize: 12,
+                                color: colors.muted,
+                                flex: 1,
+                              }}
+                            >
+                              {b.members.map((m) => m.name || 'Member').join(', ')}
+                            </Text>
+                          </View>
+                        )}
+                      </Card>
+                    </Pressable>
+                  ))}
+                </View>
+              )}
             </ScrollView>
           )
         }

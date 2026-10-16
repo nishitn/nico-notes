@@ -349,6 +349,16 @@ describe('User errors and sign-in redirects', () => {
       'https://notes.example/boards',
     );
   });
+
+  it('fetches a single place by placeId', async () => {
+    const { create, get, admin, outsider } = await setup();
+    const visitId = await create({ googlePlaceId: 'place-abc' });
+    const placeId = (await get(visitId)).placeId!;
+    const place = await admin.query(api.places.get, { placeId });
+    expect(place?._id).toBe(placeId);
+    expect(place?.name).toBe('Café Table');
+    await expect(outsider.query(api.places.get, { placeId })).rejects.toThrow();
+  });
   it.each([
     'https://notes.example.evil.test/steal',
     'https://notes.example@evil.test/',

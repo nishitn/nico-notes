@@ -1,9 +1,6 @@
-import { Pressable } from 'react-native';
-import { Host, HorizontalMultiBrowseCarousel, RNHostView } from '@expo/ui/jetpack-compose';
-import { height as composeHeight, fillMaxWidth } from '@expo/ui/jetpack-compose/modifiers';
+import { Pressable, ScrollView, StyleSheet } from 'react-native';
 import type { Id } from '@nico-notes/backend/dataModel';
 import { Photo } from './photos';
-import { colors } from './ui';
 
 export function VisitCarousel({
   photos,
@@ -20,37 +17,48 @@ export function VisitCarousel({
         onPress={onPress}
         accessibilityRole="button"
         accessibilityLabel={`Open photo for ${title}`}
+        style={carousel.singlePhoto}
       >
-        <Photo id={photos[0]} alt={title} height={160} />
+        <Photo id={photos[0]} alt={title} height={180} />
       </Pressable>
     );
   }
 
   return (
-    <Host
-      matchContents={false}
-      colorScheme="light"
-      seedColor={colors.primary}
-      style={{ height: 160, width: '100%', borderRadius: 14, overflow: 'hidden' }}
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={carousel.scrollContent}
+      nestedScrollEnabled
     >
-      <HorizontalMultiBrowseCarousel
-        preferredItemWidth={210}
-        itemSpacing={8}
-        modifiers={[composeHeight(160), fillMaxWidth()]}
-      >
-        {photos.map((id) => (
-          <RNHostView key={id} matchContents>
-            <Pressable
-              onPress={onPress}
-              accessibilityRole="button"
-              accessibilityLabel={`Open photo for ${title}`}
-              style={{ width: 210, height: 160 }}
-            >
-              <Photo id={id} alt={title} height={160} />
-            </Pressable>
-          </RNHostView>
-        ))}
-      </HorizontalMultiBrowseCarousel>
-    </Host>
+      {photos.map((id) => (
+        <Pressable
+          key={id}
+          onPress={onPress}
+          accessibilityRole="button"
+          accessibilityLabel={`Open photo for ${title}`}
+          style={carousel.photoItem}
+        >
+          <Photo id={id} alt={title} height={160} />
+        </Pressable>
+      ))}
+    </ScrollView>
   );
 }
+
+const carousel = StyleSheet.create({
+  singlePhoto: {
+    width: '100%',
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  scrollContent: {
+    gap: 8,
+  },
+  photoItem: {
+    width: 220,
+    height: 160,
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+});

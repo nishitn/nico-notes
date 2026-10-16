@@ -7,5 +7,5 @@ export const journalTabs = [
     focusedIcon: 'bookmark',
     unfocusedIcon: 'bookmark-outline',
   },
-  { key: 'more', title: 'More', focusedIcon: 'dots-horizontal', unfocusedIcon: 'dots-horizontal' },
+  { key: 'settings', title: 'Settings', focusedIcon: 'cog', unfocusedIcon: 'cog-outline' },
 ];

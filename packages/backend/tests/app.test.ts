@@ -71,7 +71,7 @@ describe('Profile names', () => {
 
 describe('Private boards and invitations', () => {
   it('requires authentication and isolates every board', async () => {
-    const { t, outsider, boardId, visitId, dishId } = await setup();
+    const { t, alice, outsider, boardId, visitId, dishId } = await setup();
     await expect(t.query(api.boards.get, { boardId })).rejects.toThrow(/sign in/);
     await expect(outsider.query(api.boards.get, { boardId })).rejects.toThrow(/access/);
     await expect(outsider.query(api.visits.get, { visitId })).rejects.toThrow(/access/);
@@ -91,6 +91,12 @@ describe('Private boards and invitations', () => {
       (await outsider.query(api.boards.list, { paginationOpts: { numItems: 20, cursor: null } }))
         .page,
     ).toEqual([]);
+    expect(await outsider.query(api.boards.summaries, {})).toEqual([]);
+    const aliceSummaries = await alice.query(api.boards.summaries, {});
+    expect(aliceSummaries).toHaveLength(1);
+    expect(aliceSummaries[0].name).toBe('Food visits');
+    expect(aliceSummaries[0].memberCount).toBe(2);
+    expect(aliceSummaries[0].visitCount).toBe(1);
   });
   it('accepts once, enforces owner permissions, and honors revocation', async () => {
     const { alice, bob, outsider, boardId, invite } = await setup();

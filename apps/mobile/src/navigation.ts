@@ -7,6 +7,7 @@ export type Routes = {
   BoardForm: { boardId?: Id<'boards'> } | undefined;
   Join: { token?: string } | undefined;
   Account: undefined;
+  YourBoards: undefined;
   Settings: { boardId: Id<'boards'> };
   Visit: { visitId: Id<'visits'> };
   VisitForm: {

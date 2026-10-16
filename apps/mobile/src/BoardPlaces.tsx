@@ -12,11 +12,11 @@ import {
 import MapView, { Marker } from 'react-native-maps';
 import Constants from 'expo-constants';
 import { useMutation, usePaginatedQuery, useQuery } from 'convex/react';
-import { Icon, Searchbar } from 'react-native-paper';
+import { Icon, Menu, Searchbar } from 'react-native-paper';
 import { clusterPlaces, nearbyRegion, type MapRegion, type MapSize } from './mapGeometry';
 import { PlacePreview } from './PlacePreview';
 import { PlaceSearchResults } from './PlaceSearchResults';
-import { distanceBetween, matchingPlaces } from './placeSearch';
+import { distanceBetween, formatDistance, matchingPlaces } from './placeSearch';
 import { usePlaceSearch } from './usePlaceSearch';
 import type { GooglePlace } from '../modules/google-places';
 import { useCurrentLocation } from './useCurrentLocation';
@@ -31,6 +31,16 @@ export type VisitPlace = {
   googlePlaceId?: string;
   location?: { latitude: number; longitude: number };
 };
+
+export type PlaceSortOption = 'visits' | 'distance' | 'recent' | 'name_asc' | 'name_desc';
+
+export const PLACE_SORT_OPTIONS: { value: PlaceSortOption; label: string; icon: string }[] = [
+  { value: 'visits', label: 'Most visits', icon: 'book-open-outline' },
+  { value: 'distance', label: 'Nearest to you', icon: 'navigation-variant-outline' },
+  { value: 'recent', label: 'Recently added', icon: 'clock-outline' },
+  { value: 'name_asc', label: 'Name (A to Z)', icon: 'sort-alphabetical-ascending' },
+  { value: 'name_desc', label: 'Name (Z to A)', icon: 'sort-alphabetical-descending' },
+];
 
 export type SavedPlace = {
   _id: Id<'places'>;
@@ -64,6 +74,8 @@ export function BoardPlaces({
   const { run, error } = useTask();
   const [search, setSearch] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
+  const [sortBy, setSortBy] = useState<PlaceSortOption>('visits');
+  const [sortMenuVisible, setSortMenuVisible] = useState(false);
   const [newPlace, setNewPlace] = useState<GooglePlace>();
   const [selectedId, setSelectedId] = useState<Id<'places'>>();
   const map = useRef<MapView>(null);
@@ -106,6 +118,39 @@ export function BoardPlaces({
       })),
     [filtered, current.location],
   );
+  const sortedPlaces = useMemo(() => {
+    const list = [...savedWithDistance];
+    return list.sort((a, b) => {
+      switch (sortBy) {
+        case 'visits': {
+          const countA = a.visitCount ?? 1;
+          const countB = b.visitCount ?? 1;
+          if (countB !== countA) return countB - countA;
+          return a.name.localeCompare(b.name);
+        }
+        case 'distance': {
+          const distA = a.distance !== undefined ? a.distance : Infinity;
+          const distB = b.distance !== undefined ? b.distance : Infinity;
+          if (distA !== distB) return distA - distB;
+          return a.name.localeCompare(b.name);
+        }
+        case 'recent': {
+          const timeA = a._creationTime ?? 0;
+          const timeB = b._creationTime ?? 0;
+          if (timeB !== timeA) return timeB - timeA;
+          return a.name.localeCompare(b.name);
+        }
+        case 'name_asc':
+          return a.name.localeCompare(b.name);
+        case 'name_desc':
+          return b.name.localeCompare(a.name);
+        default:
+          return 0;
+      }
+    });
+  }, [savedWithDistance, sortBy]);
+  const currentSort =
+    PLACE_SORT_OPTIONS.find((opt) => opt.value === sortBy) ?? PLACE_SORT_OPTIONS[0];
   const nearby = usePlaceSearch(search, current.location, searchOpen);
   const clusters = useMemo(
     () => clusterPlaces(located, region, mapSize),
@@ -378,22 +423,36 @@ export function BoardPlaces({
               <Icon source="close" size={20} color={colors.muted} />
             </Pressable>
           </View>
-          {selectedCluster.map((place) => (
-            <Pressable
-              key={place._id}
-              accessibilityRole="button"
-              onPress={() => {
-                selectSaved(place);
-              }}
-              style={placeStyles.placeRow}
-            >
-              <View style={{ flex: 1, gap: 4 }}>
-                <Text style={styles.label}>{place.name}</Text>
-                <Text style={styles.muted}>{place.address}</Text>
-              </View>
-              <Icon source="chevron-right" size={20} color={colors.rust} />
-            </Pressable>
-          ))}
+          {selectedCluster.map((place) => {
+            const placeDist = current.location
+              ? distanceBetween(place.location, current.location)
+              : undefined;
+            const visitCount = place.visitCount ?? 1;
+            return (
+              <Pressable
+                key={place._id}
+                accessibilityRole="button"
+                onPress={() => {
+                  selectSaved(place);
+                }}
+                style={placeStyles.placeRow}
+              >
+                <View style={{ flex: 1, gap: 2 }}>
+                  <Text numberOfLines={1} style={placeStyles.placeName}>
+                    {place.name}
+                  </Text>
+                  <Text numberOfLines={1} style={placeStyles.placeMeta}>
+                    {place.address ? `${place.address} · ` : ''}
+                    <Text style={placeStyles.metaHighlight}>
+                      {visitCount} {visitCount === 1 ? 'visit' : 'visits'}
+                    </Text>
+                    {placeDist !== undefined ? ` · ${formatDistance(placeDist)}` : ''}
+                  </Text>
+                </View>
+                <Icon source="chevron-right" size={18} color={colors.rust} />
+              </Pressable>
+            );
+          })}
         </Card>
       )}
       {newPlace ? (
@@ -439,24 +498,92 @@ export function BoardPlaces({
           />
         )
       )}
-      {showList &&
-        filtered.map((p) => (
-          <Pressable
-            key={p._id}
-            accessibilityRole="button"
-            onPress={() => onOpen(p)}
-            style={placeStyles.placeRow}
-          >
-            <View style={placeStyles.placeIcon}>
-              <Icon source="map-marker-outline" size={20} color={colors.rust} />
+      {showList && (
+        <>
+          {savedWithDistance.length > 0 && (
+            <View style={placeStyles.listHeaderRow}>
+              <View style={placeStyles.listHeaderTitleGroup}>
+                <Text style={placeStyles.listHeaderTitle}>All Places</Text>
+                <View style={placeStyles.countPill}>
+                  <Text style={placeStyles.countPillText}>{sortedPlaces.length}</Text>
+                </View>
+              </View>
+              <Menu
+                visible={sortMenuVisible}
+                onDismiss={() => setSortMenuVisible(false)}
+                anchorPosition="bottom"
+                contentStyle={placeStyles.sortMenuContent}
+                anchor={
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`Sort places by ${currentSort.label}`}
+                    onPress={() => setSortMenuVisible(true)}
+                    style={({ pressed }) => [placeStyles.sortButton, pressed && { opacity: 0.8 }]}
+                  >
+                    <Icon source="sort-variant" size={16} color={colors.rust} />
+                    <Text style={placeStyles.sortButtonText}>{currentSort.label}</Text>
+                    <Icon
+                      source={sortMenuVisible ? 'chevron-up' : 'chevron-down'}
+                      size={16}
+                      color={colors.rust}
+                    />
+                  </Pressable>
+                }
+              >
+                {PLACE_SORT_OPTIONS.map((option) => {
+                  const selected = sortBy === option.value;
+                  return (
+                    <Menu.Item
+                      key={option.value}
+                      onPress={() => {
+                        setSortBy(option.value);
+                        setSortMenuVisible(false);
+                      }}
+                      title={option.label}
+                      titleStyle={[
+                        placeStyles.menuItemText,
+                        selected && placeStyles.menuItemTextActive,
+                      ]}
+                      leadingIcon={option.icon}
+                      trailingIcon={selected ? 'check' : undefined}
+                      dense
+                      style={[placeStyles.menuItem, selected && placeStyles.menuItemActive]}
+                    />
+                  );
+                })}
+              </Menu>
             </View>
-            <View style={{ flex: 1, gap: 4 }}>
-              <Text style={styles.label}>{p.name}</Text>
-              <Text style={styles.muted}>{p.address || 'No address saved'}</Text>
-            </View>
-            <Icon source="chevron-right" size={20} color={colors.rust} />
-          </Pressable>
-        ))}
+          )}
+          {sortedPlaces.map((p) => {
+            const visitCount = p.visitCount ?? 1;
+            return (
+              <Pressable
+                key={p._id}
+                accessibilityRole="button"
+                onPress={() => onOpen(p)}
+                style={placeStyles.placeRow}
+              >
+                <View style={placeStyles.placeIcon}>
+                  <Icon source="map-marker-outline" size={18} color={colors.rust} />
+                </View>
+                <View style={{ flex: 1, gap: 2 }}>
+                  <Text numberOfLines={1} style={placeStyles.placeName}>
+                    {p.name}
+                  </Text>
+                  <Text numberOfLines={1} style={placeStyles.placeMeta}>
+                    {p.address ? `${p.address} · ` : ''}
+                    <Text style={placeStyles.metaHighlight}>
+                      {visitCount} {visitCount === 1 ? 'visit' : 'visits'}
+                    </Text>
+                    {p.distance !== undefined ? ` · ${formatDistance(p.distance)}` : ''}
+                  </Text>
+                </View>
+                <Icon source="chevron-right" size={18} color={colors.rust} />
+              </Pressable>
+            );
+          })}
+        </>
+      )}
       {status === 'LoadingFirstPage' ? (
         <Text style={styles.muted}>Loading your places…</Text>
       ) : (
@@ -598,10 +725,106 @@ const placeStyles = StyleSheet.create({
   placeRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    paddingVertical: 16,
+    gap: 10,
+    paddingVertical: 10,
     borderBottomWidth: 1,
     borderColor: colors.border,
   },
-  placeIcon: { backgroundColor: colors.peachLight, padding: 12, borderRadius: 14 },
+  placeIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: colors.peachLight,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  placeName: {
+    fontFamily: 'JakartaSemiBold',
+    fontSize: 14,
+    lineHeight: 19,
+    color: colors.ink,
+  },
+  placeMeta: {
+    fontFamily: 'Jakarta',
+    fontSize: 12,
+    lineHeight: 17,
+    color: colors.muted,
+  },
+  metaHighlight: {
+    fontFamily: 'JakartaSemiBold',
+    color: colors.rust,
+  },
+  listHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 8,
+    paddingBottom: 4,
+  },
+  listHeaderTitleGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  listHeaderTitle: {
+    fontFamily: 'EpilogueSemiBold',
+    fontSize: 18,
+    color: colors.ink,
+    letterSpacing: -0.3,
+  },
+  countPill: {
+    backgroundColor: colors.coralLight,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 12,
+  },
+  countPillText: {
+    fontFamily: 'JakartaSemiBold',
+    fontSize: 12,
+    color: colors.rust,
+  },
+  sortButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 20,
+    backgroundColor: colors.paper,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  sortButtonText: {
+    fontFamily: 'JakartaSemiBold',
+    fontSize: 13,
+    color: colors.rust,
+  },
+  sortMenuContent: {
+    backgroundColor: colors.paper,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingVertical: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    elevation: 6,
+  },
+  menuItem: {
+    minHeight: 42,
+    paddingHorizontal: 8,
+  },
+  menuItemActive: {
+    backgroundColor: colors.coralLight,
+  },
+  menuItemText: {
+    fontFamily: 'Jakarta',
+    fontSize: 14,
+    color: colors.ink,
+  },
+  menuItemTextActive: {
+    fontFamily: 'JakartaSemiBold',
+    color: colors.rust,
+  },
 });

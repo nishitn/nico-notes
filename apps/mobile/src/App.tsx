@@ -31,6 +31,7 @@ import { VisitScreen, VisitFormScreen } from './screens/Visits';
 import { SettingsScreen } from './screens/Settings';
 import { PlacesScreen, PlaceScreen } from './screens/Places';
 import { WishlistFormScreen } from './screens/WishlistForm';
+import { YourBoardsScreen } from './screens/YourBoards';
 import { WelcomeScreen } from './screens/Welcome';
 import { signInWithNativeGoogle } from '../modules/google-sign-in';
 
@@ -198,6 +199,11 @@ function AuthenticatedApp() {
           options={{ title: 'Your account' }}
         />
         <Stack.Screen
+          name="YourBoards"
+          component={YourBoardsScreen}
+          options={{ title: 'Your boards' }}
+        />
+        <Stack.Screen
           name="Settings"
           component={SettingsScreen}
           options={{ title: 'Board settings' }}
@@ -213,8 +219,8 @@ function AuthenticatedApp() {
           component={WishlistFormScreen}
           options={{ title: 'Add to wishlist', presentation: 'modal' }}
         />
-        <Stack.Screen name="Places" component={PlacesScreen} options={{ title: 'Places' }} />
-        <Stack.Screen name="Place" component={PlaceScreen} options={{ title: 'Place visits' }} />
+        <Stack.Screen name="Places" component={PlacesScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="Place" component={PlaceScreen} options={{ headerShown: false }} />
       </Stack.Navigator>
     </NavigationContainer>
   );

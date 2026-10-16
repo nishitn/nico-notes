@@ -1,4 +1,4 @@
-import { Pressable, ScrollView } from 'react-native';
+import { Pressable, ScrollView, StyleSheet } from 'react-native';
 import type { Id } from '@nico-notes/backend/dataModel';
 import { Photo } from './photos';
 
@@ -17,8 +17,9 @@ export function VisitCarousel({
         onPress={onPress}
         accessibilityRole="button"
         accessibilityLabel={`Open photo for ${title}`}
+        style={carousel.singlePhoto}
       >
-        <Photo id={photos[0]} alt={title} height={160} />
+        <Photo id={photos[0]} alt={title} height={180} />
       </Pressable>
     );
   }
@@ -27,7 +28,7 @@ export function VisitCarousel({
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
-      contentContainerStyle={{ gap: 8 }}
+      contentContainerStyle={carousel.scrollContent}
       nestedScrollEnabled
     >
       {photos.map((id) => (
@@ -35,8 +36,8 @@ export function VisitCarousel({
           key={id}
           onPress={onPress}
           accessibilityRole="button"
-          accessibilityLabel={`Open photos for ${title}`}
-          style={{ width: 210 }}
+          accessibilityLabel={`Open photo for ${title}`}
+          style={carousel.photoItem}
         >
           <Photo id={id} alt={title} height={160} />
         </Pressable>
@@ -44,3 +45,20 @@ export function VisitCarousel({
     </ScrollView>
   );
 }
+
+const carousel = StyleSheet.create({
+  singlePhoto: {
+    width: '100%',
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  scrollContent: {
+    gap: 8,
+  },
+  photoItem: {
+    width: 220,
+    height: 160,
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+});

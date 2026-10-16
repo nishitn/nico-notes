@@ -50,6 +50,9 @@ export async function syncPlace(ctx: MutationCtx, placeId: Id<'places'>) {
     await ctx.db.delete(placeId);
     return;
   }
+  if (place.visitCount !== visits.length) {
+    await ctx.db.patch(placeId, { visitCount: visits.length });
+  }
   // Index order: date, creation time, ID. Undated visits come first, in creation order.
   for (const [index, visit] of visits.entries()) {
     if (
@@ -205,6 +208,17 @@ export const list = authedQuery({
       .withIndex('by_boardId', (q) => q.eq('boardId', boardId))
       .paginate({ ...paginationOpts, numItems: Math.min(paginationOpts.numItems, 100) });
     return { page, isDone, continueCursor };
+  },
+});
+
+export const get = authedQuery({
+  args: { placeId: v.id('places') },
+  returns: v.union(schema.doc('places'), v.null()),
+  handler: async (ctx, { placeId }) => {
+    const place = await ctx.db.get(placeId);
+    if (!place) return null;
+    await member(ctx, place.boardId);
+    return place;
   },
 });
 
