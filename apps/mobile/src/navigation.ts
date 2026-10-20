@@ -9,7 +9,7 @@ export type Routes = {
   Account: undefined;
   YourBoards: undefined;
   Settings: { boardId: Id<'boards'> };
-  Visit: { visitId: Id<'visits'> };
+  Visit: { visitId: Id<'visits'>; promptRating?: boolean };
   VisitForm: {
     boardId: Id<'boards'>;
     visitId?: Id<'visits'>;

@@ -111,7 +111,12 @@ export function Page({ children }: { children: ReactNode }) {
       style={styles.page}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.content}>
+      <ScrollView
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        automaticallyAdjustKeyboardInsets={Platform.OS === 'android'}
+        contentContainerStyle={styles.content}
+      >
         {children}
       </ScrollView>
     </KeyboardAvoidingView>

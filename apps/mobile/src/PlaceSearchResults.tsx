@@ -1,10 +1,20 @@
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 import { Image } from 'expo-image';
 import { Icon } from 'react-native-paper';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { GooglePlace } from '../modules/google-places';
 import type { SavedPlace } from './BoardPlaces';
 import { formatDistance } from './placeSearch';
 import { colors, styles } from './ui';
+import { useKeyboard } from './useKeyboard';
 
 export function PlaceSearchResults({
   query,
@@ -35,6 +45,13 @@ export function PlaceSearchResults({
   onAddNew: (place: GooglePlace) => void;
   onManual: () => void;
 }) {
+  const { height: windowHeight } = useWindowDimensions();
+  const { keyboardHeight } = useKeyboard();
+  const insets = useSafeAreaInsets();
+  const maxScrollHeight =
+    keyboardHeight > 0
+      ? Math.max(90, Math.min(280, windowHeight - keyboardHeight - insets.top - 180))
+      : 280;
   function row(
     place: { name: string; address: string; location?: unknown; distance?: number },
     key: string,
@@ -79,7 +96,7 @@ export function PlaceSearchResults({
       <ScrollView
         nestedScrollEnabled
         keyboardShouldPersistTaps="handled"
-        style={{ maxHeight: 260 }}
+        style={{ maxHeight: maxScrollHeight }}
       >
         {saved.length > 0 && (
           <>

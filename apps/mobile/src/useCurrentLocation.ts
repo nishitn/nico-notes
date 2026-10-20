@@ -37,16 +37,22 @@ export function useCurrentLocation(enabled: boolean) {
   const [location, setLocation] = useState<Coordinate>();
   const [locating, setLocating] = useState(enabled);
   const [error, setError] = useState('');
+  const locationRef = useRef<Coordinate | undefined>(undefined);
   const mounted = useRef(false);
   const pending = useRef(false);
-  const request = useCallback(async () => {
-    if (!mounted.current || pending.current) return;
+
+  const request = useCallback(async (): Promise<Coordinate | undefined> => {
+    if (!mounted.current) return undefined;
+    if (pending.current) return locationRef.current;
     pending.current = true;
     setLocating(true);
     setError('');
     try {
       const next = await locate();
-      if (mounted.current) setLocation({ latitude: next.latitude, longitude: next.longitude });
+      const coord = { latitude: next.latitude, longitude: next.longitude };
+      locationRef.current = coord;
+      if (mounted.current) setLocation(coord);
+      return coord;
     } catch (error) {
       if (mounted.current)
         setError(
@@ -54,11 +60,13 @@ export function useCurrentLocation(enabled: boolean) {
             ? error.message
             : 'Your location is unavailable. You can still browse the map.',
         );
+      return locationRef.current;
     } finally {
       pending.current = false;
       if (mounted.current) setLocating(false);
     }
   }, []);
+
   useEffect(() => {
     mounted.current = true;
     if (enabled) void Promise.resolve().then(request);
@@ -66,5 +74,6 @@ export function useCurrentLocation(enabled: boolean) {
       mounted.current = false;
     };
   }, [enabled, request]);
+
   return { location, locating, error, request };
 }

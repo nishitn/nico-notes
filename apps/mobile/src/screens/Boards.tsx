@@ -20,6 +20,7 @@ import {
 } from '../ui';
 import { JournalScreen } from '../JournalScreen';
 import { clearNativeGoogleSession } from '../../modules/google-sign-in';
+import { PlaceTopBar } from './Places';
 
 export { VisitCard } from '../VisitCard';
 export function BoardsScreen({ navigation }: ScreenProps<'Boards'>) {
@@ -141,53 +142,56 @@ export function JoinScreen({ route, navigation }: ScreenProps<'Join'>) {
     </Page>
   );
 }
-export function AccountScreen() {
+export function AccountScreen({ navigation }: ScreenProps<'Account'>) {
   const me = useQuery(api.boards.me);
   const update = useMutation(api.boards.updateProfile);
   const { signOut } = useAuthActions();
   const task = useTask();
   const [name, setName] = useState<string>();
   return (
-    <Page>
-      <Title>Your account</Title>
-      <Text style={styles.muted}>Your profile is shared with the people on your boards.</Text>
-      <Card>
-        <View style={styles.row}>
-          <Avatar name={me?.name} image={me?.image} size={64} />
-          <View style={{ flex: 1, gap: 4 }}>
-            <Heading>{me?.name ?? 'Your profile'}</Heading>
-            <Text style={styles.muted}>Your shared journal profile</Text>
+    <View style={styles.page}>
+      <PlaceTopBar navigation={navigation} />
+      <Page>
+        <Title>Your account</Title>
+        <Text style={styles.muted}>Your profile is shared with the people on your boards.</Text>
+        <Card>
+          <View style={styles.row}>
+            <Avatar name={me?.name} image={me?.image} size={64} />
+            <View style={{ flex: 1, gap: 4 }}>
+              <Heading>{me?.name ?? 'Your profile'}</Heading>
+              <Text style={styles.muted}>Your shared journal profile</Text>
+            </View>
           </View>
-        </View>
-        <Field
-          label="Display name"
-          value={name ?? me?.name ?? ''}
-          onChangeText={setName}
-          maxLength={80}
-        />
-        <ErrorNote error={task.error} />
+          <Field
+            label="Display name"
+            value={name ?? me?.name ?? ''}
+            onChangeText={setName}
+            maxLength={80}
+          />
+          <ErrorNote error={task.error} />
+          <Button
+            title={task.busy ? 'Saving…' : 'Save name'}
+            disabled={task.busy || !(name ?? me?.name)?.trim()}
+            onPress={() =>
+              void task.run(async () => {
+                await update({ name: name ?? me?.name ?? '' });
+                setName(undefined);
+              })
+            }
+          />
+        </Card>
         <Button
-          title={task.busy ? 'Saving…' : 'Save name'}
-          disabled={task.busy || !(name ?? me?.name)?.trim()}
+          secondary
+          title="Sign out"
+          disabled={task.busy}
           onPress={() =>
             void task.run(async () => {
-              await update({ name: name ?? me?.name ?? '' });
-              setName(undefined);
+              await signOut();
+              await clearNativeGoogleSession().catch(() => undefined);
             })
           }
         />
-      </Card>
-      <Button
-        secondary
-        title="Sign out"
-        disabled={task.busy}
-        onPress={() =>
-          void task.run(async () => {
-            await signOut();
-            await clearNativeGoogleSession().catch(() => undefined);
-          })
-        }
-      />
-    </Page>
+      </Page>
+    </View>
   );
 }

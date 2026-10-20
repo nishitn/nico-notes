@@ -13,20 +13,22 @@ import { VisitCard } from './Boards';
 
 import type { Id } from '@nico-notes/backend/dataModel';
 
-function PlaceTopBar({
+export function PlaceTopBar({
   navigation,
   boardId,
   boardName,
   boards,
+  onBack,
 }: {
   navigation: { goBack: () => void; navigate: (screen: any, params?: any) => void };
-  boardId: Id<'boards'>;
-  boardName: string;
-  boards: {
+  boardId?: Id<'boards'>;
+  boardName?: string;
+  boards?: {
     results: any[];
     status: string;
     loadMore: (numItems: number) => void;
   };
+  onBack?: () => void;
 }) {
   return (
     <View style={placeScreenStyles.topbar}>
@@ -35,7 +37,7 @@ function PlaceTopBar({
           accessibilityRole="button"
           accessibilityLabel="Go back"
           hitSlop={12}
-          onPress={() => navigation.goBack()}
+          onPress={onBack ?? (() => navigation.goBack())}
           style={placeScreenStyles.backButton}
         >
           <Icon source="arrow-left" size={24} color={colors.ink} />
@@ -52,19 +54,21 @@ function PlaceTopBar({
           </Text>
         </View>
       </View>
-      <View style={placeScreenStyles.boardPickerSlot}>
-        <BoardPicker
-          boards={boards.results}
-          boardId={boardId}
-          boardName={boardName}
-          canLoadMore={boards.status === 'CanLoadMore'}
-          loadingMore={boards.status === 'LoadingMore'}
-          onLoadMore={() => boards.loadMore(24)}
-          onSelect={(id) => navigation.navigate('Board', { boardId: id })}
-          onNewBoard={() => navigation.navigate('BoardForm')}
-          onJoinBoard={() => navigation.navigate('Join')}
-        />
-      </View>
+      {boardId && boards && boardName ? (
+        <View style={placeScreenStyles.boardPickerSlot}>
+          <BoardPicker
+            boards={boards.results}
+            boardId={boardId}
+            boardName={boardName}
+            canLoadMore={boards.status === 'CanLoadMore'}
+            loadingMore={boards.status === 'LoadingMore'}
+            onLoadMore={() => boards.loadMore(24)}
+            onSelect={(id) => navigation.navigate('Board', { boardId: id })}
+            onNewBoard={() => navigation.navigate('BoardForm')}
+            onJoinBoard={() => navigation.navigate('Join')}
+          />
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -83,6 +87,7 @@ export function PlacesScreen({ route, navigation }: ScreenProps<'Places'>) {
         boards={boards}
       />
       <Page>
+        <Title>Places</Title>
         <BoardPlaces
           boardId={boardId}
           showList

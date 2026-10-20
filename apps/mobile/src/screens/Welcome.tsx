@@ -109,9 +109,9 @@ const welcome = StyleSheet.create({
   illustration: { width: '100%', aspectRatio: 400 / 272 },
   copy: { alignItems: 'center', gap: 14 },
   headline: {
+    fontFamily: 'Epilogue',
     color: colors.ink,
     fontSize: 36,
-    fontWeight: '600',
     letterSpacing: -1.2,
     lineHeight: 42,
     textAlign: 'center',

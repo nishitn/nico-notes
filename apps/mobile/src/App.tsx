@@ -193,26 +193,18 @@ function AuthenticatedApp() {
           getId={({ params }) => params?.token ?? 'manual'}
           options={{ title: 'Join a board', presentation: 'modal' }}
         />
-        <Stack.Screen
-          name="Account"
-          component={AccountScreen}
-          options={{ title: 'Your account' }}
-        />
+        <Stack.Screen name="Account" component={AccountScreen} options={{ headerShown: false }} />
         <Stack.Screen
           name="YourBoards"
           component={YourBoardsScreen}
-          options={{ title: 'Your boards' }}
+          options={{ headerShown: false }}
         />
-        <Stack.Screen
-          name="Settings"
-          component={SettingsScreen}
-          options={{ title: 'Board settings' }}
-        />
-        <Stack.Screen name="Visit" component={VisitScreen} options={{ title: 'Your visit' }} />
+        <Stack.Screen name="Settings" component={SettingsScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="Visit" component={VisitScreen} options={{ headerShown: false }} />
         <Stack.Screen
           name="VisitForm"
           component={VisitFormScreen}
-          options={{ title: 'Visit details', presentation: 'modal' }}
+          options={{ headerShown: false }}
         />
         <Stack.Screen
           name="WishlistForm"

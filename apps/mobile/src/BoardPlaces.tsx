@@ -56,12 +56,14 @@ export function BoardPlaces({
   onAdd,
   onViewAll,
   showList = false,
+  fillMap = false,
 }: {
   boardId: Id<'boards'>;
   onOpen: (place: SavedPlace) => void;
   onAdd: (place?: VisitPlace, title?: string) => void;
   onViewAll?: () => void;
   showList?: boolean;
+  fillMap?: boolean;
 }) {
   const { results, status, loadMore } = usePaginatedQuery(
     api.places.list,
@@ -231,8 +233,26 @@ export function BoardPlaces({
       350,
     );
   }
+  function centerOnCurrentLocation() {
+    setSearch('');
+    setSearchOpen(false);
+    setNewPlace(undefined);
+    setSelectedId(undefined);
+    setSelectedClusterIds([]);
+    Keyboard.dismiss();
+
+    if (current.location && mapSize.width) {
+      map.current?.animateToRegion(nearbyRegion(current.location, mapSize), 350);
+    }
+
+    void current.request().then((next) => {
+      if (next && mapSize.width) {
+        map.current?.animateToRegion(nearbyRegion(next, mapSize), 350);
+      }
+    });
+  }
   return (
-    <View style={{ gap: 16 }}>
+    <View style={[{ gap: 16 }, fillMap && { flex: 1 }]}>
       <SectionHeading
         title="Your Places"
         count={`${results.length}${status !== 'Exhausted' ? '+' : ''}`}
@@ -282,11 +302,11 @@ export function BoardPlaces({
         )}
       </View>
       <ErrorNote error={error || current.error} />
-      <View style={placeStyles.mapShell}>
+      <View style={[placeStyles.mapShell, fillMap && placeStyles.mapShellFill]}>
         {hasMap ? (
           <MapView
             ref={map}
-            style={placeStyles.map}
+            style={fillMap ? placeStyles.mapFill : placeStyles.map}
             initialRegion={region}
             onLayout={({ nativeEvent: { layout } }) =>
               setMapSize({ width: layout.width, height: layout.height })
@@ -341,7 +361,7 @@ export function BoardPlaces({
                   >
                     <Icon
                       source="heart"
-                      size={18}
+                      size={15}
                       color={selectedId === cluster.places[0]._id ? colors.paper : colors.rust}
                     />
                   </View>
@@ -356,7 +376,7 @@ export function BoardPlaces({
                 accessibilityLabel={newPlace.name}
               >
                 <View style={[placeStyles.pin, placeStyles.selectedPin]}>
-                  <Icon source="compass-outline" size={20} color={colors.paper} />
+                  <Icon source="compass-outline" size={16} color={colors.paper} />
                 </View>
               </Marker>
             )}
@@ -379,17 +399,10 @@ export function BoardPlaces({
             </View>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Show current location within 10 kilometers"
+              accessibilityLabel="Show current location and center map"
               accessibilityState={{ disabled: current.locating, busy: current.locating }}
               disabled={current.locating}
-              onPress={() => {
-                setSearch('');
-                setSearchOpen(false);
-                setNewPlace(undefined);
-                setSelectedId(undefined);
-                setSelectedClusterIds([]);
-                void current.request();
-              }}
+              onPress={centerOnCurrentLocation}
               style={({ pressed }) => [
                 placeStyles.locateButton,
                 { opacity: pressed || current.locating ? 0.7 : 1 },
@@ -610,7 +623,7 @@ export function BoardPlaces({
             <Icon source="arrow-right" size={16} color={colors.rust} />
           </Pressable>
         )}
-        {status === 'CanLoadMore' || status === 'LoadingMore' ? (
+        {showList && (status === 'CanLoadMore' || status === 'LoadingMore') ? (
           <Button
             secondary
             title={status === 'LoadingMore' ? 'Loading…' : 'Load more places'}
@@ -655,7 +668,12 @@ const placeStyles = StyleSheet.create({
     borderColor: colors.border,
     backgroundColor: colors.sageLight,
   },
+  mapShellFill: {
+    flex: 1,
+    minHeight: 400,
+  },
   map: { width: '100%', aspectRatio: 1.15 },
+  mapFill: { width: '100%', height: '100%', minHeight: 400 },
   mapFallback: {
     minHeight: 220,
     padding: 24,
@@ -664,9 +682,9 @@ const placeStyles = StyleSheet.create({
     gap: 12,
   },
   pin: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
     backgroundColor: colors.paper,
     borderWidth: 1,
     borderColor: colors.coralBorder,
@@ -675,17 +693,17 @@ const placeStyles = StyleSheet.create({
   },
   selectedPin: { backgroundColor: colors.rust },
   cluster: {
-    minWidth: 44,
-    height: 44,
-    paddingHorizontal: 10,
-    borderRadius: 22,
+    minWidth: 36,
+    height: 36,
+    paddingHorizontal: 8,
+    borderRadius: 18,
     backgroundColor: colors.rust,
-    borderWidth: 3,
+    borderWidth: 2.5,
     borderColor: colors.paper,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  clusterCount: { fontFamily: 'JakartaSemiBold', color: colors.paper, fontSize: 15 },
+  clusterCount: { fontFamily: 'JakartaSemiBold', color: colors.paper, fontSize: 13 },
   radiusLabel: {
     position: 'absolute',
     top: 12,

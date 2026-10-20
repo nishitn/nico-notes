@@ -38,6 +38,7 @@ import {
   Title,
 } from './ui';
 import { BoardPlaces } from './BoardPlaces';
+import { useKeyboard } from './useKeyboard';
 import { VisitCard } from './VisitCard';
 import { BoardPicker } from './BoardPicker';
 import { journalTabs as tabs } from './journalNavigation';
@@ -74,15 +75,7 @@ export function JournalScreen({ navigation, initialBoardId }: Props) {
   const [createOpen, setCreateOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [wishlistSearch, setWishlistSearch] = useState('');
-  const [keyboardOpen, setKeyboardOpen] = useState(false);
-  useEffect(() => {
-    const show = Keyboard.addListener('keyboardDidShow', () => setKeyboardOpen(true));
-    const hide = Keyboard.addListener('keyboardDidHide', () => setKeyboardOpen(false));
-    return () => {
-      show.remove();
-      hide.remove();
-    };
-  }, []);
+  const { isOpen: keyboardOpen } = useKeyboard();
   useFocusEffect(
     useCallback(() => {
       const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -125,10 +118,10 @@ export function JournalScreen({ navigation, initialBoardId }: Props) {
     return (
       <ScrollView
         style={styles.page}
-        contentContainerStyle={journal.content}
+        contentContainerStyle={journal.homeContent}
         keyboardShouldPersistTaps="handled"
       >
-        <View style={{ gap: 18 }}>
+        <View style={{ flex: 1, gap: 14 }}>
           {board ? (
             <View style={journal.boardHeader}>
               <View style={journal.boardTitleRow}>
@@ -201,6 +194,7 @@ export function JournalScreen({ navigation, initialBoardId }: Props) {
             <BoardPlaces
               key={boardId}
               boardId={boardId}
+              fillMap
               onOpen={(place) =>
                 navigation.navigate('Place', {
                   boardId,
@@ -745,17 +739,9 @@ export function JournalScreen({ navigation, initialBoardId }: Props) {
           open={createOpen}
           visible={!keyboardOpen}
           icon={createOpen ? 'close' : 'plus'}
-          label={createOpen ? undefined : 'New'}
-          accessibilityLabel="Create a new visit, wishlist place, or board"
-          actions={[
-            {
-              icon: 'view-dashboard-outline',
-              label: 'New board',
-              onPress: newBoard,
-              color: colors.primary,
-              style: { backgroundColor: colors.paper },
-            },
-            ...(boardId
+          accessibilityLabel="Create a new visit or wishlist place"
+          actions={
+            boardId
               ? [
                   {
                     icon: 'book-plus-outline',
@@ -766,15 +752,15 @@ export function JournalScreen({ navigation, initialBoardId }: Props) {
                   },
                   {
                     icon: 'bookmark-outline',
-                    label: 'Add to wishlist',
+                    label: 'New wishlist',
                     onPress: () =>
                       closeThen(() => navigation.navigate('WishlistForm', { boardId })),
                     color: colors.primary,
                     style: { backgroundColor: colors.paper },
                   },
                 ]
-              : []),
-          ]}
+              : []
+          }
           onStateChange={({ open }) => setCreateOpen(open)}
           style={journal.createActions}
           fabStyle={{ backgroundColor: colors.primary }}
@@ -805,6 +791,15 @@ const journal = StyleSheet.create({
     flexShrink: 1,
   },
   boardPickerSlot: { flex: 1, minWidth: 100, maxWidth: 180, alignItems: 'flex-end' },
+  homeContent: {
+    flexGrow: 1,
+    padding: 22,
+    paddingTop: 16,
+    paddingBottom: 20,
+    width: '100%',
+    maxWidth: 840,
+    alignSelf: 'center',
+  },
   content: {
     padding: 22,
     paddingTop: 24,
