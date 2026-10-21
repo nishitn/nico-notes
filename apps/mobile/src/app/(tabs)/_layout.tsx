@@ -12,6 +12,7 @@ export default function TabLayout() {
       iconColor={{ default: colors.muted, selected: colors.primary }}
       labelStyle={{ default: { color: colors.muted }, selected: { color: colors.primary } }}
       indicatorColor={colors.coralLight}
+      rippleColor={`${colors.primary}1F`}
       badgeBackgroundColor={colors.primary}
       labelVisibilityMode="labeled"
       minimizeBehavior="never"

@@ -636,7 +636,7 @@ export function Settings() {
             navigate('/boards');
           }}
         >
-          Your visits, photos, and ratings will remain. You’ll need an invitation and admin approval
+          Your visits, images, and ratings will remain. You’ll need an invitation and admin approval
           to rejoin.
         </Confirm>
       )}

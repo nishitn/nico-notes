@@ -9,8 +9,11 @@
     "./shared": "./shared.ts",
     "./legal": "./legal.ts",
     "./livePlaces": "./livePlaces.ts",
+    "./livePlaceCache": "./livePlaceCache.ts",
     "./attributions": "./attributions.ts",
-    "./mapMarkers": "./mapMarkers.ts"
+    "./mapMarkers": "./mapMarkers.ts",
+    "./notificationTime": "./notificationTime.ts",
+    "./notificationText": "./notificationText.ts"
   },
   "scripts": {
     "dev": "convex dev",

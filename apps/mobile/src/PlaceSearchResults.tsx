@@ -16,35 +16,37 @@ import { formatDistance } from './placeSearch';
 import { colors, styles } from './ui';
 import { useKeyboard } from './useKeyboard';
 
-export function PlaceSearchResults({
-  query,
-  saved,
-  loadingSaved,
-  nearby,
-  loading,
-  error,
-  onRetry,
-  onSaved,
-  onNew,
-  onAddSaved,
-  onAddNew,
-  onManual,
-  hasLocation: _hasLocation,
-}: {
+type SearchPlace = Omit<SavedPlace, '_id'> & { _id: string; wishlistId?: string };
+
+type SearchResultsProps<T extends SearchPlace> = {
   query: string;
-  saved: SavedPlace[];
-  loadingSaved: boolean;
   nearby: GooglePlace[];
   loading: boolean;
   error: string;
   hasLocation?: boolean;
+  selectedId?: string;
+  disabled?: boolean;
   onRetry: () => void;
-  onSaved: (place: SavedPlace) => void;
   onNew: (place: GooglePlace) => void;
-  onAddSaved: (place: SavedPlace) => void;
-  onAddNew: (place: GooglePlace) => void;
-  onManual: () => void;
-}) {
+} & (
+  | { mode: 'select' }
+  | {
+      mode?: 'visit' | 'wishlist';
+      saved: T[];
+      loadingSaved: boolean;
+      onSaved: (place: T) => void;
+      onAddSaved: (place: T) => void;
+      onAddNew: (place: GooglePlace) => void;
+      onManual: () => void;
+    }
+);
+
+export function PlaceSearchResults<T extends SearchPlace>(props: SearchResultsProps<T>) {
+  const { query, nearby, loading, error, onRetry, onNew, selectedId, disabled } = props;
+  const visit = props.mode === 'select' ? undefined : props;
+  const wishlist = props.mode === 'wishlist';
+  const saved = visit?.saved ?? [];
+  const loadingSaved = visit?.loadingSaved ?? false;
   const { height: windowHeight } = useWindowDimensions();
   const { keyboardHeight } = useKeyboard();
   const insets = useSafeAreaInsets();
@@ -62,16 +64,18 @@ export function PlaceSearchResults({
     },
     key: string,
     onSelect: () => void,
-    onAdd: () => void,
+    onAdd: (() => void) | undefined,
     icon: string,
   ) {
     const distanceText = place.distance !== undefined ? formatDistance(place.distance) : null;
     return (
-      <View key={key} style={searchStyles.row}>
+      <View key={key} style={[searchStyles.row, selectedId === key && searchStyles.selected]}>
         <Pressable
           onPress={onSelect}
           accessibilityRole="button"
           accessibilityLabel={`Select ${place.name}`}
+          accessibilityState={{ selected: selectedId === key, disabled: !!disabled }}
+          disabled={disabled}
           style={searchStyles.result}
         >
           <Icon source={icon} size={18} color={colors.rust} />
@@ -85,18 +89,21 @@ export function PlaceSearchResults({
               {!place.location ? ' · No map pin' : ''}
             </Text>
             {place.attributions?.length ? (
-              <GoogleAttribution attributions={place.attributions} />
+              <GoogleAttribution attributions={place.attributions} showGoogleMaps={!wishlist} />
             ) : null}
           </View>
+          {selectedId === key && <Icon source="check-circle" size={20} color={colors.rust} />}
         </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Add visit to ${place.name}`}
-          onPress={onAdd}
-          style={searchStyles.add}
-        >
-          <Icon source="plus" size={20} color={colors.rust} />
-        </Pressable>
+        {onAdd && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Add visit to ${place.name}`}
+            onPress={onAdd}
+            style={searchStyles.add}
+          >
+            <Icon source="plus" size={20} color={colors.rust} />
+          </Pressable>
+        )}
       </View>
     );
   }
@@ -117,31 +124,35 @@ export function PlaceSearchResults({
               row(
                 p,
                 p._id,
-                () => onSaved(p),
-                () => onAddSaved(p),
-                'map-marker-outline',
+                () => visit?.onSaved(p),
+                () => visit?.onAddSaved(p),
+                p.wishlistId ? 'bookmark-outline' : 'map-marker-outline',
               ),
             )}
           </>
         )}
-        {!saved.length && (
+        {visit && !wishlist && !saved.length && (
           <Text style={searchStyles.message}>
             {loadingSaved ? 'Searching your board…' : 'No matching saved places.'}
           </Text>
         )}
-        <View style={searchStyles.heading}>
-          <View>
-            <GoogleAttribution />
-            <GoogleSearchInfo />
+        {(!wishlist || loading) && (
+          <View style={searchStyles.heading}>
+            {!wishlist && (
+              <View>
+                <GoogleAttribution />
+                <GoogleSearchInfo />
+              </View>
+            )}
+            {loading && <ActivityIndicator size="small" color={colors.rust} />}
           </View>
-          {loading && <ActivityIndicator size="small" color={colors.rust} />}
-        </View>
+        )}
         {nearby.map((p) =>
           row(
             p,
             p.id,
             () => onNew(p),
-            () => onAddNew(p),
+            visit ? () => visit.onAddNew(p) : undefined,
             'compass-outline',
           ),
         )}
@@ -160,12 +171,14 @@ export function PlaceSearchResults({
           </Pressable>
         )}
       </ScrollView>
-      <Pressable onPress={onManual} accessibilityRole="button" style={searchStyles.manual}>
-        <Icon source="plus" size={18} color={colors.rust} />
-        <Text style={[styles.link, { flex: 1 }]} numberOfLines={2}>
-          Add “{query.trim()}” manually
-        </Text>
-      </Pressable>
+      {visit && (
+        <Pressable onPress={visit.onManual} accessibilityRole="button" style={searchStyles.manual}>
+          <Icon source="plus" size={18} color={colors.rust} />
+          <Text style={[styles.link, { flex: 1 }]} numberOfLines={2}>
+            Add “{query.trim()}” manually
+          </Text>
+        </Pressable>
+      )}
     </View>
   );
 }
@@ -194,6 +207,7 @@ const searchStyles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
   },
+  selected: { backgroundColor: colors.coralLight },
   result: {
     flex: 1,
     flexDirection: 'row',

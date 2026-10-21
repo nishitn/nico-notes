@@ -1,7 +1,11 @@
-import { FlatList, Text, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { FlatList, StyleSheet, Text, View } from 'react-native';
 import { Button, Icon } from 'react-native-paper';
-import { useMutation, usePaginatedQuery } from './convexLive';
+import { useMutation, usePaginatedQuery, useQuery } from './convexLive';
 import { api } from '@nico-notes/backend/api';
+import { notificationTime } from '@nico-notes/backend/notificationTime';
+import { notificationText } from '@nico-notes/backend/notificationText';
+import { GoogleAttribution } from './GoogleAttribution';
 import type { Id } from '@nico-notes/backend/dataModel';
 import { Card, colors, ErrorNote, Heading, Loading, styles, Title, useTask } from './ui';
 
@@ -18,49 +22,90 @@ export function Notifications({
     { initialNumItems: 30 },
   );
   const markRead = useMutation(api.notifications.markRead);
+  const markOneRead = useMutation(api.notifications.markOneRead);
+  const hasUnread = useQuery(api.notifications.hasUnread, boardId ? { boardId } : 'skip');
   const task = useTask();
   const newest = results[0];
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
   return (
     <FlatList
       style={styles.page}
-      contentContainerStyle={{ padding: 20, gap: 12, paddingBottom: 32 }}
+      contentContainerStyle={{ padding: 16, gap: 6, paddingBottom: 32 }}
       data={boardId ? results : []}
       keyExtractor={(item) => item._id}
       ListHeaderComponent={
-        <View style={{ gap: 12, marginBottom: 8 }}>
-          <Title>Notifications</Title>
-          <Text style={styles.muted}>What’s changed on your board, newest first.</Text>
-          {!!boardId && !!newest && (
-            <Button
-              icon="check-all"
-              textColor={colors.rust}
-              loading={task.busy}
-              disabled={!newest.unread || task.busy}
-              onPress={() => void task.run(() => markRead({ boardId, throughId: newest._id }))}
-            >
-              Mark all as read
-            </Button>
-          )}
+        <View style={{ gap: 6, marginBottom: 6 }}>
+          <View style={notificationStyles.heading}>
+            <Title>Notifications</Title>
+            {!!boardId && !!newest && (
+              <Button
+                compact
+                icon="check-all"
+                textColor={colors.rust}
+                loading={task.busy}
+                disabled={!(hasUnread ?? results.some((item) => item.unread)) || task.busy}
+                onPress={() => void task.run(() => markRead({ boardId, throughId: newest._id }))}
+                labelStyle={notificationStyles.actionLabel}
+              >
+                Mark all as read
+              </Button>
+            )}
+          </View>
           <ErrorNote error={task.error} />
         </View>
       }
       renderItem={({ item }) => (
-        <Card
-          style={item.unread ? { borderLeftWidth: 4, borderLeftColor: colors.primary } : undefined}
-        >
-          <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
-            <Icon source="bell-outline" size={22} color={colors.rust} />
-            <View style={{ flex: 1, gap: 8 }}>
-              <Text style={styles.body}>
-                <Text style={styles.label}>{item.actorName}</Text> {item.summary}
-              </Text>
-              <Text style={styles.muted}>{new Date(item.createdAt).toLocaleString()}</Text>
-              {item.unread && <Text style={styles.link}>New</Text>}
-              {!!item.visitId && (
-                <Button textColor={colors.rust} onPress={() => onOpen(item.visitId!)}>
-                  View visit
-                </Button>
+        <Card style={[notificationStyles.card, item.unread && notificationStyles.unread]}>
+          <View style={notificationStyles.row}>
+            <View style={{ paddingTop: 2 }}>
+              <Icon source="bell-outline" size={16} color={colors.rust} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <View style={notificationStyles.row}>
+                <Text style={notificationStyles.body}>
+                  <Text style={notificationStyles.actor}>{item.actorName}</Text>{' '}
+                  {notificationText(item)}
+                </Text>
+                <Text
+                  style={notificationStyles.time}
+                  accessibilityLabel={new Date(item.createdAt).toLocaleString()}
+                >
+                  {notificationTime(item.createdAt, now)}
+                </Text>
+              </View>
+              {item.message?.googlePlaceId && (
+                <GoogleAttribution placeId={item.message.googlePlaceId} />
               )}
+              <View style={notificationStyles.actions}>
+                {!!item.visitId && (
+                  <Button
+                    compact
+                    textColor={colors.rust}
+                    labelStyle={notificationStyles.actionLabel}
+                    onPress={() => onOpen(item.visitId!)}
+                  >
+                    {item.visitStatus === 'planned' ? 'View wishlist item' : 'View visit'}
+                  </Button>
+                )}
+                {item.unread && !!boardId && (
+                  <Button
+                    compact
+                    icon="check"
+                    textColor={colors.rust}
+                    labelStyle={notificationStyles.actionLabel}
+                    disabled={task.busy}
+                    onPress={() =>
+                      void task.run(() => markOneRead({ boardId, notificationId: item._id }))
+                    }
+                  >
+                    Mark as read
+                  </Button>
+                )}
+              </View>
             </View>
           </View>
         </Card>
@@ -74,7 +119,7 @@ export function Notifications({
             <Heading>{boardId ? 'No changes yet' : 'Choose a board'}</Heading>
             <Text style={styles.muted}>
               {boardId
-                ? 'New visits, ratings, photos, and other board changes will appear here.'
+                ? 'Visits, wishlist updates, photos, and board changes will appear here.'
                 : 'Create or join a board to see what’s changed.'}
             </Text>
           </Card>
@@ -94,3 +139,28 @@ export function Notifications({
     />
   );
 }
+
+const notificationStyles = StyleSheet.create({
+  heading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 4,
+  },
+  card: {
+    padding: 10,
+    borderRadius: 10,
+    gap: 0,
+    // Restore the left edge explicitly when the unread override is removed.
+    borderLeftWidth: 1,
+    borderLeftColor: colors.border,
+  },
+  unread: { borderLeftWidth: 3, borderLeftColor: colors.primary, backgroundColor: '#fff8f1' },
+  row: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+  body: { ...styles.body, flex: 1, fontSize: 13, lineHeight: 19 },
+  actor: { fontFamily: 'JakartaSemiBold' },
+  time: { ...styles.muted, fontSize: 11, lineHeight: 19, textAlign: 'right', flexShrink: 0 },
+  actions: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 8 },
+  actionLabel: { fontSize: 12, marginVertical: 6, marginHorizontal: 0 },
+});

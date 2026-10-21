@@ -216,7 +216,15 @@ export async function linkVisit(ctx: MutationCtx, visitId: Id<'visits'>) {
 export const list = authedQuery({
   args: { boardId: v.id('boards'), paginationOpts: paginationOptsValidator },
   returns: v.object({
-    page: v.array(schema.doc('places')),
+    page: v.array(
+      v.object({
+        ...schema.doc('places').fields,
+        latestVisit: v.union(
+          v.object({ date: v.string(), creationTime: v.number(), id: v.id('visits') }),
+          v.null(),
+        ),
+      }),
+    ),
     isDone: v.boolean(),
     continueCursor: v.string(),
   }),
@@ -226,7 +234,27 @@ export const list = authedQuery({
       .query('places')
       .withIndex('by_boardId', (q) => q.eq('boardId', boardId))
       .paginate({ ...paginationOpts, numItems: Math.min(paginationOpts.numItems, 100) });
-    return { page, isDone, continueCursor };
+    const places = await Promise.all(
+      page.map(async (place) => {
+        const latestVisit = await ctx.db
+          .query('visits')
+          .withIndex('by_placeId_and_date', (q) => q.eq('placeId', place._id))
+          .order('desc')
+          .first();
+        return {
+          ...place,
+          lastVisitDate: latestVisit?.date || undefined,
+          latestVisit: latestVisit
+            ? {
+                date: latestVisit.date,
+                creationTime: latestVisit._creationTime,
+                id: latestVisit._id,
+              }
+            : null,
+        };
+      }),
+    );
+    return { page: places, isDone, continueCursor };
   },
 });
 

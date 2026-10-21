@@ -1,5 +1,5 @@
 import { storedPlace } from '../placePersistence';
-import { logChange, logVisitChange } from './activity';
+import { logPlaceChange, logVisitChange, logVisitUpdate } from './activity';
 import { paginationOptsValidator } from 'convex/server';
 import { ConvexError, v } from 'convex/values';
 import schema, { locationValidator } from './schema';
@@ -92,17 +92,17 @@ export const add = authedMutation({
               revision: (visit.revision ?? 0) + 1,
             });
         }
-        await ensurePlannedVisit(ctx, {
+        const visitId = await ensurePlannedVisit(ctx, {
           ...existing,
           ...(notes?.trim() ? { notes: notes.trim().slice(0, 500) } : {}),
         });
         if (notes?.trim() && notes.trim().slice(0, 500) !== existing.notes)
-          await logChange(
+          await logVisitChange(
             ctx,
-            boardId,
+            visitId,
             userId,
-            `updated a planned visit: “${existing.title}”`,
-            existing.visitId,
+            'updated ',
+            ' in the wishlist · Changed: notes',
           );
         return existing._id;
       }
@@ -120,7 +120,7 @@ export const add = authedMutation({
       createdAt: Date.now(),
     });
     const visitId = await ensurePlannedVisit(ctx, (await ctx.db.get(id))!);
-    await logVisitChange(ctx, visitId, userId, 'added to the wishlist:');
+    await logVisitChange(ctx, visitId, userId, 'added ', ' to the wishlist');
     return id;
   },
 });
@@ -136,13 +136,7 @@ export const remove = authedMutation({
     const item = await ctx.db.get(id);
     if (!item) return null;
     await member(ctx, item.boardId);
-    await logChange(
-      ctx,
-      item.boardId,
-      ctx.userId,
-      `removed from the wishlist: “${item.title}”`,
-      item.visitId,
-    );
+    await logPlaceChange(ctx, item, ctx.userId, 'removed ', ' from the wishlist', item.visitId);
     if (item.visitId) await deleteVisit(ctx, item.visitId);
     else await ctx.db.delete(id);
     return null;
@@ -169,9 +163,9 @@ export const update = authedMutation({
       notes: notes?.trim().slice(0, 500),
       link: safeLink(link),
     };
-    await ctx.db.patch(id, fields);
-    const visitId = await ensurePlannedVisit(ctx, { ...item, ...fields });
+    const visitId = await ensurePlannedVisit(ctx, item);
     const visit = (await ctx.db.get(visitId))!;
+    await ctx.db.patch(id, fields);
     await ctx.db.patch(visitId, {
       title: fields.title,
       place: fields.place ?? '',
@@ -180,7 +174,7 @@ export const update = authedMutation({
       savedLink: fields.link,
       revision: (visit.revision ?? 0) + 1,
     });
-    await logVisitChange(ctx, visitId, ctx.userId, 'updated a planned visit:');
+    await logVisitUpdate(ctx, visit, ctx.userId);
     return null;
   },
 });

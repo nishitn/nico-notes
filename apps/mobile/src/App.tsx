@@ -7,7 +7,7 @@ import * as WebBrowser from 'expo-web-browser';
 import * as Linking from 'expo-linking';
 import { useFonts } from 'expo-font';
 import { StatusBar } from 'expo-status-bar';
-import { MD3LightTheme, PaperProvider } from 'react-native-paper';
+import { configureFonts, MD3LightTheme, PaperProvider } from 'react-native-paper';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { router, useRootNavigationState } from 'expo-router';
@@ -29,6 +29,8 @@ import { signInWithNativeGoogle } from '../modules/google-sign-in';
 import { POLICY_VERSION } from '@nico-notes/backend/legal';
 import { TermsGate, openLegal } from './ReleaseTools';
 import { JournalProvider } from './JournalContext';
+import { DiscardChangesDialog } from './DiscardChangesDialog';
+import { AppAlertHost } from './AppAlertHost';
 
 WebBrowser.maybeCompleteAuthSession();
 const url = process.env.EXPO_PUBLIC_CONVEX_URL;
@@ -211,6 +213,7 @@ export default function App({ children }: { children: ReactNode }) {
     <PaperProvider
       theme={{
         ...MD3LightTheme,
+        fonts: configureFonts({ config: { fontFamily: 'Jakarta' } }),
         colors: {
           ...MD3LightTheme.colors,
           primary: colors.rust,
@@ -225,7 +228,7 @@ export default function App({ children }: { children: ReactNode }) {
           onSurface: colors.ink,
           onSurfaceVariant: colors.muted,
           outline: colors.border,
-          elevation: { ...MD3LightTheme.colors.elevation, level2: '#F5EFEB' },
+          elevation: { ...MD3LightTheme.colors.elevation, level2: '#F5EFEB', level3: '#F5EFEB' },
         },
       }}
       settings={{
@@ -254,6 +257,8 @@ export default function App({ children }: { children: ReactNode }) {
               </Page>
             )}
           </ErrorBoundary>
+          <DiscardChangesDialog />
+          <AppAlertHost />
         </View>
       </SafeAreaProvider>
     </PaperProvider>

@@ -1,4 +1,4 @@
-import { logChange, logVisitChange } from './activity';
+import { logVisitChange } from './activity';
 import { ConvexError, v } from 'convex/values';
 import { query, mutation } from './_generated/server';
 import {
@@ -146,7 +146,7 @@ export const finishUpload = internalMutation({
       caption: upload.caption,
       contentType,
     });
-    await logVisitChange(ctx, upload.visitId, userId, 'added a photo to');
+    await logVisitChange(ctx, upload.visitId, userId, 'added a photo to the visit to ');
     await ctx.db.patch(uploadId, { photoId: id, expiresAt: Date.now() + 24 * 60 * 60 * 1000 });
     return id;
   },
@@ -174,7 +174,12 @@ export const updateCaption = authedMutation({
     const clean = caption.trim().slice(0, 300);
     if (clean !== photo.caption) {
       await ctx.db.patch(photoId, { caption: clean });
-      await logVisitChange(ctx, photo.visitId, ctx.userId, 'updated a photo caption on');
+      await logVisitChange(
+        ctx,
+        photo.visitId,
+        ctx.userId,
+        'updated a photo caption for the visit to ',
+      );
     }
     return null;
   },
@@ -189,7 +194,7 @@ export const remove = authedMutation({
     if (photo.uploaderId !== ctx.userId && !isAdmin)
       throw new ConvexError('Only the uploader or admin can remove this photo.');
     await ctx.db.delete(photo._id);
-    await logVisitChange(ctx, photo.visitId, ctx.userId, 'removed a photo from');
+    await logVisitChange(ctx, photo.visitId, ctx.userId, 'removed a photo from the visit to ');
     return null;
   },
 });
@@ -223,10 +228,7 @@ export const setStorage = authedMutation({
       throw new ConvexError(
         'Photos are stored securely in Convex. Local storage is no longer available.',
       );
-    const board = await ctx.db.get(boardId);
     await ctx.db.patch(boardId, { photoStorage: provider });
-    if ((board?.photoStorage ?? 'convex') !== provider)
-      await logChange(ctx, boardId, ctx.userId, 'changed the photo storage setting');
     return null;
   },
 });

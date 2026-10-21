@@ -1,19 +1,9 @@
 import { useRef } from 'react';
-import { Alert } from 'react-native';
 import { useNavigation } from 'expo-router';
 import { usePreventRemove } from 'expo-router/react-navigation';
+import { confirmDiscard } from './DiscardChangesDialog';
 
-export function confirmDiscard(dirty: boolean, busy: boolean, discard: () => void) {
-  if (busy) return;
-  if (!dirty) {
-    discard();
-    return;
-  }
-  Alert.alert('Discard changes?', 'Your unfinished changes will be lost.', [
-    { text: 'Keep editing', style: 'cancel' },
-    { text: 'Discard', style: 'destructive', onPress: discard },
-  ]);
-}
+export { confirmDiscard };
 
 /** Call allowExit immediately before navigation after a successful save. */
 export function useUnsavedChanges(dirty: boolean, busy = false) {

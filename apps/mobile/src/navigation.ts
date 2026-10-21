@@ -17,6 +17,7 @@ export type Routes = {
   VisitForm: {
     boardId: Id<'boards'>;
     planned?: boolean;
+    completePlanned?: boolean;
     notes?: string;
     savedLink?: string;
     wishlistId?: Id<'wishlist'>;

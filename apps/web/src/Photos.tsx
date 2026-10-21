@@ -11,8 +11,8 @@ const convexPhotoApi = import.meta.env.VITE_CONVEX_SITE_URL;
 
 function photoApi(provider: 'convex' | 'local') {
   if (provider !== 'convex')
-    throw new Error('This legacy photo needs migration to Convex. Contact support.');
-  if (!convexPhotoApi) throw new Error('Convex photo storage is not configured.');
+    throw new Error('This legacy image needs migration to Convex. Contact support.');
+  if (!convexPhotoApi) throw new Error('Convex image storage is not configured.');
   return convexPhotoApi.replace(/\/$/, '');
 }
 
@@ -44,7 +44,7 @@ export function Photo({
       signal: abort.signal,
     })
       .then(async (response) => {
-        if (!response.ok) throw new Error('Photo unavailable.');
+        if (!response.ok) throw new Error('Image unavailable.');
         const blob = await response.blob();
         if (!abort.signal.aborted) {
           objectUrl = URL.createObjectURL(blob);
@@ -64,7 +64,7 @@ export function Photo({
     return (
       <span className="photo-loading">
         <Camera size={22} />
-        Photo unavailable. Reopen the visit to retry.
+        Image unavailable. Reopen the visit to retry.
       </span>
     );
   return current?.src ? (
@@ -72,7 +72,7 @@ export function Photo({
   ) : (
     <span className="photo-loading" role="status">
       <LoaderCircle size={20} className="spin" />
-      <span>Loading photo…</span>
+      <span>Loading image…</span>
     </span>
   );
 }
@@ -113,10 +113,10 @@ function CarouselPhoto({
       ref={tile}
       className="memory-carousel-photo"
       to={`/visits/${visitId}`}
-      aria-label={`Open ${title}, photo ${index + 1} of ${count}`}
+      aria-label={`Open ${title}, image ${index + 1} of ${count}`}
     >
       {visible ? (
-        <Photo id={id} alt={`${title} photo ${index + 1}`} />
+        <Photo id={id} alt={`${title} image ${index + 1}`} />
       ) : (
         <span className="photo-loading">
           <Camera size={22} />
@@ -168,14 +168,14 @@ export function PhotoCarousel({
       className="memory-carousel"
       role="region"
       aria-roledescription="carousel"
-      aria-label={`${title} photos`}
+      aria-label={`${title} images`}
     >
       <div
         ref={track}
         className="memory-carousel-track"
         tabIndex={0}
         role="group"
-        aria-label="Photo strip. Use the arrow keys to browse."
+        aria-label="Image strip. Use the arrow keys to browse."
         onScroll={updateEdges}
         onKeyDown={(event) => {
           if (event.target !== event.currentTarget) return;
@@ -201,7 +201,7 @@ export function PhotoCarousel({
           <button
             type="button"
             className="memory-carousel-arrow memory-carousel-prev icon-button"
-            aria-label="Previous photos"
+            aria-label="Previous images"
             disabled={!edges.back}
             onClick={() => move(-1)}
           >
@@ -210,7 +210,7 @@ export function PhotoCarousel({
           <button
             type="button"
             className="memory-carousel-arrow memory-carousel-next icon-button"
-            aria-label="Next photos"
+            aria-label="Next images"
             disabled={!edges.next}
             onClick={() => move(1)}
           >
@@ -232,7 +232,7 @@ function upload(file: File, url: string, token: string, progress: (n: number) =>
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable) progress(Math.round((event.loaded * 100) / event.total));
     };
-    xhr.onerror = () => reject(new Error('Connection lost. Your photo is ready to retry.'));
+    xhr.onerror = () => reject(new Error('Connection lost. Your image is ready to retry.'));
     xhr.ontimeout = () => reject(new Error('Upload timed out. Please retry.'));
     xhr.onload = () =>
       xhr.status >= 200 && xhr.status < 300
@@ -308,7 +308,7 @@ export function PhotoSection({
   const notice = useNotice();
   const current = photos.find((p) => p._id === viewing);
   async function send() {
-    if (!selectedPhotos.length) throw new Error('Select photos to upload.');
+    if (!selectedPhotos.length) throw new Error('Select images to upload.');
     for (const photo of selectedPhotos) {
       await photoUpload.send(visitId, photo.file, caption);
       setSelectedPhotos((current) => current.filter((item) => item !== photo));
@@ -322,7 +322,7 @@ export function PhotoSection({
       <div className="section-heading">
         <div>
           <h2>
-            Photos{' '}
+            Images{' '}
             <span className="count">
               {photos.length}/{MAX_PHOTOS}
             </span>
@@ -333,7 +333,7 @@ export function PhotoSection({
           disabled={photos.length >= MAX_PHOTOS}
           onClick={() => setAdding(true)}
         >
-          <ImagePlus size={17} /> Add photo
+          <ImagePlus size={17} /> Add image
         </button>
       </div>
       {photos.length ? (
@@ -347,7 +347,7 @@ export function PhotoSection({
                 setEditCaption(false);
               }}
             >
-              <Photo id={photo._id} alt={photo.caption || 'Visit photo'} />
+              <Photo id={photo._id} alt={photo.caption || 'Visit image'} />
               {photo.caption && <span>{photo.caption}</span>}
             </button>
           ))}
@@ -355,12 +355,12 @@ export function PhotoSection({
       ) : (
         <button className="photo-empty" onClick={() => setAdding(true)}>
           <Camera size={29} />
-          <strong>Add your first photo</strong>
+          <strong>Add your first image</strong>
         </button>
       )}
       {adding && (
         <Modal
-          title="Add photos"
+          title="Add images"
           onClose={() => {
             if (!task.busy) {
               setAdding(false);
@@ -386,13 +386,13 @@ export function PhotoSection({
             {task.busy && (
               <div className="upload-progress" role="status">
                 <progress value={progress} max={100} />
-                <span>{progress === 100 ? 'Saving photo…' : `Uploading ${progress}%`}</span>
+                <span>{progress === 100 ? 'Saving image…' : `Uploading ${progress}%`}</span>
               </div>
             )}
             <ErrorNote text={task.error} />
             <div className="form-actions">
               <Submit busy={task.busy}>
-                {task.error ? 'Retry remaining photos' : 'Save photos'}
+                {task.error ? 'Retry remaining images' : 'Save images'}
               </Submit>
             </div>
           </Form>
@@ -401,7 +401,7 @@ export function PhotoSection({
       {current && (
         <Modal title="A moment from this visit" onClose={() => setViewing(null)}>
           <div className="gallery-image">
-            <Photo id={current._id} alt={current.caption || 'Visit photo'} />
+            <Photo id={current._id} alt={current.caption || 'Visit image'} />
           </div>
           <p>{current.caption}</p>
           <div className="gallery-actions">
@@ -454,7 +454,7 @@ export function PhotoSection({
                     setViewing(null);
                   }}
                 >
-                  <Trash2 size={15} /> Remove photo
+                  <Trash2 size={15} /> Remove image
                 </button>
               </div>
               {editCaption && (
@@ -483,11 +483,11 @@ export function PhotoSection({
       )}
       {deleting && (
         <Confirm
-          title="Remove this photo?"
+          title="Remove this image?"
           onClose={() => setDeleting(null)}
           onConfirm={() => remove({ photoId: deleting })}
         >
-          This removes the photo from this visit for everyone.
+          This removes the image from this visit for everyone.
         </Confirm>
       )}
     </section>

@@ -1,3 +1,4 @@
+import { PlaceLookupNotice } from './PlaceLookupNotice';
 import { GoogleAttribution } from './GoogleAttribution';
 import { useEffect, useState } from 'react';
 import { useMutation, usePaginatedQuery, useQuery } from './convexLive';
@@ -75,6 +76,9 @@ export function WishlistPage() {
         )}
       </div>
       <ErrorNote text={task.error} />
+      <PlaceLookupNotice
+        placeIds={results.flatMap((item) => (item.googlePlaceId ? [item.googlePlaceId] : []))}
+      />
       {status === 'LoadingFirstPage' ? (
         <Spinner />
       ) : matching.length ? (

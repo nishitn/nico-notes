@@ -1,24 +1,31 @@
-import { Alert, Linking, Pressable, Text, View } from 'react-native';
+import { Linking, Pressable, Text, View } from 'react-native';
+import { showAlert } from './alertState';
 import { attributionParts } from '@nico-notes/backend/attributions';
 import { useLivePlace } from './convexLive';
 
 export function GoogleAttribution({
   placeId,
   attributions = [],
+  showGoogleMaps = true,
 }: {
   placeId?: string;
   attributions?: string[];
+  showGoogleMaps?: boolean;
 }) {
   const live = useLivePlace(placeId);
+  const credits = live?.attributions ?? attributions;
+  if (!showGoogleMaps && credits.length === 0) return null;
   return (
     <View style={{ gap: 4, paddingVertical: 6 }}>
-      <Text
-        accessibilityLabel="Google Maps"
-        style={{ fontSize: 12, fontWeight: '400', color: '#5E5E5E' }}
-      >
-        Google Maps
-      </Text>
-      {(live?.attributions ?? attributions).map((html, index) => (
+      {showGoogleMaps && (
+        <Text
+          accessibilityLabel="Google Maps"
+          style={{ fontSize: 12, fontWeight: '400', color: '#5E5E5E' }}
+        >
+          Google Maps
+        </Text>
+      )}
+      {credits.map((html, index) => (
         <Text key={index} style={{ fontSize: 12, lineHeight: 18, color: '#5E5E5E' }}>
           {attributionParts(html).map((part, partIndex) => (
             <Text
@@ -51,7 +58,7 @@ export function GoogleSearchInfo() {
     <Pressable
       accessibilityRole="button"
       onPress={() =>
-        Alert.alert(
+        showAlert(
           'About these results',
           'Google ranks places using relevance, distance and prominence. We show up to five matching results; nearby searches use your foreground location when available.',
           [

@@ -275,7 +275,7 @@ function EditProfileName({ name, onClose }: { name: string; onClose: () => void 
           <ErrorNote error={task.error} />
         </Dialog.Content>
         <Dialog.Actions>
-          <MaterialButton disabled={task.busy} onPress={onClose}>
+          <MaterialButton textColor={colors.muted} disabled={task.busy} onPress={onClose}>
             Cancel
           </MaterialButton>
           <MaterialButton

@@ -1,8 +1,7 @@
 import { useRef, useState } from 'react';
 import {
-  Alert,
+  Keyboard,
   Linking,
-  Modal,
   Pressable,
   ScrollView,
   Text,
@@ -20,18 +19,23 @@ import { useConvex, useMutation, useQuery } from './convexLive';
 import { api } from '@nico-notes/backend/api';
 import type { Id } from '@nico-notes/backend/dataModel';
 import { MAX_PHOTOS, MAX_PHOTO_BYTES } from '@nico-notes/backend/shared';
-import { Button, Card, colors, confirm, ErrorNote, Field, Heading, styles, useTask } from './ui';
-import { IconButton } from 'react-native-paper';
+import { Button, Card, colors, ErrorNote, styles, useTask } from './ui';
+import { IconButton, Portal } from 'react-native-paper';
 import { confirmDiscard, useUnsavedChanges } from './useUnsavedChanges';
 import { resolveUpload, uploadError } from './photoUpload';
+import { PhotoViewer } from './PhotoViewer';
+import { DeletePhotoDialog } from './DeletePhotoDialog';
+import { PhotoSourceDialog } from './PhotoSourceDialog';
+import { launchPhotoPicker, type PhotoSource } from './photoPicker';
+import { showAlert } from './alertState';
 
 export function photoOrigin(provider: 'convex' | 'local') {
   if (provider !== 'convex')
-    throw new Error('This legacy photo needs migration to Convex. Contact support.');
+    throw new Error('This legacy image needs migration to Convex. Contact support.');
   const origin = process.env.EXPO_PUBLIC_CONVEX_SITE_URL;
-  if (!origin) throw new Error('Convex photo storage is unavailable. Please contact support.');
+  if (!origin) throw new Error('Convex image storage is unavailable. Please contact support.');
   const parsed = new URL(origin);
-  if (parsed.protocol !== 'https:') throw new Error('Photos require a reachable HTTPS server.');
+  if (parsed.protocol !== 'https:') throw new Error('Images require a reachable HTTPS server.');
   return origin.replace(/\/$/, '');
 }
 export function Photo({
@@ -40,12 +44,14 @@ export function Photo({
   height = 220,
   style,
   contentFit = 'cover',
+  onLoad,
 }: {
   id: Id<'photos'>;
   alt: string;
   height?: number | `${number}%`;
   style?: StyleProp<ImageStyle>;
   contentFit?: 'cover' | 'contain';
+  onLoad?: (size: { width: number; height: number }) => void;
 }) {
   const token = useAuthToken();
   const provider = useQuery(api.photos.fileProvider, token ? { photoId: id } : 'skip');
@@ -66,9 +72,9 @@ export function Photo({
         }}
       >
         <Text style={styles.muted}>
-          {provider === undefined ? 'Loading photo…' : 'Photo unavailable.'}
+          {provider === undefined ? 'Loading image…' : 'Image unavailable.'}
         </Text>
-        {failed && <Button secondary title="Retry photo" onPress={() => setFailed(false)} />}
+        {failed && <Button secondary title="Retry image" onPress={() => setFailed(false)} />}
       </View>
     );
   return (
@@ -83,6 +89,7 @@ export function Photo({
       contentFit={contentFit}
       cachePolicy="none"
       onError={() => setFailed(true)}
+      onLoad={(event) => onLoad?.(event.source)}
     />
   );
 }
@@ -102,23 +109,24 @@ export function PhotoSection({
   const reserve = useMutation(api.photos.reserve);
   const cancel = useMutation(api.photos.cancel);
   const remove = useMutation(api.photos.remove);
-  const updateCaption = useMutation(api.photos.updateCaption);
   const task = useTask();
+  const deleteTask = useTask();
+  const [deletingId, setDeletingId] = useState<Id<'photos'>>();
+  const [photoSourceOpen, setPhotoSourceOpen] = useState(false);
   const [selected, setSelected] = useState<string>();
-  const [captionLocked, setCaptionLocked] = useState(false);
-  const [caption, setCaption] = useState('');
-  const [editing, setEditing] = useState<Id<'photos'>>();
-  const [editCaption, setEditCaption] = useState('');
   const [viewingId, setViewingId] = useState<Id<'photos'>>();
-  useUnsavedChanges(!!selected || !!editing, task.busy);
+  const { width } = useWindowDimensions();
+  const [galleryWidth, setGalleryWidth] = useState(Math.min(width, 840) - 44);
+  const photoWidth = photos.length > 1 ? Math.max(1, galleryWidth - 28) : galleryWidth;
+  useUnsavedChanges(!!selected, task.busy);
   const pending = useRef<{ uri: string; ticket: Id<'uploads'>; at: number } | null>(null);
-  async function pick(camera: boolean) {
-    if (camera) {
+  async function pick(source: PhotoSource) {
+    if (source === 'camera') {
       const permission = await ImagePicker.requestCameraPermissionsAsync();
       if (!permission.granted) {
-        Alert.alert(
+        showAlert(
           'Camera access is off',
-          'Allow camera access in settings, or choose a photo from your library.',
+          'Allow camera access in settings, or choose an image from your library.',
           [
             { text: 'Cancel', style: 'cancel' },
             { text: 'Open settings', onPress: () => void Linking.openSettings() },
@@ -127,9 +135,7 @@ export function PhotoSection({
         return;
       }
     }
-    const result = camera
-      ? await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 1 })
-      : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 1 });
+    const result = await launchPhotoPicker(source);
     if (result.canceled) return;
     const converted = await manipulateAsync(
       result.assets[0].uri,
@@ -137,117 +143,90 @@ export function PhotoSection({
       { compress: 0.85, format: SaveFormat.JPEG },
     );
     if (new File(converted.uri).size > MAX_PHOTO_BYTES)
-      throw new Error('Choose a photo smaller than 10 MB.');
+      throw new Error('Choose an image smaller than 10 MB.');
     if (pending.current) await cancel({ uploadId: pending.current.ticket });
     pending.current = null;
-    setCaptionLocked(false);
     setSelected(converted.uri);
   }
   return (
-    <View style={{ gap: 16 }}>
-      <View style={styles.sectionRow}>
-        <Heading>Photos{photos.length ? ` · ${photos.length}` : ''}</Heading>
+    <View style={{ gap: 8 }}>
+      <View style={[styles.sectionRow, { alignItems: 'baseline' }]}>
+        <Text accessibilityRole="header" style={[styles.subtitle, { includeFontPadding: false }]}>
+          Images{photos.length ? ` · ${photos.length}` : ''}
+        </Text>
         {photos.length < MAX_PHOTOS && (
-          <Button
-            secondary
-            title="Add photo"
-            disabled={task.busy}
-            onPress={() =>
-              Alert.alert('Add photo', undefined, [
-                {
-                  text: 'Photo library',
-                  onPress: () =>
-                    confirmDiscard(!!selected, task.busy, () => void task.run(() => pick(false))),
-                },
-                {
-                  text: 'Camera',
-                  onPress: () =>
-                    confirmDiscard(!!selected, task.busy, () => void task.run(() => pick(true))),
-                },
-                { text: 'Cancel', style: 'cancel' },
-              ])
-            }
-          />
-        )}
-      </View>
-      {photos.map((photo) => (
-        <Card key={photo._id}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={photo.caption || 'Open photo'}
-            accessibilityHint="View the full image and zoom"
-            onPress={() => setViewingId(photo._id)}
+            accessibilityLabel="Add image"
+            hitSlop={4}
+            style={{
+              minHeight: 36,
+              justifyContent: 'center',
+              paddingHorizontal: 8,
+              paddingVertical: 4,
+            }}
+            disabled={task.busy}
+            onPress={() => {
+              Keyboard.dismiss();
+              setPhotoSourceOpen(true);
+            }}
           >
-            <Photo id={photo._id} alt={photo.caption || 'Visit picture'} />
+            <Text style={[styles.link, { lineHeight: 26, includeFontPadding: false }]}>
+              + Add image
+            </Text>
           </Pressable>
-          <View style={styles.sectionRow}>
-            {!!photo.caption && <Text style={[styles.body, { flex: 1 }]}>{photo.caption}</Text>}
-            {(isAdmin || photo.uploaderId === userId) && (
-              <IconButton
-                icon="dots-horizontal"
-                accessibilityLabel="Photo options"
-                onPress={() =>
-                  Alert.alert('Photo options', undefined, [
-                    {
-                      text: 'Edit caption',
-                      onPress: () =>
-                        confirmDiscard(
-                          !!editing &&
-                            editCaption !== photos.find((entry) => entry._id === editing)?.caption,
-                          task.busy,
-                          () => {
-                            setEditing(photo._id);
-                            setEditCaption(photo.caption);
-                          },
-                        ),
-                    },
-                    {
-                      text: 'Delete photo',
-                      style: 'destructive',
-                      onPress: () =>
-                        confirm(
-                          'Delete this photo?',
-                          () =>
-                            void task.run(async () => {
-                              await remove({ photoId: photo._id });
-                              if (editing === photo._id) setEditing(undefined);
-                            }),
-                        ),
-                    },
-                    { text: 'Cancel', style: 'cancel' },
-                  ])
-                }
-              />
-            )}
-          </View>
-          {editing === photo._id && (
-            <>
-              <Field
-                label="Photo caption"
-                value={editCaption}
-                onChangeText={setEditCaption}
-                maxLength={300}
-              />
-              <Button
-                secondary
-                title="Cancel"
-                disabled={task.busy}
-                onPress={() => setEditing(undefined)}
-              />
-              <Button
-                title="Save caption"
-                disabled={task.busy}
-                onPress={() =>
-                  void task.run(async () => {
-                    await updateCaption({ photoId: photo._id, caption: editCaption });
-                    setEditing(undefined);
-                  })
-                }
-              />
-            </>
-          )}
-        </Card>
-      ))}
+        )}
+      </View>
+      {photos.length > 0 && (
+        <View onLayout={(event) => setGalleryWidth(event.nativeEvent.layout.width)}>
+          <ScrollView
+            horizontal
+            nestedScrollEnabled
+            showsHorizontalScrollIndicator={false}
+            snapToInterval={photoWidth + 12}
+            decelerationRate="fast"
+            contentContainerStyle={{ gap: 12 }}
+          >
+            {photos.map((photo, index) => {
+              const canRemove = isAdmin || photo.uploaderId === userId;
+              return (
+                <View key={photo._id} style={{ width: photoWidth, gap: 4 }}>
+                  <View style={{ borderRadius: 12, overflow: 'hidden' }}>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`Open image ${index + 1} of ${photos.length}${photo.caption ? `: ${photo.caption}` : ''}`}
+                      accessibilityHint="View the full image and zoom"
+                      onPress={() => setViewingId(photo._id)}
+                    >
+                      <Photo
+                        id={photo._id}
+                        alt={photo.caption || 'Visit picture'}
+                        height={photoWidth}
+                      />
+                    </Pressable>
+                    {canRemove && (
+                      <IconButton
+                        icon="trash-can-outline"
+                        iconColor={colors.error}
+                        size={18}
+                        accessibilityLabel={`Remove image ${index + 1}`}
+                        disabled={task.busy}
+                        style={{
+                          position: 'absolute',
+                          top: 4,
+                          right: 4,
+                          backgroundColor: colors.paper,
+                        }}
+                        onPress={() => setDeletingId(photo._id)}
+                      />
+                    )}
+                  </View>
+                </View>
+              );
+            })}
+          </ScrollView>
+        </View>
+      )}
       {photos.length < MAX_PHOTOS && (
         <>
           {selected && (
@@ -258,31 +237,23 @@ export function PhotoSection({
                 cachePolicy="none"
               />
               <Text style={styles.muted}>
-                {photos.length}/{MAX_PHOTOS} photos · Up to 10 MB each
+                {photos.length}/{MAX_PHOTOS} images · Up to 10 MB each
               </Text>
-              <Field
-                label="Caption"
-                value={caption}
-                onChangeText={setCaption}
-                editable={!task.busy && !captionLocked}
-                maxLength={500}
-              />
               <Button
                 title={task.busy ? 'Uploading…' : task.error ? 'Retry upload' : 'Upload picture'}
                 disabled={task.busy}
                 onPress={() =>
                   void task.run(async () => {
-                    if (!token) throw new Error('Sign in to upload a photo.');
+                    if (!token) throw new Error('Sign in to upload an image.');
                     const upload = await resolveUpload(
                       pending.current?.uri === selected ? pending.current.ticket : undefined,
                       async () => {
-                        const ticket = await reserve({ visitId, caption });
+                        const ticket = await reserve({ visitId, caption: '' });
                         pending.current = { uri: selected, ticket, at: Date.now() };
                         return ticket;
                       },
                       (uploadId) => convex.query(api.photos.uploadProvider, { uploadId }),
                     );
-                    setCaptionLocked(true);
                     const response = await fetch(
                       `${photoOrigin(upload.provider)}/photos/upload?ticket=${upload.ticket}`,
                       {
@@ -294,9 +265,7 @@ export function PhotoSection({
                     );
                     if (!response.ok) throw new Error(uploadError(response.status));
                     pending.current = null;
-                    setCaptionLocked(false);
                     setSelected(undefined);
-                    setCaption('');
                   })
                 }
               />
@@ -309,7 +278,6 @@ export function PhotoSection({
                     if (pending.current) await cancel({ uploadId: pending.current.ticket });
                     setSelected(undefined);
                     pending.current = null;
-                    setCaptionLocked(false);
                   })
                 }
               />
@@ -319,87 +287,48 @@ export function PhotoSection({
       )}
       {viewingId && (
         <PhotoViewer
+          key={viewingId}
           photos={photos}
           id={viewingId}
-          onSelect={setViewingId}
+          userId={userId}
+          isAdmin={isAdmin}
+          renderPhoto={(photo, size, onLoad) => (
+            <Photo
+              id={photo._id}
+              alt={photo.caption || 'Visit image'}
+              height={size.height}
+              style={{ width: size.width, borderRadius: 0 }}
+              contentFit="contain"
+              onLoad={onLoad}
+            />
+          )}
           onClose={() => setViewingId(undefined)}
         />
       )}
+      <PhotoSourceDialog
+        visible={photoSourceOpen}
+        onDismiss={() => setPhotoSourceOpen(false)}
+        onSelect={(source) =>
+          confirmDiscard(!!selected, task.busy, () => void task.run(() => pick(source)))
+        }
+      />
+      <Portal>
+        <DeletePhotoDialog
+          visible={!!deletingId}
+          busy={deleteTask.busy}
+          error={deleteTask.error}
+          onDismiss={() => setDeletingId(undefined)}
+          onConfirm={() => {
+            if (!deletingId) return;
+            void deleteTask.run(async () => {
+              await remove({ photoId: deletingId });
+              if (viewingId === deletingId) setViewingId(undefined);
+              setDeletingId(undefined);
+            });
+          }}
+        />
+      </Portal>
       <ErrorNote error={task.error} />
     </View>
-  );
-}
-
-function PhotoViewer({
-  photos,
-  id,
-  onSelect,
-  onClose,
-}: {
-  photos: { _id: Id<'photos'>; caption: string }[];
-  id: Id<'photos'>;
-  onSelect: (id: Id<'photos'>) => void;
-  onClose: () => void;
-}) {
-  const { width, height } = useWindowDimensions();
-  const [zoom, setZoom] = useState(1);
-  const index = photos.findIndex((photo) => photo._id === id);
-  const photo = photos[index];
-  const move = (next: number) => {
-    setZoom(1);
-    onSelect(photos[next]._id);
-  };
-  if (!photo) return null;
-  return (
-    <Modal visible animationType="fade" onRequestClose={onClose}>
-      <View style={{ flex: 1, backgroundColor: colors.background, paddingTop: 32 }}>
-        <View style={[styles.sectionRow, { paddingHorizontal: 16 }]}>
-          <Text style={styles.label}>
-            {index + 1} / {photos.length}
-          </Text>
-          <View style={styles.row}>
-            <IconButton
-              icon={zoom === 1 ? 'magnify-plus-outline' : 'magnify-minus-outline'}
-              accessibilityLabel={zoom === 1 ? 'Zoom photo' : 'Fit entire photo'}
-              onPress={() => setZoom((value) => (value === 1 ? 2 : 1))}
-            />
-            <IconButton icon="close" accessibilityLabel="Close photo" onPress={onClose} />
-          </View>
-        </View>
-        <ScrollView
-          horizontal
-          style={{ flex: 1 }}
-          contentContainerStyle={{ minWidth: width, justifyContent: 'center' }}
-          key={`${id}:${zoom}`}
-        >
-          <ScrollView contentContainerStyle={{ minHeight: height - 220, justifyContent: 'center' }}>
-            <Photo
-              id={id}
-              alt={photo.caption || 'Visit photo'}
-              height={(height - 220) * zoom}
-              style={{ width: width * zoom, borderRadius: 0 }}
-              contentFit="contain"
-            />
-          </ScrollView>
-        </ScrollView>
-        <Text style={[styles.body, { padding: 16, textAlign: 'center' }]}>{photo.caption}</Text>
-        {photos.length > 1 && (
-          <View style={[styles.sectionRow, { paddingHorizontal: 16, paddingBottom: 24 }]}>
-            <Button
-              secondary
-              title="Previous"
-              disabled={index === 0}
-              onPress={() => move(index - 1)}
-            />
-            <Button
-              secondary
-              title="Next"
-              disabled={index === photos.length - 1}
-              onPress={() => move(index + 1)}
-            />
-          </View>
-        )}
-      </View>
-    </Modal>
   );
 }

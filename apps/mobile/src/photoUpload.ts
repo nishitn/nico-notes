@@ -21,10 +21,10 @@ export async function resolveUpload<UploadId, Provider>(
 }
 
 export function uploadError(status: number) {
-  if (status === 401) return 'Sign in again to upload photos.';
+  if (status === 401) return 'Sign in again to upload images.';
   if (status === 403) return 'You no longer have permission to upload to this visit.';
   if (status === 410) return 'This upload expired. Retry to start a new upload.';
-  if (status === 413) return 'Choose a photo smaller than 10 MB.';
-  if (status === 415) return 'Choose a JPEG, PNG, or WebP photo.';
-  return 'Photo storage is temporarily unavailable. Please retry.';
+  if (status === 413) return 'Choose an image smaller than 10 MB.';
+  if (status === 415) return 'Choose a JPEG, PNG, or WebP image.';
+  return 'Image storage is temporarily unavailable. Please retry.';
 }

@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Linking,
   Pressable,
   ScrollView,
@@ -38,6 +37,7 @@ import {
 import { clearNativeGoogleSession } from '../modules/google-sign-in';
 import { PlaceTopBar } from './screens/Places';
 import { useUnsavedChanges } from './useUnsavedChanges';
+import { showAlert } from './alertState';
 
 const webOrigin = (process.env.EXPO_PUBLIC_WEB_URL || 'https://notes.nishitnagar.com').replace(
   /\/$/,
@@ -134,11 +134,11 @@ export function AccountTools({ navigation }: Pick<ScreenProps<'Account'>, 'navig
             <ErrorNote error={task.error} />
           </Dialog.Content>
           <Dialog.Actions>
-            <MaterialButton disabled={task.busy} onPress={closeDeletion}>
+            <MaterialButton textColor={colors.muted} disabled={task.busy} onPress={closeDeletion}>
               Cancel
             </MaterialButton>
             <MaterialButton
-              textColor={colors.rust}
+              textColor={colors.error}
               loading={task.busy}
               disabled={task.busy || confirmation !== 'DELETE'}
               onPress={() =>
@@ -377,7 +377,7 @@ export function SafetyScreen({ route, navigation }: ScreenProps<'Safety'>) {
                       leadingIcon="account-cancel-outline"
                       onPress={() => {
                         setBlockMenuOpen(false);
-                        Alert.alert(
+                        showAlert(
                           `Block ${person.name}?`,
                           'You will leave boards you share with them and cannot join the same boards while blocked. Your existing contributions remain. Sole-admin boards transfer safely where possible.',
                           [

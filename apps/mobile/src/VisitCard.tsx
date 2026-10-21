@@ -1,4 +1,3 @@
-import { GoogleAttribution } from './GoogleAttribution';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Image } from 'expo-image';
 import { Icon } from 'react-native-paper';
@@ -79,21 +78,18 @@ export function VisitCard({
   members?: Member[];
   number?: number;
 }) {
-  const score = visit.overall;
   const photos = visit.photoIds ?? (visit.photoId ? [visit.photoId] : []);
 
   return (
-    <View style={card.container}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`Open ${visit.title}`}
-        onPress={onPress}
-        style={card.headerPressable}
-      >
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Open ${visit.title}`}
+      onPress={onPress}
+      style={card.container}
+    >
+      <View style={card.header}>
         <View style={card.eyebrowRow}>
-          <Text style={card.visitLabel}>
-            {number === undefined ? 'VISIT NOTES' : `Visit #${number}`}
-          </Text>
+          {number !== undefined && <Text style={card.visitLabel}>Visit #{number}</Text>}
           <Text style={card.date}>{visit.date ? formatDate(visit.date) : 'Undated'}</Text>
         </View>
 
@@ -101,18 +97,8 @@ export function VisitCard({
           <Text accessibilityRole="header" style={card.title} numberOfLines={2}>
             {visit.title}
           </Text>
-          {score != null && (
-            <View style={card.score}>
-              <Icon source="heart" size={11} color={colors.rust} />
-              <Text style={card.scoreText}>
-                {score.toFixed(1)}
-                <Text style={card.outOf}>/10</Text>
-              </Text>
-            </View>
-          )}
         </View>
 
-        {visit.googlePlaceId && <GoogleAttribution placeId={visit.googlePlaceId} />}
         <View style={card.locationRow}>
           <View style={card.locationContent}>
             <Icon source="map-marker-outline" size={14} color={colors.muted} />
@@ -129,7 +115,7 @@ export function VisitCard({
             </View>
           )}
         </View>
-      </Pressable>
+      </View>
 
       {photos.length > 0 ? (
         <VisitCarousel photos={photos} title={visit.title} onPress={onPress} />
@@ -187,17 +173,7 @@ export function VisitCard({
           {visit.highlights.slice(0, 3).join(' · ')}
         </Text>
       )}
-
-      <Pressable
-        onPress={onPress}
-        accessibilityRole="button"
-        accessibilityLabel={`View notes for ${visit.title}`}
-        style={card.footer}
-      >
-        <Text style={card.footerLink}>View notes</Text>
-        <Icon source="arrow-right" size={15} color={colors.rust} />
-      </Pressable>
-    </View>
+    </Pressable>
   );
 }
 
@@ -210,8 +186,8 @@ const card = StyleSheet.create({
     padding: 16,
     gap: 11,
   },
-  headerPressable: {
-    gap: 8,
+  header: {
+    gap: 4,
   },
   eyebrowRow: {
     flexDirection: 'row',
@@ -241,27 +217,6 @@ const card = StyleSheet.create({
     letterSpacing: -0.4,
     color: colors.ink,
     flex: 1,
-  },
-  score: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    borderWidth: 1,
-    borderColor: '#F2D4C9',
-    backgroundColor: '#FAE9E2',
-    borderRadius: 16,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-  },
-  scoreText: {
-    fontFamily: 'JakartaSemiBold',
-    fontSize: 12,
-    color: colors.rust,
-  },
-  outOf: {
-    fontFamily: 'Jakarta',
-    fontSize: 10,
-    color: colors.rust,
   },
   locationRow: {
     flexDirection: 'row',
@@ -369,19 +324,5 @@ const card = StyleSheet.create({
     lineHeight: 19,
     color: colors.muted,
     fontStyle: 'italic',
-  },
-  footer: {
-    borderTopWidth: 1,
-    borderColor: '#F2EBE3',
-    paddingTop: 9,
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    alignItems: 'center',
-    gap: 5,
-  },
-  footerLink: {
-    fontFamily: 'JakartaSemiBold',
-    fontSize: 12,
-    color: colors.rust,
   },
 });

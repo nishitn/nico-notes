@@ -1,4 +1,4 @@
-import { logChange } from './activity';
+import { logChange, logMemberChange } from './activity';
 import { paginationOptsValidator } from 'convex/server';
 import { ConvexError, v } from 'convex/values';
 import type { MutationCtx, QueryCtx } from './_generated/server';
@@ -256,17 +256,22 @@ export const update = authedMutation({
   returns: v.null(),
   handler: async (ctx, { boardId, ...fields }) => {
     const { board } = await admin(ctx, boardId);
-    await ctx.db.patch(boardId, {
+    const clean = {
       ...fields,
       name: textValue(fields.name, 'Board name', 80),
       description: fields.description.trim().slice(0, 500),
-    });
-    if (
-      board.name !== fields.name.trim() ||
-      board.description !== fields.description.trim().slice(0, 500) ||
-      board.accent !== fields.accent
-    )
-      await logChange(ctx, boardId, ctx.userId, 'updated the board details');
+    };
+    await ctx.db.patch(boardId, clean);
+    const changed = (['name', 'description', 'accent'] as const)
+      .filter((field) => board[field] !== clean[field])
+      .map((field) => (field === 'accent' ? 'color' : field));
+    if (changed.length)
+      await logChange(
+        ctx,
+        boardId,
+        ctx.userId,
+        `updated the board · Changed: ${changed.join(', ')}`,
+      );
     return null;
   },
 });
@@ -316,7 +321,7 @@ export const setMemberRole = authedMutation({
     if (args.role === 'member') await keepAdmin(ctx, board, membership);
     await ctx.db.patch(membership._id, { role: args.role });
     if (membershipRole(board, membership) !== args.role)
-      await logChange(ctx, args.boardId, ctx.userId, `changed a member’s role to ${args.role}`);
+      await logMemberChange(ctx, args.boardId, ctx.userId, args.userId, args.role);
     return null;
   },
 });
@@ -333,7 +338,7 @@ export const leave = authedMutation({
     if (membership) {
       await keepAdmin(ctx, board, membership);
       await ctx.db.delete(membership._id);
-      await logChange(ctx, boardId, ctx.userId, 'left the board');
+      await logChange(ctx, boardId, ctx.userId, `left the board: ${board.name}`);
     }
     return null;
   },
@@ -353,7 +358,7 @@ export const removeMember = authedMutation({
     if (m) {
       await keepAdmin(ctx, board, m);
       await ctx.db.delete(m._id);
-      await logChange(ctx, args.boardId, ctx.userId, 'removed a member from the board');
+      await logMemberChange(ctx, args.boardId, ctx.userId, args.userId);
     }
     return null;
   },
@@ -591,7 +596,8 @@ export const acceptRequest = authedMutation({
         userId: request.userId,
         role: 'member',
       });
-      await logChange(ctx, request.boardId, request.userId, 'joined the board');
+      const board = (await ctx.db.get(request.boardId))!;
+      await logChange(ctx, request.boardId, request.userId, `joined the board: ${board.name}`);
     }
 
     await ctx.db.patch(requestId, {

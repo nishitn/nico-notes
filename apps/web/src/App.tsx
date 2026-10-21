@@ -85,7 +85,7 @@ function Login() {
             <span>second helping.</span>
           </h1>
           <p>
-            A favorite dish. A beautiful view. A day worth remembering. Keep your visits, photos,
+            A favorite dish. A beautiful view. A day worth remembering. Keep your visits, images,
             and honest little ratings in one shared place.
           </p>
           <div className="login-action">

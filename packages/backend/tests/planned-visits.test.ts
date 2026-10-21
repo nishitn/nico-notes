@@ -24,6 +24,97 @@ async function setup() {
 }
 
 describe('planned visit lifecycle', () => {
+  it('matches wishlist history by Google reference within its own board, without creating or changing places', async () => {
+    const { t, member, stranger, boardId } = await setup();
+    const details = { title: 'A cafe', place: 'Bengaluru', date: '', notes: '', showDishes: true };
+    const plannedId = await member.mutation(api.visits.create, {
+      boardId,
+      ...details,
+      planned: true,
+      googlePlaceId: 'google-cafe',
+      notes: 'Try it again',
+    });
+    expect((await member.query(api.visits.get, { visitId: plannedId })).historyPlaceId).toBeNull();
+    expect(await t.run((ctx) => ctx.db.query('places').collect())).toHaveLength(0);
+    const otherBoard = await member.mutation(api.boards.create, {
+      name: 'Other',
+      description: '',
+      accent: 'coral',
+    });
+    await member.mutation(api.visits.create, {
+      boardId: otherBoard,
+      ...details,
+      googlePlaceId: 'google-cafe',
+    });
+    await member.mutation(api.visits.create, {
+      boardId,
+      ...details,
+      googlePlaceId: 'different-branch',
+    });
+    expect((await member.query(api.visits.get, { visitId: plannedId })).historyPlaceId).toBeNull();
+    const older = await member.mutation(api.visits.create, {
+      boardId,
+      ...details,
+      googlePlaceId: 'google-cafe',
+      date: '2026-09-01',
+    });
+    const newer = await member.mutation(api.visits.create, {
+      boardId,
+      ...details,
+      googlePlaceId: 'google-cafe',
+      date: '2026-10-01',
+    });
+    const result = await member.query(api.visits.get, { visitId: plannedId });
+    const placeId = (await member.query(api.visits.get, { visitId: newer })).visit.placeId;
+    expect(result.historyPlaceId).toBe(placeId);
+    expect(result.visit).toMatchObject({ status: 'planned', notes: 'Try it again' });
+    expect(result.visit.placeId).toBeUndefined();
+    const history = await member.query(api.visits.list, {
+      boardId,
+      placeId,
+      paginationOpts: { numItems: 1, cursor: null },
+    });
+    expect(history.page.map((visit) => visit._id)).toEqual([newer]);
+    expect(history.isDone).toBe(false);
+    const previous = await member.query(api.visits.list, {
+      boardId,
+      placeId,
+      paginationOpts: { numItems: 1, cursor: history.continueCursor },
+    });
+    expect(previous.page.map((visit) => visit._id)).toEqual([older]);
+    await expect(stranger.query(api.visits.get, { visitId: plannedId })).rejects.toThrow();
+  });
+
+  it('matches manual wishlist places by normalized name and address and excludes deleted history', async () => {
+    const { member, boardId } = await setup();
+    const details = {
+      title: 'Café Table',
+      place: '12 Main Street',
+      date: '',
+      notes: '',
+      showDishes: false,
+    };
+    const plannedId = await member.mutation(api.visits.create, {
+      boardId,
+      ...details,
+      planned: true,
+    });
+    await member.mutation(api.visits.create, { boardId, ...details, place: 'Other address' });
+    expect((await member.query(api.visits.get, { visitId: plannedId })).historyPlaceId).toBeNull();
+    const previousId = await member.mutation(api.visits.create, {
+      boardId,
+      ...details,
+      title: 'CAFE TABLE',
+      place: '12 Main Street!',
+    });
+    const previous = await member.query(api.visits.get, { visitId: previousId });
+    expect((await member.query(api.visits.get, { visitId: plannedId })).historyPlaceId).toBe(
+      previous.visit.placeId,
+    );
+    await member.mutation(api.visits.remove, { visitId: previousId });
+    expect((await member.query(api.visits.get, { visitId: plannedId })).historyPlaceId).toBeNull();
+  });
+
   it('converts legacy wishlist data once, retaining journal content and removing cached Google details', async () => {
     const { t, userId, member, stranger, boardId } = await setup();
     const original = {
@@ -216,6 +307,107 @@ describe('planned visit lifecycle', () => {
     await member.mutation(api.visits.remove, { visitId });
     expect((await t.run((ctx) => ctx.db.get(id)))?.deletedAt).toBeDefined();
     expect((await member.query(api.boards.summaries, {}))[0].visitCount).toBe(0);
+  });
+
+  it('saves actual dishes and notes atomically when completing a wishlist place', async () => {
+    const { t, member, stranger, boardId } = await setup();
+    const visitId = await member.mutation(api.visits.create, {
+      boardId,
+      planned: true,
+      title: 'Cafe',
+      date: '',
+      place: 'Bangalore',
+      notes: 'Try the terrace',
+      dishes: ['Wishlist pastry'],
+      showDishes: true,
+    });
+    const before = await member.query(api.visits.get, { visitId });
+    const completion = {
+      visitId,
+      date: '2026-10-21',
+      expectedRevision: 0,
+      details: {
+        notes: 'Sat inside and enjoyed lunch',
+        dishes: ['Actual sandwich', 'Coffee'],
+        savedLink: 'https://example.com/receipt',
+      },
+    };
+    // Opening the form is read-only. The wishlist remains intact until save.
+    expect(before.visit.status).toBe('planned');
+    expect(before.dishes.map((dish) => dish.name)).toEqual(['Wishlist pastry']);
+    await expect(stranger.mutation(api.visits.markVisited, completion)).rejects.toThrow();
+    await expect(
+      member.mutation(api.visits.markVisited, { ...completion, date: '' }),
+    ).rejects.toThrow(/date/);
+    await expect(
+      member.mutation(api.visits.markVisited, { ...completion, expectedRevision: 1 }),
+    ).rejects.toThrow(/changed/);
+    expect((await member.query(api.visits.get, { visitId })).visit.notes).toBe('Try the terrace');
+    expect(await t.run((ctx) => ctx.db.get(before.visit.wishlistId!))).not.toBeNull();
+
+    await member.mutation(api.visits.markVisited, completion);
+    const after = await member.query(api.visits.get, { visitId });
+    expect(after.visit).toMatchObject({
+      date: completion.date,
+      notes: completion.details.notes,
+      savedLink: completion.details.savedLink,
+      revision: 1,
+    });
+    expect(after.visit.status).toBeUndefined();
+    expect(after.dishes.map((dish) => dish.name)).toEqual(completion.details.dishes);
+    expect(
+      (
+        await member.query(api.wishlist.list, {
+          boardId,
+          paginationOpts: { cursor: null, numItems: 50 },
+        })
+      ).page,
+    ).toEqual([]);
+    expect((await member.query(api.boards.summaries, {}))[0].visitCount).toBe(1);
+
+    // A lost response or double tap must not replace the saved rows or notes again.
+    await member.mutation(api.visits.markVisited, {
+      ...completion,
+      details: { notes: 'Stale draft', dishes: ['Stale dish'] },
+    });
+    const retried = await member.query(api.visits.get, { visitId });
+    expect(retried.visit.notes).toBe(completion.details.notes);
+    expect(retried.dishes).toEqual(after.dishes);
+    expect((await member.query(api.boards.summaries, {}))[0].visitCount).toBe(1);
+  });
+
+  it('allows an actual visit without copying wishlist dishes or notes and rejects invalid dishes', async () => {
+    const { member, boardId } = await setup();
+    const visitId = await member.mutation(api.visits.create, {
+      boardId,
+      planned: true,
+      title: 'Cafe',
+      date: '',
+      place: '',
+      notes: 'A wishlist idea',
+      dishes: ['Wishlist dish'],
+      showDishes: true,
+    });
+    const completion = {
+      visitId,
+      date: '2026-10-21',
+      expectedRevision: 0,
+      details: { notes: '', dishes: [] as string[] },
+    };
+    for (const dishes of [[' '], Array.from({ length: 51 }, (_, index) => `Dish ${index}`)]) {
+      await expect(
+        member.mutation(api.visits.markVisited, { ...completion, details: { notes: '', dishes } }),
+      ).rejects.toThrow();
+      const unchanged = await member.query(api.visits.get, { visitId });
+      expect(unchanged.visit.status).toBe('planned');
+      expect(unchanged.visit.notes).toBe('A wishlist idea');
+      expect(unchanged.dishes.map((dish) => dish.name)).toEqual(['Wishlist dish']);
+    }
+    await member.mutation(api.visits.markVisited, completion);
+    const actual = await member.query(api.visits.get, { visitId });
+    expect(actual.visit.status).toBeUndefined();
+    expect(actual.visit.notes).toBe('');
+    expect(actual.dishes).toEqual([]);
   });
 
   it('migrates all batches and excludes plans from count and place backfills', async () => {

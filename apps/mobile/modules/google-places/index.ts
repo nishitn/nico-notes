@@ -21,6 +21,9 @@ export async function searchGooglePlaces(query: string, center?: Coordinate) {
 }
 
 export async function fetchGooglePlace(id: string): Promise<LivePlace> {
-  if (!native) throw new Error('Install the latest Android build to load Google place details.');
+  if (typeof native?.fetchPlace !== 'function')
+    throw new Error(
+      'NATIVE_MODULE_UNAVAILABLE: Install the latest Android build to load Google place details.',
+    );
   return native.fetchPlace(id);
 }

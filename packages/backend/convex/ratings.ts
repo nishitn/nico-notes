@@ -1,4 +1,3 @@
-import { logVisitChange } from './activity';
 import { ConvexError, v } from 'convex/values';
 import { authedMutation, visitAccess } from './lib';
 import { validScore } from '../shared';
@@ -48,7 +47,6 @@ export const save = authedMutation({
     if (args.score === null) {
       if (existing) {
         await ctx.db.delete(existing._id);
-        await logVisitChange(ctx, args.visitId, ctx.userId, `cleared ${args.kind} rating on`);
       }
       return null;
     }
@@ -72,12 +70,6 @@ export const save = authedMutation({
         throw new ConvexError('This visit has reached its 2,000-rating limit.');
       await ctx.db.insert('ratings', fields);
     }
-    await logVisitChange(
-      ctx,
-      args.visitId,
-      ctx.userId,
-      `${existing ? 'updated' : 'added'} ${args.kind} rating to ${fields.score}/10 on`,
-    );
     return null;
   },
 });

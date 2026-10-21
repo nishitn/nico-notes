@@ -1,0 +1,172 @@
+diff --git a/android/src/main/java/com/swmansion/rnscreens/gamma/tabs/host/CenteredTabTooltip.kt b/android/src/main/java/com/swmansion/rnscreens/gamma/tabs/host/CenteredTabTooltip.kt
+new file mode 100644
+index 0000000000000000000000000000000000000000..738d0b69527760e0e3533170a10b919adcba01d1
+--- /dev/null
++++ b/android/src/main/java/com/swmansion/rnscreens/gamma/tabs/host/CenteredTabTooltip.kt
+@@ -0,0 +1,124 @@
++package com.swmansion.rnscreens.gamma.tabs.host
++
++import android.graphics.Color
++import android.graphics.Rect
++import android.graphics.drawable.GradientDrawable
++import android.view.Gravity
++import android.view.MotionEvent
++import android.view.View
++import android.view.ViewConfiguration
++import android.view.accessibility.AccessibilityManager
++import android.widget.PopupWindow
++import android.widget.TextView
++import androidx.core.content.getSystemService
++import com.google.android.material.R
++import com.google.android.material.color.MaterialColors
++import java.lang.ref.WeakReference
++
++/** Keeps native tab hints centered over the tab instead of the pointer. */
++internal class CenteredTabTooltip(private val anchor: View) : View.OnAttachStateChangeListener {
++    private var text: CharSequence? = null
++    private var popup: PopupWindow? = null
++    private var pending = false
++    private val showHint = Runnable {
++        pending = false
++        show(fromTouch = false)
++    }
++    private val hideHint = Runnable { dismiss() }
++
++    init {
++        anchor.addOnAttachStateChangeListener(this)
++    }
++
++    fun bind(text: CharSequence?) {
++        this.text = text
++        anchor.setOnLongClickListener {
++            show(fromTouch = true)
++            true
++        }
++        anchor.setOnTouchListener { _, event ->
++            if (event.actionMasked == MotionEvent.ACTION_DOWN) dismiss()
++            false
++        }
++        anchor.setOnHoverListener { _, event ->
++            val accessibility = anchor.context.getSystemService<AccessibilityManager>()
++            if (accessibility?.isTouchExplorationEnabled != true && anchor.isEnabled) {
++                when (event.actionMasked) {
++                    MotionEvent.ACTION_HOVER_ENTER, MotionEvent.ACTION_HOVER_MOVE -> {
++                        if (!pending && popup == null) {
++                            pending = true
++                            anchor.postDelayed(showHint, ViewConfiguration.getLongPressTimeout().toLong())
++                        }
++                    }
++                    MotionEvent.ACTION_HOVER_EXIT -> dismiss()
++                }
++            }
++            false
++        }
++    }
++
++    private fun dp(value: Int) = (value * anchor.resources.displayMetrics.density).toInt()
++
++    private fun show(fromTouch: Boolean) {
++        dismiss()
++        if (!anchor.isAttachedToWindow || !anchor.isShown || !anchor.isEnabled || text.isNullOrBlank()) return
++        activeTooltip?.get()?.dismiss()
++        activeTooltip = WeakReference(this)
++
++        val frame = Rect()
++        anchor.getWindowVisibleDisplayFrame(frame)
++        val margin = dp(8)
++        val availableWidth = frame.width() - margin * 2
++        if (availableWidth <= 0) return
++
++        val label = TextView(anchor.context).apply {
++            text = this@CenteredTabTooltip.text
++            textSize = 14f
++            setTextColor(MaterialColors.getColor(anchor, R.attr.colorOnSurfaceInverse, Color.WHITE))
++            setPadding(dp(8), dp(4), dp(8), dp(4))
++            background = GradientDrawable().apply {
++                setColor(MaterialColors.getColor(anchor, R.attr.colorSurfaceInverse, Color.DKGRAY))
++                cornerRadius = dp(4).toFloat()
++            }
++            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
++            measure(
++                View.MeasureSpec.makeMeasureSpec(availableWidth, View.MeasureSpec.AT_MOST),
++                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
++            )
++        }
++        val location = IntArray(2)
++        anchor.getLocationOnScreen(location)
++        val left = (location[0] + (anchor.width - label.measuredWidth) / 2)
++            .coerceIn(frame.left + margin, frame.right - margin - label.measuredWidth)
++
++        popup = PopupWindow(label, label.measuredWidth, label.measuredHeight, false).apply {
++            isTouchable = false
++            isClippingEnabled = true
++            // The dropdown API keeps window insets and anchor coordinates in sync.
++            // A negative vertical offset places the hint just above the tab.
++            showAsDropDown(
++                anchor,
++                left - location[0],
++                -anchor.height - label.measuredHeight - margin,
++                Gravity.LEFT,
++            )
++        }
++        anchor.postDelayed(hideHint, if (fromTouch) 1500L else 10000L)
++    }
++
++    private fun dismiss() {
++        anchor.removeCallbacks(showHint)
++        anchor.removeCallbacks(hideHint)
++        pending = false
++        popup?.dismiss()
++        popup = null
++        if (activeTooltip?.get() === this) activeTooltip = null
++    }
++
++    override fun onViewAttachedToWindow(view: View) = Unit
++    override fun onViewDetachedFromWindow(view: View) = dismiss()
++
++    companion object {
++        private var activeTooltip: WeakReference<CenteredTabTooltip>? = null
++    }
++}
+diff --git a/android/src/main/java/com/swmansion/rnscreens/gamma/tabs/host/TabsHostA11yCoordinator.kt b/android/src/main/java/com/swmansion/rnscreens/gamma/tabs/host/TabsHostA11yCoordinator.kt
+index 7c913bd9cbd058a9ad6e7515ef366667d141abc7..31a8631c8d085dabffed71297d6da2775bed76fa 100644
+--- a/android/src/main/java/com/swmansion/rnscreens/gamma/tabs/host/TabsHostA11yCoordinator.kt
++++ b/android/src/main/java/com/swmansion/rnscreens/gamma/tabs/host/TabsHostA11yCoordinator.kt
+@@ -3,10 +3,12 @@ package com.swmansion.rnscreens.gamma.tabs.host
+ import android.os.Build
+ import android.view.MenuItem
+ import androidx.core.view.get
++import androidx.appcompat.widget.TooltipCompat
+ import com.google.android.material.bottomnavigation.BottomNavigationView
+ import com.google.android.material.navigation.NavigationBarItemView
+ import com.swmansion.rnscreens.gamma.tabs.screen.TabsScreen
+ import com.swmansion.rnscreens.gamma.tabs.screen.TabsScreenFragment
++import com.swmansion.rnscreens.R
+ 
+ class TabsHostA11yCoordinator(
+     private val bottomNavigationView: BottomNavigationView,
+@@ -26,6 +28,14 @@ class TabsHostA11yCoordinator(
+ 
+         // when matching view by id, espresso driver seems to look for tag property
+         menuView.tag = tabsScreen.tabBarItemTestID
++
++        // Android's default tooltip follows the pointer instead of the tab.
++        TooltipCompat.setTooltipText(menuView, null)
++        val tooltip = menuView.getTag(R.id.rns_centered_tab_tooltip) as? CenteredTabTooltip
++            ?: CenteredTabTooltip(menuView).also {
++                menuView.setTag(R.id.rns_centered_tab_tooltip, it)
++            }
++        tooltip.bind(menuItem.title)
+     }
+ 
+     fun setA11yPropertiesToAllTabItems() {
+diff --git a/android/src/main/res/base/values/rns_tooltip.xml b/android/src/main/res/base/values/rns_tooltip.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..36477f5ef2138a7ae71ae843b63781f01729d9f7
+--- /dev/null
++++ b/android/src/main/res/base/values/rns_tooltip.xml
+@@ -0,0 +1,4 @@
++<?xml version="1.0" encoding="utf-8"?>
++<resources>
++    <item name="rns_centered_tab_tooltip" type="id" />
++</resources>

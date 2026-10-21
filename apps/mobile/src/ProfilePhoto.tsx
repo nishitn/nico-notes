@@ -24,6 +24,7 @@ import { Avatar, Button, colors, ErrorNote, useTask } from './ui';
 import { photoOrigin } from './photos';
 import { ProfilePhotoCropper } from './ProfilePhotoCropper';
 import type { SquareCrop } from './profilePhotoCrop';
+import { launchPhotoPicker, type PhotoSource } from './photoPicker';
 
 export function ProfilePhoto({ name, image }: { name: string; image?: string }) {
   const token = useAuthToken();
@@ -36,8 +37,8 @@ export function ProfilePhoto({ name, image }: { name: string; image?: string }) 
   const { width } = useWindowDimensions();
   const task = useTask();
 
-  async function choosePhoto(camera: boolean) {
-    if (camera) {
+  async function choosePhoto(source: PhotoSource) {
+    if (source === 'camera') {
       const permission = await ImagePicker.requestCameraPermissionsAsync();
       if (!permission.granted) {
         Alert.alert(
@@ -51,14 +52,7 @@ export function ProfilePhoto({ name, image }: { name: string; image?: string }) 
         return;
       }
     }
-    const options: ImagePicker.ImagePickerOptions = {
-      mediaTypes: ['images'],
-      allowsEditing: false,
-      quality: 1,
-    };
-    const result = camera
-      ? await ImagePicker.launchCameraAsync(options)
-      : await ImagePicker.launchImageLibraryAsync(options);
+    const result = await launchPhotoPicker(source);
     if (result.canceled) return;
     if (!token) throw new Error('Sign in again to change your image.');
     const asset = result.assets[0];
@@ -155,7 +149,7 @@ export function ProfilePhoto({ name, image }: { name: string; image?: string }) 
                 contentStyle={menu.option}
                 labelStyle={menu.label}
                 disabled={task.busy}
-                onPress={() => void task.run(() => choosePhoto(true))}
+                onPress={() => void task.run(() => choosePhoto('camera'))}
               >
                 Take photo
               </MaterialButton>
@@ -165,7 +159,7 @@ export function ProfilePhoto({ name, image }: { name: string; image?: string }) 
                 contentStyle={menu.option}
                 labelStyle={menu.label}
                 disabled={task.busy}
-                onPress={() => void task.run(() => choosePhoto(false))}
+                onPress={() => void task.run(() => choosePhoto('library'))}
               >
                 Choose from library
               </MaterialButton>

@@ -1,16 +1,18 @@
+import { PlaceLookupNotice } from './PlaceLookupNotice';
 import { useCallback, useEffect, useState } from 'react';
-import { BackHandler, FlatList, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  BackHandler,
+  FlatList,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { Image } from 'expo-image';
 import { router, useFocusEffect, useIsFocused } from 'expo-router';
-import {
-  Button as MaterialButton,
-  Divider,
-  FAB,
-  Icon,
-  IconButton,
-  List,
-  Searchbar,
-} from 'react-native-paper';
+import { Button as MaterialButton, Divider, FAB, Icon, IconButton, List } from 'react-native-paper';
 import { usePaginatedQuery } from './convexLive';
 import { api } from '@nico-notes/backend/api';
 import type { ScreenProps } from './navigation';
@@ -24,6 +26,8 @@ import { useJournal } from './JournalContext';
 import { distanceBetween, formatDistance } from './placeSearch';
 import { useCurrentLocation } from './useCurrentLocation';
 import { PlaceTopBar } from './screens/Places';
+import { SearchField } from './SearchField';
+import { VerticalScrollView, renderVerticalScrollView } from './VerticalScrollView';
 
 type Props = {
   navigation: ScreenProps<'Boards'>['navigation'] | ScreenProps<'Board'>['navigation'];
@@ -83,6 +87,8 @@ export function JournalScreen({ navigation, tab = 'home', section }: Props) {
   const newBoard = () => closeThen(() => navigation.navigate('BoardForm'));
   const joinBoard = () => closeThen(() => navigation.navigate('Join'));
   const newVisit = () => boardId && closeThen(() => navigation.navigate('VisitForm', { boardId }));
+  const newWishlist = () =>
+    boardId && closeThen(() => navigation.navigate('WishlistForm', { boardId }));
   const boardName =
     board?.board.name ?? boards.results.find((item) => item._id === boardId)?.name ?? 'Boards';
   const emptyBoards = boards.status !== 'LoadingFirstPage' && !boardId;
@@ -101,8 +107,8 @@ export function JournalScreen({ navigation, tab = 'home', section }: Props) {
 
   function renderHome() {
     return (
-      <ScrollView
-        style={styles.page}
+      <VerticalScrollView
+        containerStyle={styles.page}
         contentContainerStyle={journal.homeContent}
         keyboardShouldPersistTaps="handled"
       >
@@ -262,11 +268,16 @@ export function JournalScreen({ navigation, tab = 'home', section }: Props) {
             </View>
           ))}
         </View>
-      </ScrollView>
+      </VerticalScrollView>
     );
   }
 
   function renderVisits() {
+    const totalVisits =
+      visits.status === 'Exhausted'
+        ? visits.results.length
+        : (board?.board.visitCount ??
+          summaries?.find((summary) => summary._id === boardId)?.visitCount);
     const query = search.trim().toLowerCase();
     const filtered = !query
       ? visits.results
@@ -279,34 +290,25 @@ export function JournalScreen({ navigation, tab = 'home', section }: Props) {
         });
     return (
       <FlatList
+        renderScrollComponent={renderVerticalScrollView}
         style={styles.page}
         contentContainerStyle={journal.content}
         data={emptyBoards ? [] : filtered}
         keyExtractor={(visit) => visit._id}
         keyboardShouldPersistTaps="handled"
+        onEndReached={() => {
+          if (boardId && !query && visits.status === 'CanLoadMore') visits.loadMore(24);
+        }}
+        onEndReachedThreshold={0.4}
         ListHeaderComponent={
           <View style={{ gap: 18 }}>
-            <View style={journal.boardTitleRow}>
-              <Title style={{ flex: 1 }}>Visits</Title>
-              {boardId && (
-                <MaterialButton
-                  mode="contained"
-                  buttonColor={colors.rust}
-                  textColor={colors.paper}
-                  icon="plus"
-                  onPress={newVisit}
-                >
-                  Add visit
-                </MaterialButton>
-              )}
-            </View>
+            <Title>Visits</Title>
             {!!boardId && (
-              <Searchbar
+              <SearchField
                 placeholder="Search visits…"
                 accessibilityLabel="Search visits"
                 value={search}
                 onChangeText={setSearch}
-                style={journal.search}
               />
             )}
           </View>
@@ -315,11 +317,7 @@ export function JournalScreen({ navigation, tab = 'home', section }: Props) {
           <VisitCard
             visit={item}
             members={board?.members}
-            number={
-              visits.status === 'Exhausted'
-                ? visits.results.length - visits.results.indexOf(item)
-                : undefined
-            }
+            number={totalVisits != null ? totalVisits - visits.results.indexOf(item) : undefined}
             onPress={() => navigation.navigate('Visit', { visitId: item._id })}
           />
         )}
@@ -343,7 +341,7 @@ export function JournalScreen({ navigation, tab = 'home', section }: Props) {
                     ? visits.status === 'LoadingMore'
                       ? 'Searching visits…'
                       : 'No visits found matching your search.'
-                    : 'Save a place, a photo, and the little details you want to remember.'}
+                    : 'Save a place, an image, and the little details you want to remember.'}
               </Text>
               {emptyBoards ? (
                 <View style={styles.row}>
@@ -363,14 +361,12 @@ export function JournalScreen({ navigation, tab = 'home', section }: Props) {
           )
         }
         ListFooterComponent={
-          boardId && (visits.status === 'CanLoadMore' || visits.status === 'LoadingMore') ? (
-            <MaterialButton
-              loading={visits.status === 'LoadingMore'}
-              disabled={visits.status === 'LoadingMore'}
-              onPress={() => visits.loadMore(24)}
-            >
-              Load more visits
-            </MaterialButton>
+          boardId && visits.status === 'LoadingMore' ? (
+            <ActivityIndicator
+              accessibilityLabel="Loading more visits"
+              color={colors.rust}
+              style={{ marginVertical: 12 }}
+            />
           ) : null
         }
       />
@@ -385,6 +381,7 @@ export function JournalScreen({ navigation, tab = 'home', section }: Props) {
     );
     return (
       <FlatList
+        renderScrollComponent={renderVerticalScrollView}
         style={styles.page}
         contentContainerStyle={journal.content}
         data={emptyBoards ? [] : filtered}
@@ -392,35 +389,25 @@ export function JournalScreen({ navigation, tab = 'home', section }: Props) {
         keyboardShouldPersistTaps="handled"
         ListHeaderComponent={
           <View style={{ gap: 16 }}>
-            <View style={journal.boardTitleRow}>
-              <View style={{ flex: 1, gap: 4 }}>
-                <Title>Wishlist</Title>
-                <Text style={styles.muted}>
-                  {wishlist.results.length}
-                  {wishlist.status === 'Exhausted' ? '' : '+'}{' '}
-                  {wishlist.results.length === 1 ? 'place' : 'places'} to visit
-                </Text>
-              </View>
-              {boardId && (
-                <MaterialButton
-                  mode="contained"
-                  buttonColor={colors.rust}
-                  textColor={colors.paper}
-                  icon="plus"
-                  onPress={() => navigation.navigate('WishlistForm', { boardId })}
-                >
-                  Add place
-                </MaterialButton>
-              )}
+            <View style={{ gap: 4 }}>
+              <Title>Wishlist</Title>
+              <Text style={styles.muted}>
+                {wishlist.results.length}
+                {wishlist.status === 'Exhausted' ? '' : '+'}{' '}
+                {wishlist.results.length === 1 ? 'place' : 'places'} to visit
+              </Text>
             </View>
+            <PlaceLookupNotice
+              placeIds={wishlist.results.flatMap((item) =>
+                item.googlePlaceId ? [item.googlePlaceId] : [],
+              )}
+            />
             {wishlist.results.length > 0 && (
-              <Searchbar
+              <SearchField
                 placeholder="Search wishlist…"
+                accessibilityLabel="Search wishlist"
                 value={wishlistSearch}
                 onChangeText={setWishlistSearch}
-                style={journal.search}
-                inputStyle={styles.body}
-                iconColor={colors.rust}
               />
             )}
           </View>
@@ -445,7 +432,7 @@ export function JournalScreen({ navigation, tab = 'home', section }: Props) {
                 <View style={{ flex: 1, gap: 6 }}>
                   <Text style={journal.wishlistTitle}>{item.title}</Text>
                   {!!(distance || item.place) && (
-                    <Text style={styles.muted} numberOfLines={2}>
+                    <Text style={styles.muted} numberOfLines={1}>
                       {[distance, item.place].filter(Boolean).join(' · ')}
                     </Text>
                   )}
@@ -721,6 +708,18 @@ export function JournalScreen({ navigation, tab = 'home', section }: Props) {
         </ScrollView>
       )}
 
+      {section && boardId && focused && (
+        <FAB
+          icon="plus"
+          label={section === 'wishlist' ? 'Add to Wishlist' : 'Add Visit'}
+          accessibilityLabel={section === 'wishlist' ? 'Add to Wishlist' : 'Add Visit'}
+          visible={!keyboardOpen}
+          onPress={section === 'wishlist' ? newWishlist : newVisit}
+          style={journal.addVisit}
+          color={colors.paper}
+        />
+      )}
+
       {tab === 'home' && focused && !section && (
         <FAB.Group
           open={createOpen}
@@ -732,16 +731,15 @@ export function JournalScreen({ navigation, tab = 'home', section }: Props) {
               ? [
                   {
                     icon: 'book-plus-outline',
-                    label: 'New visit',
+                    label: 'Add Visit',
                     onPress: newVisit,
                     color: colors.primary,
                     style: { backgroundColor: colors.paper },
                   },
                   {
                     icon: 'bookmark-outline',
-                    label: 'New wishlist',
-                    onPress: () =>
-                      closeThen(() => navigation.navigate('WishlistForm', { boardId })),
+                    label: 'Add to Wishlist',
+                    onPress: newWishlist,
                     color: colors.primary,
                     style: { backgroundColor: colors.paper },
                   },
@@ -837,11 +835,6 @@ const journal = StyleSheet.create({
     overflow: 'hidden',
   },
   initials: { fontFamily: 'JakartaSemiBold', fontSize: 10, color: colors.rust },
-  search: {
-    backgroundColor: colors.paper,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
   wishlistCard: {
     padding: 16,
     borderRadius: 18,
@@ -887,4 +880,5 @@ const journal = StyleSheet.create({
     borderColor: colors.border,
   },
   createActions: { position: 'absolute', left: 0, right: 0, bottom: 0, paddingBottom: 0 },
+  addVisit: { position: 'absolute', right: 22, bottom: 22, backgroundColor: colors.primary },
 });

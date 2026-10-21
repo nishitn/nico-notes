@@ -4,6 +4,12 @@ import { v } from 'convex/values';
 
 export const accent = v.union(v.literal('coral'), v.literal('sage'), v.literal('peach'));
 export const memberRole = v.union(v.literal('admin'), v.literal('member'));
+export const notificationMessage = v.object({
+  prefix: v.string(),
+  title: v.string(),
+  suffix: v.string(),
+  googlePlaceId: v.optional(v.string()),
+});
 export const photoStorage = v.union(v.literal('convex'), v.literal('local'));
 export const targetKind = v.union(v.literal('overall'), v.literal('dish'), v.literal('category'));
 export const locationValidator = v.object({
@@ -81,6 +87,7 @@ const schema = defineSchema({
     userId: v.id('users'),
     role: v.optional(memberRole),
     notificationsReadAt: v.optional(v.number()),
+    notificationReadIds: v.optional(v.array(v.id('boardChanges'))),
   })
     .index('by_userId', ['userId'])
     .index('by_boardId', ['boardId'])
@@ -97,6 +104,8 @@ const schema = defineSchema({
     actorId: v.optional(v.id('users')),
     summary: v.string(),
     visitId: v.optional(v.id('visits')),
+    message: v.optional(notificationMessage),
+    memberChange: v.optional(v.object({ userId: v.id('users'), role: v.optional(memberRole) })),
   })
     .index('by_boardId', ['boardId'])
     .index('by_actorId', ['actorId'])

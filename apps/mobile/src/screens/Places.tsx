@@ -1,16 +1,16 @@
-import { GoogleAttribution } from '../GoogleAttribution';
-import { FlatList, Linking, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useState } from 'react';
+import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import { usePaginatedQuery, useQuery } from '../convexLive';
 import { Image } from 'expo-image';
 import { Icon } from 'react-native-paper';
-import Constants from 'expo-constants';
-import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import { api } from '@nico-notes/backend/api';
 import type { ScreenProps } from '../navigation';
-import { Button, colors, Loading, Page, SectionHeading, styles, Title } from '../ui';
+import { Button, colors, Page, styles, Title } from '../ui';
 import { BoardPlaces } from '../BoardPlaces';
 import { BoardPicker } from '../BoardPicker';
-import { VisitCard } from './Boards';
+import { PlaceVisitHistory } from '../PlaceVisitHistory';
+import { LinkPlaceModal } from '../LinkPlaceModal';
+import { PlaceOverview } from '../PlaceOverview';
 
 import type { Id } from '@nico-notes/backend/dataModel';
 
@@ -88,9 +88,11 @@ export function PlacesScreen({ route, navigation }: ScreenProps<'Places'>) {
         boards={boards}
       />
       <Page>
-        <Title>Places</Title>
+        <Title>Visited Places</Title>
         <BoardPlaces
           boardId={boardId}
+          showHeading={false}
+          showMap={false}
           showList
           onOpen={(place) =>
             navigation.navigate('Place', { boardId, placeId: place._id, name: place.name })
@@ -114,18 +116,14 @@ export function PlacesScreen({ route, navigation }: ScreenProps<'Places'>) {
 
 export function PlaceScreen({ route, navigation }: ScreenProps<'Place'>) {
   const { boardId, placeId, name } = route.params;
+  const [linkOpen, setLinkOpen] = useState(false);
   const board = useQuery(api.boards.get, { boardId });
   const boards = usePaginatedQuery(api.boards.list, {}, { initialNumItems: 24 });
   const placeDoc = useQuery(api.places.get, { placeId });
-  const visits = usePaginatedQuery(api.visits.list, { boardId, placeId }, { initialNumItems: 24 });
-  const address = placeDoc?.address ?? visits.results[0]?.place ?? '';
-  const location = placeDoc?.location ?? visits.results.find((v) => v.location)?.location;
-  const googlePlaceId = placeDoc?.googlePlaceId ?? visits.results[0]?.googlePlaceId;
-  const hasMap = Boolean(
-    Platform.OS === 'ios'
-      ? Constants.expoConfig?.extra?.hasIosMapsKey
-      : Constants.expoConfig?.extra?.hasAndroidMapsKey,
-  );
+  const address = placeDoc?.address ?? '';
+  const location = placeDoc?.location;
+  const googlePlaceId = placeDoc?.googlePlaceId;
+  const canAddLocation = !!placeDoc && !googlePlaceId && !location;
 
   const openGoogleMaps = () => {
     const query = location ? `${location.latitude},${location.longitude}` : `${name} ${address}`;
@@ -144,90 +142,22 @@ export function PlaceScreen({ route, navigation }: ScreenProps<'Place'>) {
         boards={boards}
       />
 
-      <FlatList
-        style={styles.page}
-        contentContainerStyle={styles.content}
-        data={visits.results}
-        keyExtractor={(visit) => visit._id}
-        ListHeaderComponent={
+      <PlaceVisitHistory
+        boardId={boardId}
+        placeId={placeId}
+        members={board?.members ?? []}
+        onOpen={(id) => navigation.navigate('Visit', { visitId: id })}
+        header={
           <View style={{ gap: 14 }}>
-            <View style={placeScreenStyles.titleBlock}>
-              <Title style={placeScreenStyles.titleText}>{placeDoc?.name ?? name}</Title>
-              {googlePlaceId && <GoogleAttribution placeId={googlePlaceId} />}
-              <View style={placeScreenStyles.locationRow}>
-                <View style={placeScreenStyles.locationLeft}>
-                  <Icon source="map-marker-outline" size={16} color={colors.rust} />
-                  <Text numberOfLines={2} style={placeScreenStyles.locationText}>
-                    {address || 'Location not recorded'}
-                  </Text>
-                </View>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={`Open ${name} in Google Maps`}
-                  hitSlop={8}
-                  onPress={openGoogleMaps}
-                  style={placeScreenStyles.mapsButton}
-                >
-                  <Icon source="google-maps" size={17} color={colors.rust} />
-                  <Text style={placeScreenStyles.mapsButtonText}>Maps</Text>
-                  <Icon source="open-in-new" size={13} color={colors.rust} />
-                </Pressable>
-              </View>
-            </View>
-
-            {location && hasMap ? (
-              <View style={placeScreenStyles.mapContainer}>
-                <MapView
-                  provider={PROVIDER_GOOGLE}
-                  style={placeScreenStyles.map}
-                  initialRegion={{
-                    latitude: location.latitude,
-                    longitude: location.longitude,
-                    latitudeDelta: 0.007,
-                    longitudeDelta: 0.007,
-                  }}
-                  scrollEnabled={false}
-                  zoomEnabled={true}
-                  rotateEnabled={false}
-                  pitchEnabled={false}
-                  toolbarEnabled={false}
-                  showsUserLocation={false}
-                  showsMyLocationButton={false}
-                >
-                  <Marker coordinate={location} title={name} description={address}>
-                    <View style={placeScreenStyles.pin}>
-                      <Icon source="heart" size={16} color={colors.paper} />
-                    </View>
-                  </Marker>
-                </MapView>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Open in Google Maps"
-                  style={placeScreenStyles.mapOverlayButton}
-                  onPress={openGoogleMaps}
-                >
-                  <Icon source="google-maps" size={15} color={colors.rust} />
-                  <Text style={placeScreenStyles.mapOverlayText}>Open in Google Maps</Text>
-                  <Icon source="open-in-new" size={13} color={colors.rust} />
-                </Pressable>
-              </View>
-            ) : address ? (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Open address in Google Maps"
-                style={placeScreenStyles.mapFallbackCard}
-                onPress={openGoogleMaps}
-              >
-                <Icon source="map-marker-outline" size={28} color={colors.rust} />
-                <View style={{ flex: 1, gap: 2 }}>
-                  <Text style={placeScreenStyles.mapFallbackTitle}>Find on Google Maps</Text>
-                  <Text numberOfLines={1} style={styles.muted}>
-                    Tap to search for this place and get directions.
-                  </Text>
-                </View>
-                <Icon source="open-in-new" size={18} color={colors.rust} />
-              </Pressable>
-            ) : null}
+            <PlaceOverview
+              name={placeDoc?.name ?? name}
+              address={address}
+              location={location}
+              googlePlaceId={googlePlaceId}
+              showGoogleMaps={false}
+              openGoogleMaps={openGoogleMaps}
+              onAddLocation={canAddLocation ? () => setLinkOpen(true) : undefined}
+            />
 
             <Button
               title="Add another visit"
@@ -242,42 +172,22 @@ export function PlaceScreen({ route, navigation }: ScreenProps<'Place'>) {
                 })
               }
             />
-            <SectionHeading
-              title="Your Visits"
-              count={`${visits.results.length}${visits.status === 'Exhausted' ? '' : '+'}`}
-              suffix="here"
-            />
           </View>
         }
-        renderItem={({ item, index }) => (
-          <VisitCard
-            visit={item}
-            members={board?.members}
-            number={
-              item.visitNumber ??
-              (visits.status === 'Exhausted' ? visits.results.length - index : undefined)
-            }
-            onPress={() => navigation.navigate('Visit', { visitId: item._id })}
-          />
-        )}
-        ListEmptyComponent={
-          visits.status === 'LoadingFirstPage' ? (
-            <Loading />
-          ) : (
-            <Text style={styles.muted}>No visits found in loaded history.</Text>
-          )
-        }
-        ListFooterComponent={
-          visits.status === 'CanLoadMore' || visits.status === 'LoadingMore' ? (
-            <Button
-              title="Load older history"
-              secondary
-              disabled={visits.status === 'LoadingMore'}
-              onPress={() => visits.loadMore(24)}
-            />
-          ) : null
-        }
       />
+      {linkOpen && canAddLocation && (
+        <LinkPlaceModal
+          placeId={placeId}
+          name={placeDoc?.name ?? name}
+          address={address}
+          location={location}
+          onClose={() => setLinkOpen(false)}
+          onLinked={(linkedId, linkedName) => {
+            setLinkOpen(false);
+            navigation.replace('Place', { boardId, placeId: linkedId, name: linkedName });
+          }}
+        />
+      )}
     </View>
   );
 }
@@ -323,115 +233,5 @@ const placeScreenStyles = StyleSheet.create({
   },
   boardPickerSlot: {
     flexShrink: 0,
-  },
-  titleBlock: {
-    gap: 6,
-  },
-  titleText: {
-    marginBottom: 0,
-  },
-  locationRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 8,
-  },
-  locationLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    flex: 1,
-    minWidth: 0,
-  },
-  locationText: {
-    fontFamily: 'Jakarta',
-    fontSize: 13,
-    color: colors.muted,
-    flex: 1,
-  },
-  mapsButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 9,
-    paddingVertical: 4,
-    borderRadius: 14,
-    backgroundColor: colors.coralLight,
-    borderWidth: 1,
-    borderColor: '#F2D4C9',
-  },
-  mapsButtonText: {
-    fontFamily: 'JakartaSemiBold',
-    fontSize: 12,
-    color: colors.rust,
-  },
-  mapContainer: {
-    height: 190,
-    borderRadius: 16,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.paper,
-    position: 'relative',
-    marginVertical: 4,
-  },
-  map: {
-    width: '100%',
-    height: '100%',
-  },
-  pin: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: colors.rust,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: colors.paper,
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOpacity: 0.2,
-    shadowRadius: 3,
-    shadowOffset: { width: 0, height: 2 },
-  },
-  mapOverlayButton: {
-    position: 'absolute',
-    bottom: 10,
-    right: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    backgroundColor: colors.paper,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: colors.border,
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOpacity: 0.15,
-    shadowRadius: 3,
-    shadowOffset: { width: 0, height: 1 },
-  },
-  mapOverlayText: {
-    fontFamily: 'JakartaSemiBold',
-    fontSize: 12,
-    color: colors.rust,
-  },
-  mapFallbackCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    padding: 14,
-    borderRadius: 16,
-    backgroundColor: colors.coralLight,
-    borderWidth: 1,
-    borderColor: '#F2D4C9',
-    marginVertical: 4,
-  },
-  mapFallbackTitle: {
-    fontFamily: 'JakartaSemiBold',
-    fontSize: 14,
-    color: colors.rust,
   },
 });

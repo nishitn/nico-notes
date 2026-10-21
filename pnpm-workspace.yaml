@@ -10,3 +10,4 @@ overrides:
   'vitest@*': 4.1.11
 patchedDependencies:
   '@expo/ui@57.0.25': patches/@expo__ui@57.0.25.patch
+  react-native-screens@4.26.2: patches/react-native-screens@4.26.2.patch

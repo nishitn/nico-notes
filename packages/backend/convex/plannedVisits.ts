@@ -84,6 +84,6 @@ export async function completePlannedVisit(
   }
   await syncPlace(ctx, place._id);
   await bumpVisitCount(ctx, visit.boardId, 1);
-  await logVisitChange(ctx, visit._id, await requireUser(ctx), 'marked as visited:');
+  await logVisitChange(ctx, visit._id, await requireUser(ctx), 'marked ', ' as visited');
   return visit._id;
 }

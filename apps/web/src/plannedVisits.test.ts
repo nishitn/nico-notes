@@ -36,7 +36,7 @@ vi.mock('convex/react', () => ({
   },
 }));
 vi.mock('./Photos', () => ({
-  PhotoSection: () => createElement('section', { 'aria-label': 'Photos' }),
+  PhotoSection: () => createElement('section', { 'aria-label': 'Images' }),
   usePhotoUpload: () => ({}),
 }));
 function page() {
@@ -60,7 +60,7 @@ describe('shared visit page lifecycle', () => {
     expect(html).toContain('Mark as visited');
     expect(html).toContain('Cinnamon rolls and cold brew');
     expect(html).toContain('Cold brew');
-    expect(html).toContain('aria-label="Photos"');
+    expect(html).toContain('aria-label="Images"');
     expect(html).toContain('https://example.com/menu');
     expect(html).not.toContain('visit-ratings');
     expect(html).not.toContain('individual-ratings');

@@ -222,7 +222,7 @@ export function HelpPage() {
       <p>
         <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a> · Version {APP_VERSION}
       </p>
-      <p>Please keep passwords, tokens and private photos out of support requests.</p>
+      <p>Please keep passwords, tokens and private images out of support requests.</p>
       {sent ? (
         <p role="status">Your request was sent to support.</p>
       ) : (

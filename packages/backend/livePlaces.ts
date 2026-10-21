@@ -6,20 +6,29 @@ export type LivePlace = {
   attributions?: string[];
 };
 
+export function isPlacePlaceholder(name: string) {
+  return ['Saved Google place', 'Loading place…', 'Place details unavailable'].includes(name);
+}
+
 /** Pure projection: live SDK content is never sent back to Convex by this helper. */
-export function projectLivePlaces<T>(value: T, lookup: (id: string) => LivePlace | undefined): T {
-  if (Array.isArray(value)) return value.map((item) => projectLivePlaces(item, lookup)) as T;
+export function projectLivePlaces<T>(
+  value: T,
+  lookup: (id: string) => LivePlace | undefined,
+  fallback: (id: string) => string = () => 'Saved Google place',
+): T {
+  if (Array.isArray(value))
+    return value.map((item) => projectLivePlaces(item, lookup, fallback)) as T;
   if (!value || typeof value !== 'object') return value;
   const record = value as Record<string, unknown>;
   const result = Object.fromEntries(
-    Object.entries(record).map(([key, item]) => [key, projectLivePlaces(item, lookup)]),
+    Object.entries(record).map(([key, item]) => [key, projectLivePlaces(item, lookup, fallback)]),
   );
   const id = record.googlePlaceId;
   if (typeof id === 'string' && id) {
     const place = lookup(id);
     // Never fall back to historical persisted SDK content after a failed lookup.
-    if ('title' in record) result.title = place?.name ?? 'Saved Google place';
-    if ('name' in record) result.name = place?.name ?? 'Saved Google place';
+    if ('title' in record) result.title = place?.name ?? fallback(id);
+    if ('name' in record) result.name = place?.name ?? fallback(id);
     if ('place' in record) result.place = place?.address ?? '';
     if ('address' in record) result.address = place?.address ?? '';
     result.location = place?.location;

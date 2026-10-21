@@ -4,11 +4,9 @@ import { Icon } from 'react-native-paper';
 import { ConvexError } from 'convex/values';
 import {
   ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -18,6 +16,8 @@ import {
   type TextStyle,
   type ViewStyle,
 } from 'react-native';
+import { showAlert } from './alertState';
+import { VerticalScrollView } from './VerticalScrollView';
 
 export const colors = {
   background: '#FAF7F2',
@@ -105,20 +105,27 @@ export const styles = StyleSheet.create({
   },
   error: { color: colors.error, fontSize: 14, lineHeight: 21 },
 });
-export function Page({ children }: { children: ReactNode }) {
+export function Page({
+  children,
+  contentContainerStyle,
+}: {
+  children: ReactNode;
+  contentContainerStyle?: StyleProp<ViewStyle>;
+}) {
   return (
     <KeyboardAvoidingView
       style={styles.page}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <ScrollView
+      <VerticalScrollView
+        containerStyle={{ flex: 1 }}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
         automaticallyAdjustKeyboardInsets={Platform.OS === 'android'}
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, contentContainerStyle]}
       >
         {children}
-      </ScrollView>
+      </VerticalScrollView>
     </KeyboardAvoidingView>
   );
 }
@@ -146,12 +153,27 @@ export function SectionHeading({
   suffix?: string;
 }) {
   return (
-    <View style={styles.sectionRow}>
-      <Heading>{title}</Heading>
+    <View style={[styles.sectionRow, { flexWrap: 'nowrap' }]}>
+      <View style={{ flex: 1 }}>
+        <Heading>{title}</Heading>
+      </View>
       {count !== undefined && (
-        <View style={styles.row}>
-          <Text style={{ fontFamily: 'Epilogue', fontSize: 24, color: colors.rust }}>{count}</Text>
-          <Text style={styles.muted}>{suffix}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', flexShrink: 0, gap: 4 }}>
+          <Text
+            numberOfLines={1}
+            style={{ fontFamily: 'Epilogue', fontSize: 24, lineHeight: 30, color: colors.rust }}
+          >
+            {count}
+          </Text>
+          {suffix ? (
+            <Text
+              numberOfLines={1}
+              // Jakarta's visible letters sit lower than Epilogue's numerals in centered line boxes.
+              style={[styles.muted, { transform: [{ translateY: -3 }] }]}
+            >
+              {suffix}
+            </Text>
+          ) : null}
         </View>
       )}
     </View>
@@ -332,7 +354,7 @@ export function confirm(
   work: () => void,
   consequence = 'This change takes effect immediately. Contact support if you need help undoing it; recovery requires verification and is not guaranteed.',
 ) {
-  Alert.alert(title, consequence, [
+  showAlert(title, consequence, [
     { text: 'Cancel', style: 'cancel' },
     { text: 'Confirm', style: 'destructive', onPress: work },
   ]);

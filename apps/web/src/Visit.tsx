@@ -1,3 +1,5 @@
+import { PlaceLookupNotice } from './PlaceLookupNotice';
+import { isPlacePlaceholder } from '@nico-notes/backend/livePlaces';
 import { useLivePlace } from './convexLive';
 import { GoogleAttribution } from './GoogleAttribution';
 import { useState } from 'react';
@@ -120,7 +122,7 @@ function Editor({
   const [locationDraft, setLocation] = useState<MapLocation | null>(initialLocation);
   const livePlace = useLivePlace(googlePlaceId);
   const title =
-    livePlace && (!titleDraft || titleDraft === 'Saved Google place') ? livePlace.name : titleDraft;
+    livePlace && (!titleDraft || isPlacePlaceholder(titleDraft)) ? livePlace.name : titleDraft;
   const place = placeDraft || livePlace?.address || '';
   const location = locationDraft ?? livePlace?.location ?? null;
 
@@ -323,6 +325,11 @@ function Editor({
           </div>
         )}
         <fieldset className="visit-editor-fields" disabled={task.busy || !!savedVisitId}>
+          {existing && (
+            <Field label="Visit type">
+              <input value={existing.typeName} readOnly />
+            </Field>
+          )}
           {!existing && (
             <>
               <Field label="What kind of visit?">
@@ -947,6 +954,7 @@ export function VisitPage() {
             )}
           </h1>
           {visit.googlePlaceId && <GoogleAttribution placeId={visit.googlePlaceId} />}
+          {visit.googlePlaceId && <PlaceLookupNotice placeIds={[visit.googlePlaceId]} />}
           <div className="visit-meta">
             {(!planned || visit.date) && (
               <span>
@@ -1168,7 +1176,7 @@ export function VisitPage() {
             navigate(`/boards/${board._id}`);
           }}
         >
-          This hides the visit, dishes, ratings and photos for everyone on the board. Contact
+          This hides the visit, dishes, ratings and images for everyone on the board. Contact
           support to request recovery after verification; recovery is not guaranteed.
         </Confirm>
       )}

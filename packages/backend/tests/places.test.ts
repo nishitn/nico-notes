@@ -44,6 +44,69 @@ async function setup() {
 afterEach(() => vi.useRealTimers());
 
 describe('Canonical places', () => {
+  it('lists the latest dated visit after backdating, edits and deletion, ignoring stale metadata', async () => {
+    const { create, get, admin, boardId, t } = await setup();
+    const latest = await create({ date: '2026-09-20' });
+    const earlier = await create({ date: '2026-09-01' });
+    const undated = await create({ date: '' });
+    const placeId = (await get(latest)).placeId!;
+    await t.run((ctx) => ctx.db.patch(placeId, { lastVisitDate: '2020-01-01' }));
+    const list = async () =>
+      (
+        await admin.query(api.places.list, {
+          boardId,
+          paginationOpts: { cursor: null, numItems: 10 },
+        })
+      ).page[0];
+
+    expect(await list()).toMatchObject({
+      visitCount: 3,
+      lastVisitDate: '2026-09-20',
+      latestVisit: {
+        id: latest,
+        date: '2026-09-20',
+        creationTime: (await get(latest))._creationTime,
+      },
+    });
+    await admin.mutation(api.visits.update, {
+      visitId: earlier,
+      ...fields,
+      date: '2026-10-01',
+    });
+    expect(await list()).toMatchObject({
+      lastVisitDate: '2026-10-01',
+      latestVisit: { id: earlier, date: '2026-10-01' },
+    });
+    await admin.mutation(api.visits.remove, { visitId: earlier });
+    expect(await list()).toMatchObject({
+      visitCount: 2,
+      lastVisitDate: '2026-09-20',
+      latestVisit: { id: latest },
+    });
+    await admin.mutation(api.visits.remove, { visitId: latest });
+    expect((await list()).lastVisitDate).toBeUndefined();
+    expect((await list()).latestVisit).toEqual({
+      id: undated,
+      date: '',
+      creationTime: (await get(undated))._creationTime,
+    });
+  });
+
+  it('uses the latest repeat visit for each place, including same-day and undated visits', async () => {
+    const { create, admin, boardId } = await setup();
+    await create();
+    const repeat = await create();
+    await create({ title: 'Undated place', date: '' });
+    const undatedRepeat = await create({ title: 'Undated place', date: '' });
+    const { page } = await admin.query(api.places.list, {
+      boardId,
+      paginationOpts: { cursor: null, numItems: 10 },
+    });
+    expect(page.map((place) => place.latestVisit?.id).sort()).toEqual(
+      [repeat, undatedRepeat].sort(),
+    );
+  });
+
   it('matches normalized names and addresses, then prefers Google identity and canonical snapshots', async () => {
     const { t, create, get } = await setup();
     const first = await create({ location: { latitude: 12, longitude: 77 } });

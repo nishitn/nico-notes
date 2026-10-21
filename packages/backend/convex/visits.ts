@@ -184,6 +184,7 @@ export const get = authedQuery({
   args: { visitId: v.id('visits') },
   returns: v.object({
     visit: schema.doc('visits'),
+    historyPlaceId: v.optional(v.union(v.id('places'), v.null())),
     board: schema.doc('boards'),
     categories: v.array(schema.doc('categories')),
     dishes: v.array(schema.doc('dishes')),
@@ -204,6 +205,27 @@ export const get = authedQuery({
   }),
   handler: async (ctx, { visitId }) => {
     const { visit, board, isAdmin } = await visitAccess(ctx, visitId);
+    // Wishlist entries do not create visited places. Match an existing place
+    // using the same durable identity as completed visits, without changing it.
+    const historyPlace = visit.placeId
+      ? await ctx.db.get(visit.placeId)
+      : visit.status !== 'planned'
+        ? null
+        : visit.googlePlaceId
+          ? await ctx.db
+              .query('places')
+              .withIndex('by_boardId_and_googlePlaceId', (q) =>
+                q.eq('boardId', board._id).eq('googlePlaceId', visit.googlePlaceId),
+              )
+              .first()
+          : await ctx.db
+              .query('places')
+              .withIndex('by_boardId_and_matchKey', (q) =>
+                q
+                  .eq('boardId', board._id)
+                  .eq('matchKey', normalizedPlaceKey(visit.title, visit.place)),
+              )
+              .first();
     const ratings = await ctx.db
       .query('ratings')
       .withIndex('by_visitId', (q) => q.eq('visitId', visitId))
@@ -214,6 +236,7 @@ export const get = authedQuery({
       .take(MAX_MEMBERS);
     return {
       visit,
+      historyPlaceId: historyPlace?.boardId === board._id ? historyPlace._id : null,
       board,
       ratings,
       isAdmin,
@@ -407,7 +430,8 @@ export const create = authedMutation({
       ctx,
       visitId,
       ctx.userId,
-      args.planned ? 'added to the wishlist:' : 'added a visit:',
+      args.planned ? 'added ' : 'added a visit to ',
+      args.planned ? ' to the wishlist' : '',
     );
     return visitId;
   },
@@ -536,7 +560,8 @@ export const remove = authedMutation({
       ctx,
       visitId,
       ctx.userId,
-      visit.status === 'planned' ? 'removed from the wishlist:' : 'deleted a visit:',
+      visit.status === 'planned' ? 'removed ' : 'deleted the visit to ',
+      visit.status === 'planned' ? ' from the wishlist' : '',
     );
     await deleteVisit(ctx, visitId);
     if (visit.placeId) await syncPlace(ctx, visit.placeId);
@@ -545,10 +570,44 @@ export const remove = authedMutation({
 });
 
 export const markVisited = authedMutation({
-  args: { visitId: v.id('visits'), date: v.string(), expectedRevision: v.optional(v.number()) },
+  args: {
+    visitId: v.id('visits'),
+    date: v.string(),
+    expectedRevision: v.optional(v.number()),
+    details: v.optional(
+      v.object({
+        notes: v.string(),
+        dishes: v.array(v.string()),
+        savedLink: v.optional(v.string()),
+      }),
+    ),
+  },
   returns: v.id('visits'),
-  handler: async (ctx, { visitId, date, expectedRevision }) => {
+  handler: async (ctx, { visitId, date, expectedRevision, details }) => {
     const { visit } = await visitAccess(ctx, visitId);
-    return completePlannedVisit(ctx, visit, date, expectedRevision);
+    // Retrying a completed save must not replace dishes or notes a second time.
+    if (visit.status !== 'planned') return visitId;
+    if (details && details.dishes.length > MAX_ITEMS)
+      throw new ConvexError('A visit can have up to 50 dishes.');
+    const dishes = details?.dishes.map((name) => textValue(name, 'Dish name'));
+    const savedLink = details ? safeLink(details.savedLink) : undefined;
+    await completePlannedVisit(ctx, visit, date, expectedRevision);
+    if (details && dishes) {
+      const previousDishes = await ctx.db
+        .query('dishes')
+        .withIndex('by_visitId', (q) => q.eq('visitId', visitId))
+        .take(MAX_ITEMS + 1);
+      if (previousDishes.length > MAX_ITEMS)
+        throw new ConvexError('This wishlist has too many dishes. Remove some before saving.');
+      for (const dish of previousDishes) await ctx.db.delete(dish._id);
+      for (const name of dishes) await ctx.db.insert('dishes', { visitId, name, description: '' });
+      await ctx.db.patch(visitId, {
+        notes: details.notes.trim().slice(0, 5000),
+        notesAuthorId: ctx.userId,
+        showDishes: visit.showDishes || dishes.length > 0,
+        savedLink,
+      });
+    }
+    return visitId;
   },
 });

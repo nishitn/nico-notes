@@ -1,13 +1,15 @@
 import { GoogleAttribution } from './GoogleAttribution';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
+  Easing,
   Modal,
   PanResponder,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -39,7 +41,11 @@ export function PlacePreview({
   onAdd: () => void;
   onWishlist?: () => void;
 }) {
+  const { height: windowHeight } = useWindowDimensions();
+  const [entranceY] = useState(() => new Animated.Value(windowHeight));
+  const entranceStarted = useRef(false);
   const [translateY] = useState(() => new Animated.Value(0));
+  useEffect(() => () => entranceY.stopAnimation(), [entranceY]);
   const drag = useMemo(
     () =>
       PanResponder.create({
@@ -58,7 +64,7 @@ export function PlacePreview({
     [onClose, translateY],
   );
   return (
-    <Modal transparent visible animationType="slide" onRequestClose={onClose}>
+    <Modal transparent visible animationType="none" onRequestClose={onClose}>
       <View style={preview.overlay}>
         <Pressable
           style={preview.backdrop}
@@ -67,7 +73,21 @@ export function PlacePreview({
           onPress={onClose}
         />
         <Animated.View
-          style={[preview.drawer, { transform: [{ translateY }] }]}
+          style={[
+            preview.drawer,
+            { transform: [{ translateY: Animated.add(entranceY, translateY) }] },
+          ]}
+          onLayout={({ nativeEvent }) => {
+            if (entranceStarted.current) return;
+            entranceStarted.current = true;
+            entranceY.setValue(nativeEvent.layout.height);
+            Animated.timing(entranceY, {
+              toValue: 0,
+              duration: 220,
+              easing: Easing.out(Easing.cubic),
+              useNativeDriver: true,
+            }).start();
+          }}
           accessibilityViewIsModal
           onAccessibilityEscape={onClose}
         >
@@ -98,7 +118,11 @@ export function PlacePreview({
                 </Pressable>
               </View>
               {(googlePlaceId || isNew) && (
-                <GoogleAttribution placeId={googlePlaceId} attributions={attributions} />
+                <GoogleAttribution
+                  placeId={googlePlaceId}
+                  attributions={attributions}
+                  showGoogleMaps={false}
+                />
               )}
               <View style={preview.actions}>
                 <Pressable

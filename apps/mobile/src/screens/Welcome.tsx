@@ -60,7 +60,7 @@ export function WelcomeScreen({
               Your shared{'\n'}visit journal.
             </Text>
             <Text style={welcome.description}>
-              Keep places, photos, and ratings together on private boards.
+              Keep places, images, and ratings together on private boards.
             </Text>
           </View>
         </View>

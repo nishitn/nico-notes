@@ -1,11 +1,13 @@
+import { isPlacePlaceholder } from '@nico-notes/backend/livePlaces';
 import { PlaceMapMarker } from '../PlaceMapMarker';
 import { useLivePlace } from '../convexLive';
 import { GoogleAttribution } from '../GoogleAttribution';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import {
   ActivityIndicator,
-  Alert,
   Keyboard,
+  KeyboardAvoidingView,
   Linking,
   Modal,
   Platform,
@@ -39,6 +41,7 @@ import { useConvex, useMutation, usePaginatedQuery, useQuery } from '../convexLi
 import { api } from '@nico-notes/backend/api';
 import type { Doc, Id } from '@nico-notes/backend/dataModel';
 import { MAX_PHOTOS, MAX_PHOTO_BYTES, validDate } from '@nico-notes/backend/shared';
+import { preferVisitedPlaces } from '@nico-notes/backend/mapMarkers';
 import type { FunctionReturnType } from 'convex/server';
 import type { ScreenProps } from '../navigation';
 import {
@@ -56,8 +59,14 @@ import {
   useTask,
 } from '../ui';
 import { Photo, PhotoSection, photoOrigin } from '../photos';
+import { PhotoSourceDialog } from '../PhotoSourceDialog';
+import { launchPhotoPicker, type PhotoSource } from '../photoPicker';
+import { showAlert } from '../alertState';
+import { MaterialDialog } from '../MaterialDialog';
 import { localDate } from '../links';
 import { PlaceTopBar } from './Places';
+import { PlaceOverview } from '../PlaceOverview';
+import { PlaceVisitHistory } from '../PlaceVisitHistory';
 import { useCurrentLocation } from '../useCurrentLocation';
 import { usePlaceSearch } from '../usePlaceSearch';
 import { PlaceSearchResults } from '../PlaceSearchResults';
@@ -66,6 +75,8 @@ import { distanceBetween, matchingPlaces } from '../placeSearch';
 import type { SavedPlace } from '../BoardPlaces';
 import type { GooglePlace } from '../../modules/google-places';
 import { ScorePicker } from '../ScorePicker';
+import { RatingDrawer } from '../RatingDrawer';
+import { VerticalScrollView } from '../VerticalScrollView';
 import { markRatingSaved, mergeRatingDrafts, type RatingDrafts } from '../ratingDrafts';
 import { confirmDiscard, useUnsavedChanges } from '../useUnsavedChanges';
 import { saveVisitWithPhotos, type VisitSaveSession } from '../visitSave';
@@ -112,17 +123,20 @@ function formatDisplayDate(dateStr: string): string {
 
 type VisitData = FunctionReturnType<typeof api.visits.get>;
 
+type VisitPickerPlace = Omit<SavedPlace, '_id'> & {
+  _id: Id<'places'> | Id<'wishlist'>;
+  placeId?: Id<'places'>;
+  wishlistId?: Id<'wishlist'>;
+  googlePlaceId?: string;
+};
+
 export function VisitScreen({ route, navigation }: ScreenProps<'Visit'>) {
   const { visitId, promptRating } = route.params;
   const data = useQuery(api.visits.get, { visitId });
   const boards = usePaginatedQuery(api.boards.list, {}, { initialNumItems: 24 });
   const me = useQuery(api.boards.me);
   const remove = useMutation(api.visits.remove);
-  const markVisited = useMutation(api.visits.markVisited);
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [completionOpen, setCompletionOpen] = useState(false);
-  const [completedDate, setCompletedDate] = useState(localDate());
-  const [completionDateOpen, setCompletionDateOpen] = useState(false);
   const [optionsAnchor, setOptionsAnchor] = useState({ x: 0, y: 0 });
   const task = useTask();
 
@@ -148,6 +162,14 @@ export function VisitScreen({ route, navigation }: ScreenProps<'Visit'>) {
 
   const overallRatings = data.ratings.filter((r) => r.kind === 'overall' && r.targetId === visitId);
   const canEdit = !!me?._id;
+  const openPlace = visit.placeId
+    ? () =>
+        navigation.navigate('Place', {
+          boardId: visit.boardId,
+          placeId: visit.placeId!,
+          name: visit.title,
+        })
+    : undefined;
 
   const openInMaps = () => {
     void task.run(() =>
@@ -161,6 +183,249 @@ export function VisitScreen({ route, navigation }: ScreenProps<'Visit'>) {
     );
   };
 
+  const optionsButton = (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={planned ? 'Place options' : 'Visit options'}
+      hitSlop={12}
+      onPress={(event) => {
+        setOptionsAnchor({ x: event.nativeEvent.pageX, y: event.nativeEvent.pageY });
+        setOptionsMenuOpen(true);
+      }}
+      style={({ pressed }) => [
+        summaryStyles.menuTriggerBtn,
+        pressed && { opacity: 0.7, backgroundColor: colors.peachLight },
+      ]}
+    >
+      <Icon source="dots-horizontal" size={20} color={colors.ink} />
+    </Pressable>
+  );
+
+  const content = (
+    <View style={summaryStyles.content}>
+      <View style={summaryStyles.headerSection}>
+        {planned ? (
+          <PlaceOverview
+            eyebrow="WISHLIST"
+            name={visit.title}
+            address={visit.place}
+            location={visit.location}
+            googlePlaceId={visit.googlePlaceId}
+            openGoogleMaps={openInMaps}
+            action={optionsButton}
+            showGoogleMaps={false}
+          />
+        ) : (
+          <>
+            <View style={summaryStyles.visitLabelRow}>
+              <Text style={styles.eyebrow}>VISIT</Text>
+              {!!visit.date && (
+                <View style={summaryStyles.metaItem}>
+                  <View style={summaryStyles.dateIcon}>
+                    <Icon source="calendar-blank-outline" size={14} color={colors.muted} />
+                  </View>
+                  <Text style={summaryStyles.metaText}>{formatDisplayDate(visit.date)}</Text>
+                </View>
+              )}
+            </View>
+            <View style={summaryStyles.headerTopRow}>
+              {openPlace ? (
+                <Pressable
+                  accessibilityRole="link"
+                  accessibilityLabel={`Open ${visit.title} place page`}
+                  accessibilityHint="View place details and all visits"
+                  onPress={openPlace}
+                  style={({ pressed }) => [
+                    summaryStyles.placeTitleLink,
+                    pressed && { opacity: 0.7 },
+                  ]}
+                >
+                  <Title style={summaryStyles.heroTitle}>{visit.title}</Title>
+                </Pressable>
+              ) : (
+                <Title style={summaryStyles.heroTitle}>{visit.title}</Title>
+              )}
+              {optionsButton}
+            </View>
+            {!!visit.place && (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Open in Maps"
+                onPress={openInMaps}
+                style={({ pressed }) => [summaryStyles.locationRow, pressed && { opacity: 0.75 }]}
+              >
+                <Icon source="map-marker-outline" size={16} color={colors.rust} />
+                <Text style={summaryStyles.locationText} numberOfLines={2}>
+                  {visit.place}
+                </Text>
+              </Pressable>
+            )}
+            {visit.googlePlaceId && (
+              <GoogleAttribution placeId={visit.googlePlaceId} showGoogleMaps={false} />
+            )}
+          </>
+        )}
+      </View>
+
+      {!planned && (
+        <PhotoSection
+          visitId={visitId}
+          photos={data.photos}
+          userId={me?._id}
+          isAdmin={data.isAdmin}
+        />
+      )}
+
+      {!planned && (
+        <View style={summaryStyles.detailSection}>
+          <Heading>Visit Rating</Heading>
+          <View style={summaryStyles.sectionBox}>
+            {!!visit.typeName && (
+              <View style={[summaryStyles.itemRow, { borderTopWidth: 0 }]}>
+                <Text style={summaryStyles.itemRowTitle}>Type</Text>
+                <Text style={summaryStyles.typeText}>{visit.typeName}</Text>
+              </View>
+            )}
+            {/* Overall Experience */}
+            <RatingSummaryRow
+              first={!visit.typeName}
+              label="Overall"
+              ratings={overallRatings}
+              people={data.people}
+              canEdit={canEdit}
+              onPress={() =>
+                setSingleRating({
+                  kind: 'overall',
+                  targetId: visitId,
+                  label: 'Overall Experience',
+                })
+              }
+            />
+
+            {/* Categories */}
+            {data.categories.map((cat) => (
+              <RatingSummaryRow
+                key={cat._id}
+                label={cat.name}
+                ratings={data.ratings.filter(
+                  (r) => r.kind === 'category' && r.targetId === cat._id,
+                )}
+                people={data.people}
+                canEdit={canEdit}
+                onPress={() =>
+                  setSingleRating({
+                    kind: 'category',
+                    targetId: cat._id,
+                    label: cat.name,
+                  })
+                }
+              />
+            ))}
+          </View>
+        </View>
+      )}
+      {planned && (
+        <Button
+          title="Mark as visited"
+          disabled={task.busy}
+          onPress={() =>
+            navigation.navigate('VisitForm', {
+              boardId: visit.boardId,
+              visitId,
+              completePlanned: true,
+            })
+          }
+        />
+      )}
+      {!planned && !!visit.savedLink && /^https?:\/\//i.test(visit.savedLink) && (
+        <MaterialButton
+          icon="link-variant"
+          textColor={colors.rust}
+          style={{ alignSelf: 'flex-start' }}
+          onPress={() => void task.run(() => Linking.openURL(visit.savedLink!))}
+        >
+          Open saved link
+        </MaterialButton>
+      )}
+
+      {/* Dishes Section */}
+      {!planned && visit.showDishes && (
+        <View style={summaryStyles.detailSection}>
+          <View style={summaryStyles.dishesHeader}>
+            <Text accessibilityRole="header" style={summaryStyles.sectionTitle}>
+              Dishes
+            </Text>
+
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Add new dish"
+              hitSlop={4}
+              onPress={() => setAddItemModal({ visible: true, type: 'dish' })}
+              style={({ pressed }) => [summaryStyles.addDishBtn, pressed && { opacity: 0.8 }]}
+            >
+              <Text style={summaryStyles.addDishBtnText}>+ Add</Text>
+            </Pressable>
+          </View>
+
+          <View style={summaryStyles.sectionBox}>
+            {data.dishes.length === 0 ? (
+              <View style={summaryStyles.emptyDishesBox}>
+                <Text style={styles.muted}>Add a dish to remember what you tried.</Text>
+              </View>
+            ) : (
+              <View style={summaryStyles.dishesList}>
+                {data.dishes.map((dish, index) => (
+                  <DishSummaryRow
+                    first={index === 0}
+                    key={dish._id}
+                    dish={dish}
+                    ratings={data.ratings.filter(
+                      (r) => r.kind === 'dish' && r.targetId === dish._id,
+                    )}
+                    people={data.people}
+                    canEdit={canEdit}
+                    onPress={() =>
+                      setSingleRating({
+                        kind: 'dish',
+                        targetId: dish._id,
+                        label: dish.name,
+                        description: dish.description,
+                      })
+                    }
+                  />
+                ))}
+              </View>
+            )}
+          </View>
+        </View>
+      )}
+
+      <View style={summaryStyles.detailSection}>
+        <View style={summaryStyles.dishesHeader}>
+          <Text accessibilityRole="header" style={summaryStyles.sectionTitle}>
+            Notes
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={visit.notes ? 'Edit notes' : 'Add notes'}
+            hitSlop={4}
+            onPress={() => navigation.navigate('VisitForm', { visitId, boardId: visit.boardId })}
+            style={({ pressed }) => [summaryStyles.addDishBtn, pressed && { opacity: 0.8 }]}
+          >
+            <Text style={summaryStyles.addDishBtnText}>{visit.notes ? 'Edit' : '+ Add'}</Text>
+          </Pressable>
+        </View>
+        <View style={[summaryStyles.sectionBox, summaryStyles.notesBody]}>
+          <Text style={visit.notes ? styles.body : styles.muted}>
+            {visit.notes || 'No notes added yet.'}
+          </Text>
+        </View>
+      </View>
+
+      <ErrorNote error={task.error} />
+    </View>
+  );
+
   return (
     <View style={styles.page}>
       <PlaceTopBar
@@ -169,217 +434,17 @@ export function VisitScreen({ route, navigation }: ScreenProps<'Visit'>) {
         boardName={data.board.name}
         boards={boards}
       />
-      <Page>
-        {/* Main Header (Streamlined, less cards-like) */}
-        <View style={summaryStyles.headerSection}>
-          {/* Top Row: Title + Type badge + 3-dot Kebab Menu */}
-          <View style={summaryStyles.headerTopRow}>
-            <View style={summaryStyles.titleWrapper}>
-              <Title style={summaryStyles.heroTitle}>{visit.title}</Title>
-              {visit.googlePlaceId && <GoogleAttribution placeId={visit.googlePlaceId} />}
-              {!!visit.typeName && (
-                <View style={summaryStyles.typePill}>
-                  <Text style={summaryStyles.typeText}>{planned ? 'Planned' : visit.typeName}</Text>
-                </View>
-              )}
-            </View>
-
-            {/* 3-dot options menu */}
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Visit options"
-              hitSlop={12}
-              onPress={(event) => {
-                setOptionsAnchor({ x: event.nativeEvent.pageX, y: event.nativeEvent.pageY });
-                setOptionsMenuOpen(true);
-              }}
-              style={({ pressed }) => [
-                summaryStyles.menuTriggerBtn,
-                pressed && { opacity: 0.7, backgroundColor: colors.peachLight },
-              ]}
-            >
-              <Icon source="dots-horizontal" size={22} color={colors.ink} />
-            </Pressable>
-          </View>
-
-          {/* Meta Info: Date and Location with prominent Map Icon */}
-          <View style={summaryStyles.metaBlock}>
-            {!!visit.date && (
-              <View style={summaryStyles.metaItem}>
-                <Icon source="calendar-blank-outline" size={16} color={colors.rust} />
-                <Text style={summaryStyles.metaText}>{formatDisplayDate(visit.date)}</Text>
-              </View>
-            )}
-            {!!visit.place && (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Open in Maps"
-                onPress={openInMaps}
-                style={({ pressed }) => [summaryStyles.locationRow, pressed && { opacity: 0.75 }]}
-              >
-                <View style={summaryStyles.locationIconCircle}>
-                  <Icon source="map-marker" size={15} color={colors.rust} />
-                </View>
-                <Text style={summaryStyles.locationText} numberOfLines={1}>
-                  {visit.place}
-                </Text>
-                <Icon source="chevron-right" size={14} color={colors.muted} />
-              </Pressable>
-            )}
-          </View>
-
-          {/* Notes preview if any */}
-          {!!visit.notes && (
-            <View style={summaryStyles.noteBox}>
-              <Icon source="format-quote-open" size={15} color={colors.rust} />
-              <Text style={summaryStyles.noteText}>{visit.notes}</Text>
-            </View>
-          )}
-
-          {/* Experience & Atmosphere: part of the main header */}
-          {!planned && (
-            <View style={summaryStyles.headerExperienceBlock}>
-              {/* Overall Experience */}
-              <RatingSummaryRow
-                label="Overall"
-                ratings={overallRatings}
-                people={data.people}
-                canEdit={canEdit}
-                onPress={() =>
-                  setSingleRating({
-                    kind: 'overall',
-                    targetId: visitId,
-                    label: 'Overall Experience',
-                  })
-                }
-              />
-
-              {/* Categories */}
-              {data.categories.map((cat) => (
-                <RatingSummaryRow
-                  key={cat._id}
-                  label={cat.name}
-                  ratings={data.ratings.filter(
-                    (r) => r.kind === 'category' && r.targetId === cat._id,
-                  )}
-                  people={data.people}
-                  canEdit={canEdit}
-                  onPress={() =>
-                    setSingleRating({
-                      kind: 'category',
-                      targetId: cat._id,
-                      label: cat.name,
-                    })
-                  }
-                />
-              ))}
-            </View>
-          )}
-        </View>
-
-        {planned && (
-          <Button
-            title="Mark as visited"
-            disabled={task.busy}
-            onPress={() => setCompletionOpen(true)}
-          />
-        )}
-        {!!visit.savedLink && /^https?:\/\//i.test(visit.savedLink) && (
-          <MaterialButton
-            icon="link-variant"
-            textColor={colors.rust}
-            style={{ alignSelf: 'flex-start' }}
-            onPress={() => void task.run(() => Linking.openURL(visit.savedLink!))}
-          >
-            Open saved link
-          </MaterialButton>
-        )}
-
-        {/* Dishes Section */}
-        {visit.showDishes && (
-          <View style={summaryStyles.dishesSection}>
-            <View style={summaryStyles.dishesHeader}>
-              <View style={summaryStyles.dishesTitleGroup}>
-                <Heading>Dishes</Heading>
-                {data.dishes.length > 0 && (
-                  <View style={summaryStyles.countBadge}>
-                    <Text style={summaryStyles.countBadgeText}>{data.dishes.length}</Text>
-                  </View>
-                )}
-              </View>
-
-              <View style={summaryStyles.dishesActionsGroup}>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Add new dish"
-                  onPress={() => setAddItemModal({ visible: true, type: 'dish' })}
-                  style={({ pressed }) => [summaryStyles.addDishBtn, pressed && { opacity: 0.8 }]}
-                >
-                  <Icon source="plus" size={15} color={colors.paper} />
-                  <Text style={summaryStyles.addDishBtnText}>Add</Text>
-                </Pressable>
-              </View>
-            </View>
-
-            {data.dishes.length === 0 ? (
-              <View style={summaryStyles.emptyDishesBox}>
-                <Text style={styles.muted}>
-                  {planned
-                    ? 'Add a dish you’d like to try.'
-                    : 'Add a dish to remember what you tried.'}
-                </Text>
-              </View>
-            ) : (
-              <View style={summaryStyles.dishesList}>
-                {data.dishes.map((dish) =>
-                  planned ? (
-                    <Pressable
-                      key={dish._id}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Edit ${dish.name}`}
-                      style={summaryStyles.itemRow}
-                      onPress={() =>
-                        setAddItemModal({ visible: true, type: 'dish', editItem: dish })
-                      }
-                    >
-                      <Text style={summaryStyles.itemRowTitle}>{dish.name}</Text>
-                      <Icon source="pencil-outline" size={18} color={colors.muted} />
-                    </Pressable>
-                  ) : (
-                    <DishSummaryRow
-                      key={dish._id}
-                      dish={dish}
-                      ratings={data.ratings.filter(
-                        (r) => r.kind === 'dish' && r.targetId === dish._id,
-                      )}
-                      people={data.people}
-                      canEdit={canEdit}
-                      onPress={() =>
-                        setSingleRating({
-                          kind: 'dish',
-                          targetId: dish._id,
-                          label: dish.name,
-                          description: dish.description,
-                        })
-                      }
-                    />
-                  ),
-                )}
-              </View>
-            )}
-          </View>
-        )}
-
-        {/* Photos */}
-        <PhotoSection
-          visitId={visitId}
-          photos={data.photos}
-          userId={me?._id}
-          isAdmin={data.isAdmin}
+      {planned ? (
+        <PlaceVisitHistory
+          header={content}
+          boardId={visit.boardId}
+          placeId={data.historyPlaceId}
+          members={data.members}
+          onOpen={(id) => navigation.navigate('Visit', { visitId: id })}
         />
-
-        <ErrorNote error={task.error} />
-      </Page>
+      ) : (
+        <Page>{content}</Page>
+      )}
 
       <Portal>
         <Dialog
@@ -388,26 +453,31 @@ export function VisitScreen({ route, navigation }: ScreenProps<'Visit'>) {
           onDismiss={() => !task.busy && setDeleteOpen(false)}
           style={{ backgroundColor: colors.paper }}
         >
-          <Dialog.Title>{planned ? 'Remove planned visit?' : 'Delete visit?'}</Dialog.Title>
+          <Dialog.Title>{planned ? 'Remove from Wishlist?' : 'Delete visit?'}</Dialog.Title>
           <Dialog.Content>
             <Text style={styles.body}>
-              This removes its notes, dishes and photos for everyone on the board.
+              This removes its notes, dishes and images for everyone on the board.
             </Text>
             <ErrorNote error={task.error} />
           </Dialog.Content>
           <Dialog.Actions>
-            <MaterialButton disabled={task.busy} onPress={() => setDeleteOpen(false)}>
+            <MaterialButton
+              textColor={colors.muted}
+              disabled={task.busy}
+              onPress={() => setDeleteOpen(false)}
+            >
               Cancel
             </MaterialButton>
             <MaterialButton
               loading={task.busy}
               disabled={task.busy}
-              textColor={colors.rust}
+              textColor={colors.error}
               onPress={() =>
                 void task.run(async () => {
                   await remove({ visitId });
                   setDeleteOpen(false);
-                  navigation.popTo('Board', { boardId: visit.boardId });
+                  if (navigation.canGoBack()) navigation.goBack();
+                  else navigation.popTo('Board', { boardId: visit.boardId });
                 })
               }
             >
@@ -415,52 +485,7 @@ export function VisitScreen({ route, navigation }: ScreenProps<'Visit'>) {
             </MaterialButton>
           </Dialog.Actions>
         </Dialog>
-        <Dialog
-          visible={completionOpen}
-          dismissable={!task.busy}
-          onDismiss={() => !task.busy && setCompletionOpen(false)}
-          style={{ backgroundColor: colors.paper }}
-        >
-          <Dialog.Title>Mark as visited</Dialog.Title>
-          <Dialog.Content>
-            <MaterialButton
-              icon="calendar-blank-outline"
-              textColor={colors.rust}
-              onPress={() => setCompletionDateOpen(true)}
-            >
-              {formatDisplayDate(completedDate) || 'Choose date'}
-            </MaterialButton>
-            <ErrorNote error={task.error} />
-          </Dialog.Content>
-          <Dialog.Actions>
-            <MaterialButton disabled={task.busy} onPress={() => setCompletionOpen(false)}>
-              Cancel
-            </MaterialButton>
-            <MaterialButton
-              disabled={task.busy || !completedDate}
-              loading={task.busy}
-              onPress={() =>
-                void task.run(async () => {
-                  await markVisited({
-                    visitId,
-                    date: completedDate,
-                    expectedRevision: visit.revision ?? 0,
-                  });
-                  setCompletionOpen(false);
-                })
-              }
-            >
-              Mark as visited
-            </MaterialButton>
-          </Dialog.Actions>
-        </Dialog>
       </Portal>
-      <DatePickerModal
-        visible={completionDateOpen}
-        value={completedDate}
-        onChange={setCompletedDate}
-        onClose={() => setCompletionDateOpen(false)}
-      />
       {/* POPUPS & MODALS */}
 
       {/* 3-Dot Options Menu Modal */}
@@ -475,17 +500,7 @@ export function VisitScreen({ route, navigation }: ScreenProps<'Visit'>) {
           isCreator={visit.creatorId === me?._id}
           onEditVisit={() => navigation.navigate('VisitForm', { visitId, boardId: visit.boardId })}
           onOpenInMaps={openInMaps}
-          onAllVisits={
-            visit.placeId
-              ? () =>
-                  navigation.navigate('Place', {
-                    boardId: visit.boardId,
-                    placeId: visit.placeId!,
-                    name: visit.title,
-                  })
-              : undefined
-          }
-          onReport={() => navigation.navigate('Safety', { boardId: visit.boardId, visitId })}
+          onAllVisits={openPlace}
           onRateAll={() => setFoodWizardOpen(true)}
           onAddCategory={
             data.isAdmin && !planned
@@ -505,9 +520,6 @@ export function VisitScreen({ route, navigation }: ScreenProps<'Visit'>) {
           onClose={() => setFoodWizardOpen(false)}
           data={data}
           userId={me?._id}
-          onAddDishRequested={() => {
-            setAddItemModal({ visible: true, type: 'dish' });
-          }}
         />
       )}
 
@@ -519,17 +531,6 @@ export function VisitScreen({ route, navigation }: ScreenProps<'Visit'>) {
           data={data}
           userId={me?._id}
           item={singleRating}
-          onEditItem={
-            singleRating.kind === 'dish'
-              ? () => {
-                  const dish = data.dishes.find((entry) => entry._id === singleRating.targetId);
-                  if (dish) {
-                    setSingleRating(null);
-                    setAddItemModal({ visible: true, type: 'dish', editItem: dish });
-                  }
-                }
-              : undefined
-          }
         />
       )}
 
@@ -574,7 +575,6 @@ function VisitOptionsMenuModal({
   onAllVisits,
   onAddCategory,
   onRateAll,
-  onReport,
   onDeleteVisit,
 }: {
   visible: boolean;
@@ -589,7 +589,6 @@ function VisitOptionsMenuModal({
   onAllVisits?: () => void;
   onAddCategory?: () => void;
   onRateAll: () => void;
-  onReport: () => void;
   onDeleteVisit?: () => void;
 }) {
   const choose = (action: () => void) => {
@@ -606,14 +605,16 @@ function VisitOptionsMenuModal({
     >
       <Menu.Item
         leadingIcon="pencil-outline"
-        title={planned ? 'Edit planned visit' : 'Edit visit'}
+        title={planned ? 'Edit Wishlist Place' : 'Edit visit'}
         onPress={() => choose(onEditVisit)}
       />
-      <Menu.Item
-        leadingIcon="navigation-variant-outline"
-        title="Directions"
-        onPress={() => choose(onOpenInMaps)}
-      />
+      {!planned && (
+        <Menu.Item
+          leadingIcon="navigation-variant-outline"
+          title="Directions"
+          onPress={() => choose(onOpenInMaps)}
+        />
+      )}
       {!planned && (
         <Menu.Item leadingIcon="star-outline" title="Rate all" onPress={() => choose(onRateAll)} />
       )}
@@ -631,11 +632,13 @@ function VisitOptionsMenuModal({
           onPress={() => choose(onAddCategory)}
         />
       )}
-      <Menu.Item leadingIcon="flag-outline" title="Report visit" onPress={() => choose(onReport)} />
       {(isAdmin || isCreator) && onDeleteVisit && (
         <Menu.Item
-          leadingIcon="trash-can-outline"
-          title={planned ? 'Remove planned visit' : 'Delete visit'}
+          leadingIcon={({ size }) => (
+            <Icon source="trash-can-outline" size={size} color={colors.error} />
+          )}
+          title={planned ? 'Remove from Wishlist' : 'Delete visit'}
+          titleStyle={{ color: colors.error }}
           onPress={() => choose(onDeleteVisit)}
         />
       )}
@@ -646,12 +649,14 @@ function VisitOptionsMenuModal({
 type RatingPerson = VisitData['people'][number];
 
 function RatingSummaryRow({
+  first = false,
   label,
   ratings,
   people,
   canEdit,
   onPress,
 }: {
+  first?: boolean;
   label: string;
   ratings: Doc<'ratings'>[];
   people: RatingPerson[];
@@ -673,6 +678,7 @@ function RatingSummaryRow({
       onPress={onPress}
       style={({ pressed }) => [
         summaryStyles.itemRow,
+        first && { borderTopWidth: 0 },
         pressed && { backgroundColor: colors.peachLight },
       ]}
     >
@@ -700,12 +706,14 @@ function RatingSummaryRow({
 }
 
 function DishSummaryRow({
+  first = false,
   dish,
   ratings,
   people,
   canEdit,
   onPress,
 }: {
+  first?: boolean;
   dish: Doc<'dishes'>;
   ratings: Doc<'ratings'>[];
   people: RatingPerson[];
@@ -715,15 +723,13 @@ function DishSummaryRow({
   return (
     <View>
       <RatingSummaryRow
+        first={first}
         label={dish.name}
         ratings={ratings}
         people={people}
         canEdit={canEdit}
         onPress={onPress}
       />
-      {!!dish.description && (
-        <Text style={[summaryStyles.itemRowDesc, { paddingBottom: 8 }]}>{dish.description}</Text>
-      )}
     </View>
   );
 }
@@ -733,13 +739,11 @@ function FoodByFoodModal({
   onClose,
   data,
   userId,
-  onAddDishRequested,
 }: {
   visible: boolean;
   onClose: () => void;
   data: VisitData;
   userId?: Id<'users'>;
-  onAddDishRequested: () => void;
 }) {
   const saveRating = useMutation(api.ratings.save);
   const task = useTask();
@@ -846,8 +850,17 @@ function FoodByFoodModal({
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={close}>
-      <Pressable style={modalStyles.overlay} onPress={close}>
-        <Pressable style={modalStyles.sheetContainer} onPress={(e) => e.stopPropagation()}>
+      <KeyboardAvoidingView
+        style={modalStyles.overlay}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <Pressable
+          style={StyleSheet.absoluteFill}
+          accessibilityRole="button"
+          accessibilityLabel="Dismiss rating wizard"
+          onPress={close}
+        />
+        <RatingDrawer style={modalStyles.sheetContainer} onClose={close}>
           {/* Header */}
           <View style={modalStyles.sheetHeader}>
             <View style={{ gap: 4, flex: 1 }}>
@@ -857,7 +870,7 @@ function FoodByFoodModal({
                     {currentItem.kind === 'dish'
                       ? 'DISH'
                       : currentItem.kind === 'category'
-                        ? 'CATEGORY'
+                        ? 'VISIT RATING'
                         : 'OVERALL'}
                   </Text>
                 </View>
@@ -866,9 +879,6 @@ function FoodByFoodModal({
                 </Text>
               </View>
               <Text style={modalStyles.sheetTitle}>{currentItem.name}</Text>
-              {!!currentItem.description && (
-                <Text style={summaryStyles.itemRowDesc}>{currentItem.description}</Text>
-              )}
             </View>
 
             <Pressable
@@ -883,31 +893,29 @@ function FoodByFoodModal({
           </View>
 
           {/* Members rating area (scrollable) */}
-          <ScrollView
-            style={{ maxHeight: 420 }}
-            contentContainerStyle={{ gap: 14, paddingVertical: 4 }}
+          <VerticalScrollView
+            containerStyle={modalStyles.membersScroll}
+            contentContainerStyle={{ gap: 10, paddingVertical: 4 }}
+            nestedScrollEnabled
+            directionalLockEnabled
             keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
           >
             {rateableMembers.map((member) => {
               const draft = drafts[member._id] || { score: undefined, note: '', hasChanged: false };
               return (
                 <View key={member._id} style={modalStyles.memberCard}>
-                  <View style={modalStyles.memberCardHeader}>
-                    <View style={modalStyles.memberInfo}>
-                      <Avatar name={member.name} image={member.image} size={32} />
-                      <Text style={modalStyles.memberName}>
-                        {member.name || 'Member'}
-                        {member._id === userId ? ' (You)' : ''}
-                      </Text>
-                    </View>
-                    {draft.score !== undefined && (
-                      <Text style={modalStyles.memberCurrentScore}>
-                        {draft.score.toFixed(1)} /10
-                      </Text>
-                    )}
-                  </View>
-
                   <ScorePicker
+                    compact
+                    header={
+                      <View style={modalStyles.memberInfo}>
+                        <Avatar name={member.name} image={member.image} size={24} />
+                        <Text style={modalStyles.memberName} numberOfLines={2}>
+                          {member.name || 'Member'}
+                          {member._id === userId ? ' (You)' : ''}
+                        </Text>
+                      </View>
+                    }
                     disabled={task.busy}
                     value={draft.score}
                     onChange={(score) => {
@@ -944,13 +952,13 @@ function FoodByFoodModal({
                 </View>
               );
             })}
-          </ScrollView>
+          </VerticalScrollView>
 
           <ErrorNote error={task.error} />
 
           {/* Footer Navigation */}
           <View style={modalStyles.footerActions}>
-            {currentIndex > 0 ? (
+            {currentIndex > 0 && (
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Previous item"
@@ -959,14 +967,6 @@ function FoodByFoodModal({
                 style={modalStyles.wizardNavBtn}
               >
                 <Text style={modalStyles.wizardNavBtnText}>Back</Text>
-              </Pressable>
-            ) : (
-              <Pressable
-                accessibilityRole="button"
-                onPress={onAddDishRequested}
-                style={modalStyles.wizardNavBtn}
-              >
-                <Text style={modalStyles.wizardNavBtnText}>+ Dish</Text>
               </Pressable>
             )}
 
@@ -990,8 +990,8 @@ function FoodByFoodModal({
               )}
             </Pressable>
           </View>
-        </Pressable>
-      </Pressable>
+        </RatingDrawer>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -1002,9 +1002,7 @@ function SingleRatingModal({
   data,
   userId,
   item,
-  onEditItem,
 }: {
-  onEditItem?: () => void;
   visible: boolean;
   onClose: () => void;
   data: VisitData;
@@ -1017,7 +1015,29 @@ function SingleRatingModal({
   };
 }) {
   const saveRating = useMutation(api.ratings.save);
+  const saveDish = useMutation(api.items.saveDish);
+  const removeItem = useMutation(api.items.remove);
   const task = useTask();
+  const dish =
+    item.kind === 'dish' ? data.dishes.find((entry) => entry._id === item.targetId) : undefined;
+  const title = dish?.name ?? item.label;
+  const [editingName, setEditingName] = useState(false);
+  const [name, setName] = useState(title);
+  const nameChanged = editingName && name.trim() !== title;
+
+  async function saveName() {
+    if (!editingName || !dish) return;
+    if (nameChanged) {
+      await saveDish({
+        visitId: data.visit._id,
+        id: dish._id,
+        name: name.trim(),
+        description: dish.description,
+      });
+    }
+    setEditingName(false);
+    Keyboard.dismiss();
+  }
 
   const rateableMembers = useMemo(() => {
     if (data.isAdmin) return data.members;
@@ -1047,6 +1067,7 @@ function SingleRatingModal({
 
   function handleSave() {
     void task.run(async () => {
+      await saveName();
       for (const member of rateableMembers) {
         const draft = drafts[member._id];
         if (draft && draft.hasChanged) {
@@ -1065,17 +1086,40 @@ function SingleRatingModal({
     });
   }
 
+  function handleDeleteDish() {
+    if (!dish || !data.isAdmin || task.busy) return;
+    confirm(`Delete ${title} and its ratings?`, () => {
+      void task.run(async () => {
+        await removeItem({
+          visitId: data.visit._id,
+          target: dish._id,
+          confirmed: true,
+        });
+        onClose();
+      });
+    });
+  }
+
   const close = () =>
     confirmDiscard(
-      Object.values(drafts).some((draft) => draft.hasChanged),
+      nameChanged || Object.values(drafts).some((draft) => draft.hasChanged),
       task.busy,
       onClose,
     );
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={close}>
-      <Pressable style={modalStyles.overlay} onPress={close}>
-        <Pressable style={modalStyles.sheetContainer} onPress={(e) => e.stopPropagation()}>
+      <KeyboardAvoidingView
+        style={modalStyles.overlay}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <Pressable
+          style={StyleSheet.absoluteFill}
+          accessibilityRole="button"
+          accessibilityLabel="Dismiss rating"
+          onPress={close}
+        />
+        <RatingDrawer style={modalStyles.sheetContainer} onClose={close}>
           {/* Header */}
           <View style={modalStyles.sheetHeader}>
             <View style={{ gap: 4, flex: 1 }}>
@@ -1084,16 +1128,65 @@ function SingleRatingModal({
                   {item.kind === 'dish'
                     ? 'DISH RATING'
                     : item.kind === 'category'
-                      ? 'CATEGORY RATING'
+                      ? 'VISIT RATING'
                       : 'OVERALL RATING'}
                 </Text>
               </View>
-              <Text style={modalStyles.sheetTitle}>{item.label}</Text>
-              {!!item.description && (
-                <Text style={summaryStyles.itemRowDesc}>{item.description}</Text>
-              )}
+              <View style={modalStyles.sheetTitleRow}>
+                {editingName ? (
+                  <>
+                    <TextInput
+                      autoFocus
+                      selectTextOnFocus
+                      accessibilityLabel="Dish name"
+                      value={name}
+                      onChangeText={setName}
+                      editable={!task.busy}
+                      style={modalStyles.dishNameInput}
+                      maxLength={120}
+                      returnKeyType="done"
+                      onSubmitEditing={() => {
+                        if (name.trim() && !task.busy) void task.run(saveName);
+                      }}
+                    />
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Save dish name"
+                      disabled={task.busy || !name.trim()}
+                      onPress={() => void task.run(saveName)}
+                      style={styles.iconButton}
+                    >
+                      <Icon source="check" size={20} color={colors.rust} />
+                    </Pressable>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Cancel dish name edit"
+                      disabled={task.busy}
+                      onPress={() => setEditingName(false)}
+                      style={styles.iconButton}
+                    >
+                      <Icon source="close" size={20} color={colors.muted} />
+                    </Pressable>
+                  </>
+                ) : (
+                  <Text style={[modalStyles.sheetTitle, { flexShrink: 1 }]}>{title}</Text>
+                )}
+                {dish && !editingName && (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Edit dish"
+                    disabled={task.busy}
+                    onPress={() => {
+                      setName(title);
+                      setEditingName(true);
+                    }}
+                    style={styles.iconButton}
+                  >
+                    <Icon source="pencil-outline" size={20} color={colors.rust} />
+                  </Pressable>
+                )}
+              </View>
             </View>
-
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Close rating"
@@ -1106,31 +1199,29 @@ function SingleRatingModal({
           </View>
 
           {/* Members rating cards */}
-          <ScrollView
-            style={{ maxHeight: 420 }}
-            contentContainerStyle={{ gap: 14, paddingVertical: 4 }}
+          <VerticalScrollView
+            containerStyle={modalStyles.membersScroll}
+            contentContainerStyle={{ gap: 10, paddingVertical: 4 }}
+            nestedScrollEnabled
+            directionalLockEnabled
             keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
           >
             {rateableMembers.map((member) => {
               const draft = drafts[member._id] || { score: undefined, note: '', hasChanged: false };
               return (
                 <View key={member._id} style={modalStyles.memberCard}>
-                  <View style={modalStyles.memberCardHeader}>
-                    <View style={modalStyles.memberInfo}>
-                      <Avatar name={member.name} image={member.image} size={32} />
-                      <Text style={modalStyles.memberName}>
-                        {member.name || 'Member'}
-                        {member._id === userId ? ' (You)' : ''}
-                      </Text>
-                    </View>
-                    {draft.score !== undefined && (
-                      <Text style={modalStyles.memberCurrentScore}>
-                        {draft.score.toFixed(1)} /10
-                      </Text>
-                    )}
-                  </View>
-
                   <ScorePicker
+                    compact
+                    header={
+                      <View style={modalStyles.memberInfo}>
+                        <Avatar name={member.name} image={member.image} size={24} />
+                        <Text style={modalStyles.memberName} numberOfLines={2}>
+                          {member.name || 'Member'}
+                          {member._id === userId ? ' (You)' : ''}
+                        </Text>
+                      </View>
+                    }
                     disabled={task.busy}
                     value={draft.score}
                     onChange={(score) => {
@@ -1167,39 +1258,33 @@ function SingleRatingModal({
                 </View>
               );
             })}
-          </ScrollView>
+          </VerticalScrollView>
 
           <ErrorNote error={task.error} />
 
-          {onEditItem && (
-            <Button
-              secondary
-              title="Edit dish"
-              disabled={task.busy}
-              onPress={() =>
-                confirmDiscard(
-                  Object.values(drafts).some((draft) => draft.hasChanged),
-                  task.busy,
-                  onEditItem,
-                )
-              }
-            />
-          )}
           {/* Footer buttons */}
           <View style={modalStyles.footerActions}>
             <Pressable
               accessibilityRole="button"
-              onPress={close}
+              accessibilityLabel={dish && data.isAdmin ? 'Delete Dish' : 'Cancel'}
+              onPress={dish && data.isAdmin ? handleDeleteDish : close}
               disabled={task.busy}
               style={modalStyles.wizardNavBtn}
             >
-              <Text style={modalStyles.wizardNavBtnText}>Cancel</Text>
+              <Text
+                style={[
+                  modalStyles.wizardNavBtnText,
+                  dish && data.isAdmin && { color: colors.error },
+                ]}
+              >
+                {dish && data.isAdmin ? 'Delete Dish' : 'Cancel'}
+              </Text>
             </Pressable>
 
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Save rating"
-              disabled={task.busy}
+              disabled={task.busy || (editingName && !name.trim())}
               onPress={handleSave}
               style={modalStyles.wizardNextBtn}
             >
@@ -1210,8 +1295,8 @@ function SingleRatingModal({
               )}
             </Pressable>
           </View>
-        </Pressable>
-      </Pressable>
+        </RatingDrawer>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -1236,11 +1321,8 @@ function AddItemModal({
   const removeItem = useMutation(api.items.remove);
   const task = useTask();
 
-  const [itemType, setItemType] = useState<'dish' | 'category'>(
-    editItem ? (editItem.description !== undefined ? 'dish' : 'category') : type,
-  );
+  const [itemType, setItemType] = useState<'dish' | 'category'>(type);
   const [name, setName] = useState(editItem?.name ?? '');
-  const [description, setDescription] = useState(editItem?.description ?? '');
 
   function handleSave() {
     void task.run(async () => {
@@ -1251,7 +1333,7 @@ function AddItemModal({
           visitId,
           id: editItem ? (editItem._id as Id<'dishes'>) : undefined,
           name: cleanName,
-          description: description.trim(),
+          description: editItem?.description ?? '',
         });
       } else {
         await saveCategory({
@@ -1278,102 +1360,84 @@ function AddItemModal({
     });
   }
 
-  const close = () =>
-    confirmDiscard(
-      name !== (editItem?.name ?? '') || description !== (editItem?.description ?? ''),
-      task.busy,
-      onClose,
-    );
+  const close = () => confirmDiscard(name !== (editItem?.name ?? ''), task.busy, onClose);
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={close}>
-      <Pressable style={modalStyles.centerModalOverlay} onPress={close}>
-        <Pressable style={modalStyles.centerModalDialog} onPress={(e) => e.stopPropagation()}>
-          <View style={modalStyles.sheetHeader}>
-            <Text style={modalStyles.sheetTitle}>
-              {editItem
-                ? `Edit ${itemType === 'dish' ? 'Dish' : 'Category'}`
-                : `Add ${itemType === 'dish' ? 'Dish' : 'Category'}`}
-            </Text>
-            <Pressable accessibilityRole="button" onPress={close} style={modalStyles.sheetCloseBtn}>
-              <Icon source="close" size={20} color={colors.ink} />
+    <MaterialDialog visible={visible} dismissable={!task.busy} onDismiss={close}>
+      <Dialog.Content style={{ gap: 16 }}>
+        <View style={modalStyles.sheetHeader}>
+          <Text style={modalStyles.sheetTitle}>
+            {editItem
+              ? `Edit ${itemType === 'dish' ? 'Dish' : 'Category'}`
+              : `Add ${itemType === 'dish' ? 'Dish' : 'Category'}`}
+          </Text>
+          <Pressable accessibilityRole="button" onPress={close} style={modalStyles.sheetCloseBtn}>
+            <Icon source="close" size={20} color={colors.ink} />
+          </Pressable>
+        </View>
+
+        {!editItem && (
+          <View style={{ flexDirection: 'row', gap: 10 }}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setItemType('dish')}
+              style={[
+                summaryStyles.typePillBtn,
+                itemType === 'dish' && summaryStyles.typePillBtnSelected,
+              ]}
+            >
+              <Text
+                style={[
+                  summaryStyles.typePillBtnText,
+                  itemType === 'dish' && summaryStyles.typePillBtnTextSelected,
+                ]}
+              >
+                Dish
+              </Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setItemType('category')}
+              style={[
+                summaryStyles.typePillBtn,
+                itemType === 'category' && summaryStyles.typePillBtnSelected,
+              ]}
+            >
+              <Text
+                style={[
+                  summaryStyles.typePillBtnText,
+                  itemType === 'category' && summaryStyles.typePillBtnTextSelected,
+                ]}
+              >
+                Category
+              </Text>
             </Pressable>
           </View>
+        )}
 
-          {!editItem && (
-            <View style={{ flexDirection: 'row', gap: 10 }}>
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => setItemType('dish')}
-                style={[
-                  summaryStyles.typePillBtn,
-                  itemType === 'dish' && summaryStyles.typePillBtnSelected,
-                ]}
-              >
-                <Text
-                  style={[
-                    summaryStyles.typePillBtnText,
-                    itemType === 'dish' && summaryStyles.typePillBtnTextSelected,
-                  ]}
-                >
-                  Dish
-                </Text>
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => setItemType('category')}
-                style={[
-                  summaryStyles.typePillBtn,
-                  itemType === 'category' && summaryStyles.typePillBtnSelected,
-                ]}
-              >
-                <Text
-                  style={[
-                    summaryStyles.typePillBtnText,
-                    itemType === 'category' && summaryStyles.typePillBtnTextSelected,
-                  ]}
-                >
-                  Category
-                </Text>
-              </Pressable>
-            </View>
-          )}
+        <Field
+          editable={!task.busy}
+          label={itemType === 'dish' ? 'Dish name' : 'Category name'}
+          placeholder={itemType === 'dish' ? 'e.g. Cacio e Pepe' : 'e.g. Service'}
+          value={name}
+          onChangeText={setName}
+          maxLength={120}
+        />
 
-          <Field
-            editable={!task.busy}
-            label={itemType === 'dish' ? 'Dish name' : 'Category name'}
-            placeholder={itemType === 'dish' ? 'e.g. Cacio e Pepe' : 'e.g. Service'}
-            value={name}
-            onChangeText={setName}
-            maxLength={120}
+        <ErrorNote error={task.error} />
+
+        <View style={{ gap: 8, marginTop: 4 }}>
+          <Button
+            title={editItem ? 'Save changes' : 'Add item'}
+            disabled={task.busy || !name.trim()}
+            onPress={handleSave}
           />
-
-          {itemType === 'dish' && (
-            <Field
-              editable={!task.busy}
-              label="Description (optional)"
-              placeholder="e.g. House-made tonnarelli, pecorino romano"
-              value={description}
-              onChangeText={setDescription}
-              maxLength={500}
-            />
+          {editItem && isAdmin && (
+            <Button title="Remove item" secondary disabled={task.busy} onPress={handleDelete} />
           )}
-
-          <ErrorNote error={task.error} />
-
-          <View style={{ gap: 8, marginTop: 4 }}>
-            <Button
-              title={editItem ? 'Save changes' : 'Add item'}
-              disabled={task.busy || !name.trim()}
-              onPress={handleSave}
-            />
-            {editItem && isAdmin && (
-              <Button title="Remove item" secondary disabled={task.busy} onPress={handleDelete} />
-            )}
-          </View>
-        </Pressable>
-      </Pressable>
-    </Modal>
+        </View>
+      </Dialog.Content>
+    </MaterialDialog>
   );
 }
 
@@ -1389,49 +1453,47 @@ function PromptRatingModal({
   onLater: () => void;
 }) {
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onLater}>
-      <View style={modalStyles.centerModalOverlay}>
-        <View style={modalStyles.centerModalDialog}>
-          <View style={{ alignItems: 'center', gap: 12, paddingVertical: 8 }}>
-            <View
+    <MaterialDialog visible={visible} onDismiss={onLater}>
+      <Dialog.Content style={{ gap: 16 }}>
+        <View style={{ alignItems: 'center', gap: 12, paddingVertical: 8 }}>
+          <View
+            style={{
+              width: 60,
+              height: 60,
+              borderRadius: 30,
+              backgroundColor: colors.peachLight,
+              borderWidth: 1,
+              borderColor: colors.peachBorder,
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <Icon source="silverware-fork-knife" size={28} color={colors.rust} />
+          </View>
+
+          <View style={{ gap: 4, alignItems: 'center' }}>
+            <Text
               style={{
-                width: 60,
-                height: 60,
-                borderRadius: 30,
-                backgroundColor: colors.peachLight,
-                borderWidth: 1,
-                borderColor: colors.peachBorder,
-                alignItems: 'center',
-                justifyContent: 'center',
+                fontFamily: 'EpilogueSemiBold',
+                fontSize: 20,
+                color: colors.ink,
+                textAlign: 'center',
               }}
             >
-              <Icon source="silverware-fork-knife" size={28} color={colors.rust} />
-            </View>
-
-            <View style={{ gap: 4, alignItems: 'center' }}>
-              <Text
-                style={{
-                  fontFamily: 'EpilogueSemiBold',
-                  fontSize: 20,
-                  color: colors.ink,
-                  textAlign: 'center',
-                }}
-              >
-                Visit Saved! 🎉
-              </Text>
-              <Text style={[styles.muted, { textAlign: 'center' }]}>
-                Ready to rate {placeName} together? Go food by food and rate dishes on this phone.
-              </Text>
-            </View>
-          </View>
-
-          <View style={{ gap: 10 }}>
-            <Button title="Rate Food by Food ➔" onPress={onStartRating} />
-            <Button title="Maybe later" secondary onPress={onLater} />
+              Visit Saved! 🎉
+            </Text>
+            <Text style={[styles.muted, { textAlign: 'center' }]}>
+              Ready to rate {placeName} together? Go food by food and rate dishes on this phone.
+            </Text>
           </View>
         </View>
-      </View>
-    </Modal>
+
+        <View style={{ gap: 10 }}>
+          <Button title="Rate Food by Food ➔" onPress={onStartRating} />
+          <Button title="Maybe later" secondary onPress={onLater} />
+        </View>
+      </Dialog.Content>
+    </MaterialDialog>
   );
 }
 
@@ -1446,6 +1508,7 @@ export function VisitFormScreen({ route, navigation }: ScreenProps<'VisitForm'>)
       key={visitId ?? 'new'}
       initial={data?.visit}
       existingPhotos={data?.photos}
+      existingDishes={data?.dishes}
       types={board.types}
       board={board.board}
       boards={boards}
@@ -1528,168 +1591,165 @@ function DatePickerModal({
   if (!visible) return null;
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={datePickerStyles.overlay} onPress={onClose}>
-        <Pressable style={datePickerStyles.dialog} onPress={(e) => e.stopPropagation()}>
-          {/* Calendar Header with Navigation */}
-          <View style={datePickerStyles.header}>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Previous month"
-              onPress={prevMonth}
-              hitSlop={8}
-              style={datePickerStyles.navBtn}
-            >
-              <Icon source="chevron-left" size={22} color={colors.ink} />
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Choose month and year"
-              onPress={() => {
-                setJumpYear(String(year));
-                setJumpOpen((open) => !open);
-              }}
-              style={{ minHeight: 48, justifyContent: 'center' }}
-            >
-              <Text style={datePickerStyles.monthTitle}>
-                {monthNames[month]} {year}
-              </Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Next month"
-              onPress={nextMonth}
-              hitSlop={8}
-              style={datePickerStyles.navBtn}
-            >
-              <Icon source="chevron-right" size={22} color={colors.ink} />
-            </Pressable>
-          </View>
+    <MaterialDialog visible={visible} onDismiss={onClose} style={{ maxWidth: 340 }}>
+      <Dialog.Content>
+        {/* Calendar Header with Navigation */}
+        <View style={datePickerStyles.header}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Previous month"
+            onPress={prevMonth}
+            hitSlop={8}
+            style={datePickerStyles.navBtn}
+          >
+            <Icon source="chevron-left" size={22} color={colors.ink} />
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Choose month and year"
+            onPress={() => {
+              setJumpYear(String(year));
+              setJumpOpen((open) => !open);
+            }}
+            style={{ minHeight: 48, justifyContent: 'center' }}
+          >
+            <Text style={datePickerStyles.monthTitle}>
+              {monthNames[month]} {year}
+            </Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Next month"
+            onPress={nextMonth}
+            hitSlop={8}
+            style={datePickerStyles.navBtn}
+          >
+            <Icon source="chevron-right" size={22} color={colors.ink} />
+          </Pressable>
+        </View>
 
-          {jumpOpen && (
-            <View style={{ gap: 8, paddingVertical: 12 }}>
-              <Field
-                label="Year"
-                value={jumpYear}
-                onChangeText={setJumpYear}
-                keyboardType="number-pad"
-                maxLength={4}
-              />
-              <View style={[styles.row, { gap: 4 }]}>
-                {monthNames.map((name, index) => (
-                  <Pressable
-                    key={name}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Jump to ${name} ${jumpYear}`}
-                    disabled={
-                      !/^\d{4}$/.test(jumpYear) ||
-                      Number(jumpYear) < 1900 ||
-                      Number(jumpYear) > 2100
-                    }
-                    onPress={() => {
-                      setCurrentMonth(new Date(Number(jumpYear), index, 1));
-                      setJumpOpen(false);
-                    }}
-                    style={{
-                      minWidth: '23%',
-                      minHeight: 48,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                  >
-                    <Text style={styles.link}>{name.slice(0, 3)}</Text>
-                  </Pressable>
-                ))}
-              </View>
-              <Text style={styles.muted}>Choose a year from 1900 to 2100, then a month.</Text>
-            </View>
-          )}
-          {/* Weekday Labels */}
-          <View style={datePickerStyles.weekDaysRow}>
-            {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((dayName, idx) => (
-              <Text key={`${dayName}-${idx}`} style={datePickerStyles.weekDayLabel}>
-                {dayName}
-              </Text>
-            ))}
-          </View>
-
-          {/* Day Grid */}
-          <View style={datePickerStyles.daysGrid}>
-            {Array.from({ length: firstDayOfWeek }).map((_, idx) => (
-              <View key={`empty-${idx}`} style={datePickerStyles.dayCell} />
-            ))}
-            {Array.from({ length: daysInMonth }).map((_, idx) => {
-              const day = idx + 1;
-              const dateString = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-              const isSelected = dateString === value;
-              const isToday = dateString === todayStr;
-
-              return (
+        {jumpOpen && (
+          <View style={{ gap: 8, paddingVertical: 12 }}>
+            <Field
+              label="Year"
+              value={jumpYear}
+              onChangeText={setJumpYear}
+              keyboardType="number-pad"
+              maxLength={4}
+            />
+            <View style={[styles.row, { gap: 4 }]}>
+              {monthNames.map((name, index) => (
                 <Pressable
-                  key={`day-${day}`}
+                  key={name}
                   accessibilityRole="button"
-                  accessibilityLabel={`${monthNames[month]} ${day}, ${year}`}
-                  accessibilityState={{ selected: isSelected }}
-                  onPress={() => selectDay(day)}
+                  accessibilityLabel={`Jump to ${name} ${jumpYear}`}
+                  disabled={
+                    !/^\d{4}$/.test(jumpYear) || Number(jumpYear) < 1900 || Number(jumpYear) > 2100
+                  }
+                  onPress={() => {
+                    setCurrentMonth(new Date(Number(jumpYear), index, 1));
+                    setJumpOpen(false);
+                  }}
+                  style={{
+                    minWidth: '23%',
+                    minHeight: 48,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Text style={styles.link}>{name.slice(0, 3)}</Text>
+                </Pressable>
+              ))}
+            </View>
+            <Text style={styles.muted}>Choose a year from 1900 to 2100, then a month.</Text>
+          </View>
+        )}
+        {/* Weekday Labels */}
+        <View style={datePickerStyles.weekDaysRow}>
+          {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((dayName, idx) => (
+            <Text key={`${dayName}-${idx}`} style={datePickerStyles.weekDayLabel}>
+              {dayName}
+            </Text>
+          ))}
+        </View>
+
+        {/* Day Grid */}
+        <View style={datePickerStyles.daysGrid}>
+          {Array.from({ length: firstDayOfWeek }).map((_, idx) => (
+            <View key={`empty-${idx}`} style={datePickerStyles.dayCell} />
+          ))}
+          {Array.from({ length: daysInMonth }).map((_, idx) => {
+            const day = idx + 1;
+            const dateString = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+            const isSelected = dateString === value;
+            const isToday = dateString === todayStr;
+
+            return (
+              <Pressable
+                key={`day-${day}`}
+                accessibilityRole="button"
+                accessibilityLabel={`${monthNames[month]} ${day}, ${year}`}
+                accessibilityState={{ selected: isSelected }}
+                onPress={() => selectDay(day)}
+                style={[
+                  datePickerStyles.dayCell,
+                  isSelected && datePickerStyles.selectedDayCell,
+                  isToday && !isSelected && datePickerStyles.todayDayCell,
+                ]}
+              >
+                <Text
                   style={[
-                    datePickerStyles.dayCell,
-                    isSelected && datePickerStyles.selectedDayCell,
-                    isToday && !isSelected && datePickerStyles.todayDayCell,
+                    datePickerStyles.dayText,
+                    isSelected && datePickerStyles.selectedDayText,
+                    isToday && !isSelected && datePickerStyles.todayDayText,
                   ]}
                 >
-                  <Text
-                    style={[
-                      datePickerStyles.dayText,
-                      isSelected && datePickerStyles.selectedDayText,
-                      isToday && !isSelected && datePickerStyles.todayDayText,
-                    ]}
-                  >
-                    {day}
-                  </Text>
-                  {isToday && !isSelected && <View style={datePickerStyles.todayDot} />}
-                </Pressable>
-              );
-            })}
-          </View>
+                  {day}
+                </Text>
+                {isToday && !isSelected && <View style={datePickerStyles.todayDot} />}
+              </Pressable>
+            );
+          })}
+        </View>
 
-          {/* Footer Actions */}
-          <View style={datePickerStyles.footer}>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => {
-                onChange('');
-                onClose();
-              }}
-              style={{ minHeight: 48, justifyContent: 'center' }}
-            >
-              <Text style={styles.link}>No date</Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Set to today"
-              onPress={pickToday}
-              style={datePickerStyles.todayActionBtn}
-            >
-              <Text style={datePickerStyles.todayActionText}>Today</Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Close date picker"
-              onPress={onClose}
-              style={datePickerStyles.closeActionBtn}
-            >
-              <Text style={datePickerStyles.closeActionText}>Done</Text>
-            </Pressable>
-          </View>
-        </Pressable>
-      </Pressable>
-    </Modal>
+        {/* Footer Actions */}
+        <View style={datePickerStyles.footer}>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => {
+              onChange('');
+              onClose();
+            }}
+            style={{ minHeight: 48, justifyContent: 'center' }}
+          >
+            <Text style={styles.link}>No date</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Set to today"
+            onPress={pickToday}
+            style={datePickerStyles.todayActionBtn}
+          >
+            <Text style={datePickerStyles.todayActionText}>Today</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Close date picker"
+            onPress={onClose}
+            style={datePickerStyles.closeActionBtn}
+          >
+            <Text style={datePickerStyles.closeActionText}>Done</Text>
+          </Pressable>
+        </View>
+      </Dialog.Content>
+    </MaterialDialog>
   );
 }
 
 function VisitForm({
   initial,
   existingPhotos,
+  existingDishes,
   types,
   board,
   boards,
@@ -1699,6 +1759,7 @@ function VisitForm({
 }: {
   initial?: Doc<'visits'>;
   existingPhotos?: { _id: Id<'photos'>; caption: string; uploaderId: Id<'users'> }[];
+  existingDishes?: Pick<Doc<'dishes'>, '_id' | 'name'>[];
   types: Doc<'visitTypes'>[];
   board: Doc<'boards'>;
   boards: {
@@ -1710,7 +1771,13 @@ function VisitForm({
   params: ScreenProps<'VisitForm'>['route']['params'];
   onDone: (id: Id<'visits'>) => void;
 }) {
-  const planned = initial?.status === 'planned' || !!params.planned;
+  const [completing] = useState(!!params.completePlanned);
+  const planned = !completing && (initial?.status === 'planned' || !!params.planned);
+  const [wishlistReference] = useState(() =>
+    completing
+      ? { notes: initial?.notes ?? '', dishes: existingDishes?.map((dish) => dish.name) ?? [] }
+      : null,
+  );
   const [step, setStep] = useState<1 | 2>(initial || (params.title && params.placeId) ? 2 : 1);
 
   const token = useAuthToken();
@@ -1731,18 +1798,22 @@ function VisitForm({
   );
   const livePlace = useLivePlace(googlePlaceId);
   const title =
-    livePlace && (!titleDraft || titleDraft === 'Saved Google place') ? livePlace.name : titleDraft;
+    livePlace && (!titleDraft || isPlacePlaceholder(titleDraft)) ? livePlace.name : titleDraft;
   const place = placeDraft || livePlace?.address || '';
   const location = locationDraft ?? livePlace?.location ?? null;
-  const [date, setDate] = useState(initial?.date ?? (planned ? '' : localDate()));
+  const [date, setDate] = useState(
+    completing ? localDate() : (initial?.date ?? (planned ? '' : localDate())),
+  );
   const [datePickerOpen, setDatePickerOpen] = useState(false);
   const [pickedPhotos, setPickedPhotos] = useState<{ uri: string }[]>([]);
-  const [keepWishlist, setKeepWishlist] = useState(params.keepWishlist ?? true);
+  const [photoSourceOpen, setPhotoSourceOpen] = useState(false);
+  const [keepWishlist, setKeepWishlist] = useState(params.keepWishlist ?? false);
+  const [wishlistId, setWishlistId] = useState(params.wishlistId);
   const [uploadProgress, setUploadProgress] = useState<string | null>(null);
 
   const [editingTitle, setEditingTitle] = useState(false);
-  const [notes, setNotes] = useState(initial?.notes ?? params.notes ?? '');
-  const [savedLink, setSavedLink] = useState(initial?.savedLink ?? params.savedLink ?? '');
+  const [notes, setNotes] = useState(completing ? '' : (initial?.notes ?? params.notes ?? ''));
+  const [savedLink] = useState(initial?.savedLink ?? params.savedLink ?? '');
   const [typeId, setTypeId] = useState<Id<'visitTypes'> | undefined>(
     initial
       ? (types.find((entry) => entry.name === initial.typeName)?._id ?? types[0]?._id)
@@ -1753,15 +1824,15 @@ function VisitForm({
   const [dishes, setDishes] = useState<string[]>([]);
   const [dishInput, setDishInput] = useState('');
 
-  async function pickPhoto(camera: boolean) {
+  async function pickPhoto(source: PhotoSource) {
     if (task.busy) return;
     try {
-      if (camera) {
+      if (source === 'camera') {
         const permission = await ImagePicker.requestCameraPermissionsAsync();
         if (!permission.granted) {
-          Alert.alert(
+          showAlert(
             'Camera access is off',
-            'Allow camera access in settings, or choose a photo from your library.',
+            'Allow camera access in settings, or choose an image from your library.',
             [
               { text: 'Cancel', style: 'cancel' },
               { text: 'Open settings', onPress: () => void Linking.openSettings() },
@@ -1770,19 +1841,13 @@ function VisitForm({
           return;
         }
       }
-      const result = camera
-        ? await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 1 })
-        : await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ['images'],
-            quality: 1,
-            allowsMultipleSelection: true,
-          });
+      const result = await launchPhotoPicker(source, { allowsMultipleSelection: true });
 
       if (result.canceled || !result.assets || result.assets.length === 0) return;
 
       const remainingSlots = MAX_PHOTOS - (existingPhotos?.length ?? 0) - pickedPhotos.length;
       if (remainingSlots <= 0) {
-        Alert.alert('Limit reached', `You can add up to ${MAX_PHOTOS} photos per visit.`);
+        showAlert('Limit reached', `You can add up to ${MAX_PHOTOS} images per visit.`);
         return;
       }
 
@@ -1796,7 +1861,7 @@ function VisitForm({
           { compress: 0.85, format: SaveFormat.JPEG },
         );
         if (new File(converted.uri).size > MAX_PHOTO_BYTES) {
-          Alert.alert('File too large', 'Please choose photos smaller than 10 MB.');
+          showAlert('File too large', 'Please choose images smaller than 10 MB.');
           continue;
         }
         convertedPhotos.push({ uri: converted.uri });
@@ -1806,21 +1871,18 @@ function VisitForm({
         setPickedPhotos((prev) => [...prev, ...convertedPhotos]);
       }
     } catch (err: any) {
-      Alert.alert('Error', err?.message || 'Could not select photo.');
+      showAlert('Error', err?.message || 'Could not select image.');
     }
   }
 
   function promptPhotoPicker() {
     const currentTotal = (existingPhotos?.length ?? 0) + pickedPhotos.length;
     if (currentTotal >= MAX_PHOTOS) {
-      Alert.alert('Limit reached', `You can add up to ${MAX_PHOTOS} photos per visit.`);
+      showAlert('Limit reached', `You can add up to ${MAX_PHOTOS} images per visit.`);
       return;
     }
-    Alert.alert('Add photo', 'Take a photo or choose from library', [
-      { text: 'Take Photo', onPress: () => void pickPhoto(true) },
-      { text: 'Choose from Library', onPress: () => void pickPhoto(false) },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
+    Keyboard.dismiss();
+    setPhotoSourceOpen(true);
   }
 
   function removePickedPhoto(index: number) {
@@ -1839,7 +1901,7 @@ function VisitForm({
   const current = useCurrentLocation(!!hasMap);
   const [search, setSearch] = useState(params.title ?? '');
   const [searchOpen, setSearchOpen] = useState(false);
-  const [selectedSavedPlace, setSelectedSavedPlace] = useState<SavedPlace | undefined>();
+  const [selectedSavedPlace, setSelectedSavedPlace] = useState<VisitPickerPlace | undefined>();
   const [selectedGooglePlace, setSelectedGooglePlace] = useState<GooglePlace | undefined>();
 
   const map = useRef<MapView>(null);
@@ -1857,11 +1919,41 @@ function VisitForm({
     { boardId: params.boardId },
     { initialNumItems: 100 },
   );
-
-  const filtered = useMemo(
-    () => matchingPlaces(placesQuery.results, search),
-    [placesQuery.results, search],
+  const wishlistQuery = usePaginatedQuery(
+    api.wishlist.list,
+    !planned ? { boardId: params.boardId } : 'skip',
+    { initialNumItems: 100 },
   );
+  const { status: placesStatus, loadMore: loadPlaces } = placesQuery;
+  const { status: wishlistStatus, loadMore: loadWishlist } = wishlistQuery;
+  useEffect(() => {
+    if (step === 1 && placesStatus === 'CanLoadMore') loadPlaces(100);
+  }, [step, placesStatus, loadPlaces]);
+  useEffect(() => {
+    if (step === 1 && !planned && wishlistStatus === 'CanLoadMore') loadWishlist(100);
+  }, [step, planned, wishlistStatus, loadWishlist]);
+
+  const filtered = useMemo(() => {
+    const saved: VisitPickerPlace[] = placesQuery.results.map((item) => ({
+      ...item,
+      placeId: item._id,
+    }));
+    const wishes: VisitPickerPlace[] = wishlistQuery.results.map((item) => ({
+      _id: item._id,
+      wishlistId: item._id,
+      name: item.title,
+      address: item.place ?? '',
+      googlePlaceId: item.googlePlaceId,
+      location: item.location,
+    }));
+    return matchingPlaces(
+      preferVisitedPlaces([...saved, ...wishes], (item) => ({
+        ...item,
+        wishlist: !!item.wishlistId,
+      })),
+      search,
+    );
+  }, [placesQuery.results, wishlistQuery.results, search]);
   const savedWithDistance = useMemo(
     () =>
       filtered.map((p) => ({
@@ -1902,13 +1994,14 @@ function VisitForm({
     }
   }, [mapReady, mapSize, location, current.location, located]);
 
-  function selectSaved(savedPlace: SavedPlace) {
+  function selectSaved(savedPlace: VisitPickerPlace) {
     setSelectedSavedPlace(savedPlace);
     setSelectedGooglePlace(undefined);
     setTitle(savedPlace.name);
     setPlace(savedPlace.address);
-    setPlaceId(savedPlace._id);
-    setGooglePlaceId(undefined);
+    setPlaceId(savedPlace.placeId);
+    setWishlistId(savedPlace.wishlistId);
+    setGooglePlaceId(savedPlace.googlePlaceId);
     setLocation(savedPlace.location ?? null);
     if (savedPlace.location) {
       map.current?.animateToRegion(nearbyRegion(savedPlace.location, mapSize, 0.8), 350);
@@ -1918,6 +2011,7 @@ function VisitForm({
   }
 
   function selectGoogle(googlePlace: GooglePlace) {
+    setWishlistId(undefined);
     setSelectedGooglePlace(googlePlace);
     setSelectedSavedPlace(undefined);
     setTitle(googlePlace.name);
@@ -1930,7 +2024,7 @@ function VisitForm({
     Keyboard.dismiss();
   }
 
-  function chooseSavedAndProceed(savedPlace: SavedPlace) {
+  function chooseSavedAndProceed(savedPlace: VisitPickerPlace) {
     selectSaved(savedPlace);
     setStep(2);
   }
@@ -1959,6 +2053,7 @@ function VisitForm({
   }
 
   function chooseManual(name: string) {
+    setWishlistId(undefined);
     setSelectedSavedPlace(undefined);
     setSelectedGooglePlace(undefined);
     setTitle(name);
@@ -1986,6 +2081,7 @@ function VisitForm({
 
   const create = useMutation(api.visits.create);
   const update = useMutation(api.visits.update);
+  const markVisited = useMutation(api.visits.markVisited);
   const task = useTask();
   const fields = {
     title: title.trim(),
@@ -1993,7 +2089,7 @@ function VisitForm({
     date,
     notes,
     savedLink,
-    showDishes,
+    showDishes: showDishes || dishes.length > 0,
     location,
   };
   const fingerprint = JSON.stringify({
@@ -2003,16 +2099,18 @@ function VisitForm({
     googlePlaceId,
     typeId,
     dishes,
+    wishlistId,
+    keepWishlist,
   });
   const [firstFingerprint] = useState(fingerprint);
   const [lastSavedFingerprint, setLastSavedFingerprint] = useState(
-    initial ? fingerprint : undefined,
+    initial && !completing ? fingerprint : undefined,
   );
-  const [savedVisitId, setSavedVisitId] = useState(initial?._id);
+  const [savedVisitId, setSavedVisitId] = useState(completing ? undefined : initial?._id);
   const saveSession = useRef<VisitSaveSession<Id<'visits'>>>({
-    id: initial?._id,
+    id: completing ? undefined : initial?._id,
     revision: (initial as (Doc<'visits'> & { revision?: number }) | undefined)?.revision ?? 0,
-    fingerprint: initial ? fingerprint : undefined,
+    fingerprint: initial && !completing ? fingerprint : undefined,
     completedPhotos: new Set(),
   });
   const photoTickets = useRef(new Map<string, Id<'uploads'>>());
@@ -2048,6 +2146,17 @@ function VisitForm({
               setLastSavedFingerprint(fingerprint);
               return { id: savedId, revision: revision + 1 };
             }
+            if (completing && initial) {
+              const visitId = await markVisited({
+                visitId: initial._id,
+                date,
+                expectedRevision: revision,
+                details: { notes, dishes, savedLink },
+              });
+              setSavedVisitId(visitId);
+              setLastSavedFingerprint(fingerprint);
+              return { id: visitId, revision: revision + 1 };
+            }
             const newId = await create({
               ...fields,
               boardId: params.boardId,
@@ -2055,8 +2164,8 @@ function VisitForm({
               typeId,
               placeId,
               googlePlaceId,
-              dishes: dishes.map((dish) => dish.trim()).filter(Boolean),
-              wishlistId: params.wishlistId,
+              dishes: planned ? [] : dishes.map((dish) => dish.trim()).filter(Boolean),
+              wishlistId,
               keepWishlist,
             });
             setSavedVisitId(newId);
@@ -2064,8 +2173,8 @@ function VisitForm({
             return { id: newId, revision: 0 };
           },
           upload: async (targetVisitId, uri, index) => {
-            if (!token) throw new Error('Sign in to upload photos.');
-            setUploadProgress(`Uploading photo ${index + 1} of ${pickedPhotos.length}…`);
+            if (!token) throw new Error('Sign in to upload images.');
+            setUploadProgress(`Uploading image ${index + 1} of ${pickedPhotos.length}…`);
             const { ticket, provider } = await resolveUpload(
               photoTickets.current.get(uri),
               async () => {
@@ -2108,7 +2217,7 @@ function VisitForm({
         />
 
         <View style={formStyles.headerBlock}>
-          <Title>{planned ? 'Plan a visit' : 'Add visit'}</Title>
+          <Title>{planned ? 'Add Place to Wishlist' : 'Add Visit'}</Title>
         </View>
 
         <View style={formStyles.mapArea}>
@@ -2146,6 +2255,7 @@ function VisitForm({
                   title={place.name}
                   diameter={diameter}
                   selected={selectedSavedPlace?._id === place._id}
+                  wishlist={!!place.wishlistId}
                   onPress={() => selectSaved(place)}
                 />
               ))}
@@ -2196,9 +2306,12 @@ function VisitForm({
             {searchOpen && !!search.trim() && (
               <View style={formStyles.dropdown}>
                 <PlaceSearchResults
+                  mode={planned ? 'wishlist' : 'visit'}
                   query={search}
                   saved={savedWithDistance}
-                  loadingSaved={placesQuery.status !== 'Exhausted'}
+                  loadingSaved={
+                    placesStatus !== 'Exhausted' || (!planned && wishlistStatus !== 'Exhausted')
+                  }
                   nearby={nearby.places}
                   loading={nearby.loading}
                   error={nearby.error}
@@ -2255,39 +2368,22 @@ function VisitForm({
               >
                 <View style={formStyles.cardHeaderRow}>
                   <View style={{ flex: 1, gap: 2 }}>
-                    {selectedGooglePlace ? (
-                      <Text style={formStyles.newBadge}>GOOGLE MAPS PLACE</Text>
-                    ) : selectedSavedPlace ? (
-                      <Text style={formStyles.savedBadge}>SAVED PLACE</Text>
-                    ) : location ? (
-                      <Text style={formStyles.savedBadge}>MAP PIN</Text>
-                    ) : (
-                      <Text style={formStyles.cardEyebrow}>VISIT TITLE</Text>
-                    )}
+                    {!selectedGooglePlace &&
+                      (selectedSavedPlace ? (
+                        <Text style={formStyles.savedBadge}>
+                          {selectedSavedPlace.wishlistId ? 'WISHLIST' : 'SAVED PLACE'}
+                        </Text>
+                      ) : location ? (
+                        <Text style={formStyles.savedBadge}>MAP PIN</Text>
+                      ) : (
+                        <Text style={formStyles.cardEyebrow}>VISIT TITLE</Text>
+                      ))}
                     <Text style={formStyles.cardInstruction}>
                       {selectedSavedPlace || selectedGooglePlace
                         ? 'Edit title or keep venue name'
                         : 'Enter a manual title or pick on map'}
                     </Text>
                   </View>
-                  {(selectedSavedPlace || selectedGooglePlace || location || title) && (
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel="Reset title and location"
-                      onPress={() => {
-                        setSelectedSavedPlace(undefined);
-                        setSelectedGooglePlace(undefined);
-                        setLocation(null);
-                        setPlace('');
-                        setTitle('');
-                        setPlaceId(undefined);
-                        setGooglePlaceId(undefined);
-                      }}
-                      style={formStyles.clearLocationBtn}
-                    >
-                      <Text style={formStyles.clearLocationText}>Reset</Text>
-                    </Pressable>
-                  )}
                 </View>
 
                 {/* Manual Title TextInput */}
@@ -2299,12 +2395,16 @@ function VisitForm({
                   />
                   <TextInput
                     editable={!task.busy}
+                    caretHidden={keyboardHeight === 0}
                     placeholder="Enter visit or place title…"
                     placeholderTextColor={colors.muted}
                     value={title}
                     onChangeText={(value) => {
                       setTitle(value);
                       if (googlePlaceId) {
+                        setWishlistId(undefined);
+                        setSelectedSavedPlace(undefined);
+                        setSelectedGooglePlace(undefined);
                         setGooglePlaceId(undefined);
                         setPlaceId(undefined);
                         setPlace('');
@@ -2321,11 +2421,22 @@ function VisitForm({
                     autoCorrect={false}
                     style={formStyles.manualTitleInput}
                   />
-                  {!!title && (
+                  {!!(title || place || location || selectedSavedPlace || selectedGooglePlace) && (
                     <Pressable
                       accessibilityRole="button"
-                      accessibilityLabel="Clear title"
-                      onPress={() => setTitle('')}
+                      accessibilityLabel="Reset title and location"
+                      onPress={() => {
+                        setSelectedSavedPlace(undefined);
+                        setWishlistId(undefined);
+                        setSelectedGooglePlace(undefined);
+                        setLocation(null);
+                        setPlace('');
+                        setTitle('');
+                        setPlaceId(undefined);
+                        setGooglePlaceId(undefined);
+                        setSearch('');
+                        setSearchOpen(false);
+                      }}
                       hitSlop={8}
                       style={formStyles.clearBtn}
                     >
@@ -2347,7 +2458,8 @@ function VisitForm({
                 {/* Continue button */}
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel={planned ? 'Plan a visit' : 'Add visit'}
+                  accessibilityLabel="Continue"
+                  accessibilityState={{ disabled: !title.trim() }}
                   disabled={!title.trim()}
                   style={[
                     formStyles.primaryActionButton,
@@ -2358,14 +2470,13 @@ function VisitForm({
                     setStep(2);
                   }}
                 >
-                  <Icon source="plus" size={18} color={colors.paper} />
-                  <Text style={formStyles.primaryActionText}>
-                    {title.trim()
-                      ? planned
-                        ? 'Continue'
-                        : 'Add visit'
-                      : 'Enter title to continue'}
-                  </Text>
+                  <Text style={formStyles.primaryActionText}>Continue</Text>
+                  <MaterialCommunityIcons
+                    name="arrow-right"
+                    size={18}
+                    color={colors.paper}
+                    style={formStyles.primaryActionIcon}
+                  />
                 </Pressable>
               </View>
             </View>
@@ -2378,6 +2489,11 @@ function VisitForm({
   // Step 2: Dishes, notes & visit details (inventive journal layout, no cards)
   return (
     <View style={formStyles.container}>
+      <PhotoSourceDialog
+        visible={photoSourceOpen}
+        onDismiss={() => setPhotoSourceOpen(false)}
+        onSelect={(source) => void pickPhoto(source)}
+      />
       <PlaceTopBar
         navigation={navigation}
         boardId={params.boardId}
@@ -2388,7 +2504,7 @@ function VisitForm({
           else navigation.goBack();
         }}
       />
-      <Page>
+      <Page contentContainerStyle={formStyles.pageContent}>
         <ErrorNote error={current.error} />
         {current.settingsRequired && (
           <Button
@@ -2402,29 +2518,33 @@ function VisitForm({
           <Title>
             {planned
               ? initial
-                ? 'Edit planned visit'
-                : 'Plan a visit'
-              : initial
+                ? 'Edit Wishlist Place'
+                : 'Add Place to Wishlist'
+              : initial && !completing
                 ? 'Edit visit'
                 : 'Add visit'}
           </Title>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`Date: ${formatDisplayDate(date)}. Tap to choose date.`}
-            onPress={() => setDatePickerOpen(true)}
-            hitSlop={12}
-          >
-            <Text style={formStyles.dateCornerText}>{formatDisplayDate(date)}</Text>
-          </Pressable>
+          {!planned && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Date: ${formatDisplayDate(date)}. Tap to choose date.`}
+              onPress={() => setDatePickerOpen(true)}
+              hitSlop={12}
+            >
+              <Text style={formStyles.dateCornerText}>{formatDisplayDate(date)}</Text>
+            </Pressable>
+          )}
         </View>
 
-        <DatePickerModal
-          key={`${datePickerOpen}:${date}`}
-          visible={datePickerOpen}
-          value={date}
-          onChange={setDate}
-          onClose={() => setDatePickerOpen(false)}
-        />
+        {!planned && (
+          <DatePickerModal
+            key={`${datePickerOpen}:${date}`}
+            visible={datePickerOpen}
+            value={date}
+            onChange={setDate}
+            onClose={() => setDatePickerOpen(false)}
+          />
+        )}
 
         {/* Location snippet: Small map thumbnail and name beside it. */}
         <View style={formStyles.placeSnippet}>
@@ -2469,6 +2589,7 @@ function VisitForm({
                   onChangeText={(value) => {
                     setTitle(value);
                     if (googlePlaceId) {
+                      setWishlistId(undefined);
                       setGooglePlaceId(undefined);
                       setPlaceId(undefined);
                       setPlace('');
@@ -2497,14 +2618,16 @@ function VisitForm({
                 <Text style={formStyles.snippetTitle} numberOfLines={1}>
                   {title || 'Untitled place'}
                 </Text>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Edit place name"
-                  onPress={() => setEditingTitle(true)}
-                  hitSlop={8}
-                >
-                  <Icon source="pencil-outline" size={15} color={colors.muted} />
-                </Pressable>
+                {!completing && (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Edit place name"
+                    onPress={() => setEditingTitle(true)}
+                    hitSlop={8}
+                  >
+                    <Icon source="pencil-outline" size={15} color={colors.muted} />
+                  </Pressable>
+                )}
               </View>
             )}
 
@@ -2514,120 +2637,175 @@ function VisitForm({
               </Text>
             )}
 
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Change location on map"
-              onPress={() => setStep(1)}
-              style={formStyles.changeOnMapBtn}
-            >
-              <Icon source="map-marker-radius-outline" size={13} color={colors.rust} />
-              <Text style={formStyles.changeOnMapText}>Change on map</Text>
-            </Pressable>
+            {!completing && (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Change location on map"
+                onPress={() => setStep(1)}
+                style={formStyles.changeOnMapBtn}
+              >
+                <Icon source="map-marker-radius-outline" size={13} color={colors.rust} />
+                <Text style={formStyles.changeOnMapText}>Change on map</Text>
+              </Pressable>
+            )}
           </View>
         </View>
 
-        {/* Visit Type: Sleek pill buttons directly on canvas */}
-        {!initial && types.length > 0 && (
-          <View style={formStyles.typeRow}>
-            {types.map((entry) => {
-              const active = typeId === entry._id;
-              return (
-                <Pressable
-                  key={entry._id}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: active }}
-                  onPress={() => {
-                    setTypeId(entry._id);
-                    setShowDishes(entry.showDishes);
-                  }}
-                  style={[formStyles.typePill, active && formStyles.typePillActive]}
-                >
-                  <Text style={[formStyles.typePillText, active && formStyles.typePillTextActive]}>
-                    {entry.name}
+        {wishlistId && !savedVisitId && (
+          <View style={styles.row}>
+            <Switch
+              accessibilityLabel="Keep this place on the wishlist after logging"
+              value={keepWishlist}
+              onValueChange={setKeepWishlist}
+              disabled={task.busy}
+              trackColor={{ false: colors.border, true: colors.rust }}
+              thumbColor={colors.paper}
+              ios_backgroundColor={colors.border}
+            />
+            <Text style={[styles.body, { flex: 1 }]}>Keep on wishlist</Text>
+          </View>
+        )}
+
+        {wishlistReference && (wishlistReference.dishes.length > 0 || wishlistReference.notes) && (
+          <View style={styles.card}>
+            <Heading>From your wishlist</Heading>
+            {wishlistReference.dishes.length > 0 && (
+              <View style={{ gap: 4 }}>
+                <Text style={styles.label}>Dishes</Text>
+                {wishlistReference.dishes.map((name, index) => (
+                  <Text key={index} style={styles.muted}>
+                    {name}
                   </Text>
-                </Pressable>
-              );
-            })}
+                ))}
+              </View>
+            )}
+            {!!wishlistReference.notes && (
+              <View style={{ gap: 4 }}>
+                <Text style={styles.label}>Notes</Text>
+                <Text style={styles.muted}>{wishlistReference.notes}</Text>
+              </View>
+            )}
           </View>
         )}
 
         {/* Photos: Fluid horizontal gallery reel without cards */}
-        <View style={formStyles.sectionBlock}>
-          <View style={formStyles.sectionLabelRow}>
-            <Icon source="camera-outline" size={16} color={colors.rust} />
-            <Text style={formStyles.sectionLabel}>
-              Photos
-              {(existingPhotos?.length ?? 0) + pickedPhotos.length > 0
-                ? ` · ${(existingPhotos?.length ?? 0) + pickedPhotos.length}/${MAX_PHOTOS}`
-                : ''}
-            </Text>
-          </View>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={formStyles.photosScrollContainer}
-          >
+        {!planned && (
+          <View style={formStyles.sectionBlock}>
+            <View style={formStyles.sectionLabelRow}>
+              <Icon source="camera-outline" size={16} color={colors.rust} />
+              <Text style={formStyles.sectionLabel}>
+                Images
+                {(existingPhotos?.length ?? 0) + pickedPhotos.length > 0
+                  ? ` · ${(existingPhotos?.length ?? 0) + pickedPhotos.length}/${MAX_PHOTOS}`
+                  : ''}
+              </Text>
+            </View>
             {(existingPhotos?.length ?? 0) + pickedPhotos.length < MAX_PHOTOS && (
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Add photo"
+                accessibilityLabel="Add image"
+                accessibilityState={{ disabled: task.busy }}
+                disabled={task.busy}
                 onPress={promptPhotoPicker}
                 style={formStyles.addPhotoTile}
               >
                 <View style={formStyles.addPhotoIconCircle}>
                   <Icon source="camera-plus-outline" size={20} color={colors.rust} />
                 </View>
-                <Text style={formStyles.addPhotoText}>Add photo</Text>
+                <Text style={formStyles.addPhotoText}>Add image</Text>
               </Pressable>
             )}
+            {(existingPhotos?.length ?? 0) + pickedPhotos.length > 0 && (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={formStyles.photosScrollContainer}
+              >
+                {pickedPhotos.map((photo, index) => (
+                  <View key={photo.uri} style={formStyles.photoThumbWrapper}>
+                    <Image
+                      source={{ uri: photo.uri }}
+                      style={formStyles.photoThumb}
+                      contentFit="cover"
+                    />
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Remove image"
+                      onPress={() => removePickedPhoto(index)}
+                      style={formStyles.removePhotoBtn}
+                      hitSlop={6}
+                    >
+                      <Icon source="close" size={12} color={colors.paper} />
+                    </Pressable>
+                  </View>
+                ))}
 
-            {pickedPhotos.map((photo, index) => (
-              <View key={photo.uri} style={formStyles.photoThumbWrapper}>
-                <Image
-                  source={{ uri: photo.uri }}
-                  style={formStyles.photoThumb}
-                  contentFit="cover"
-                />
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Remove photo"
-                  onPress={() => removePickedPhoto(index)}
-                  style={formStyles.removePhotoBtn}
-                  hitSlop={6}
-                >
-                  <Icon source="close" size={12} color={colors.paper} />
-                </Pressable>
+                {existingPhotos?.map((photo) => (
+                  <View key={photo._id} style={formStyles.photoThumbWrapper}>
+                    <Photo
+                      id={photo._id}
+                      alt={photo.caption || 'Visit image'}
+                      height={88}
+                      style={formStyles.photoThumb}
+                    />
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Delete image"
+                      onPress={() =>
+                        confirm(
+                          'Delete this image?',
+                          () => void task.run(() => removePhoto({ photoId: photo._id })),
+                        )
+                      }
+                      style={formStyles.removePhotoBtn}
+                      hitSlop={6}
+                    >
+                      <Icon source="close" size={12} color={colors.paper} />
+                    </Pressable>
+                  </View>
+                ))}
+              </ScrollView>
+            )}
+          </View>
+        )}
+
+        {!planned && (initial || types.length > 0) && (
+          <View style={formStyles.sectionBlock}>
+            <View style={formStyles.sectionLabelRow}>
+              <Icon source="tag-outline" size={16} color={colors.rust} />
+              <Text style={formStyles.sectionLabel}>Type</Text>
+            </View>
+            {initial ? (
+              <Text style={styles.body}>{initial.typeName}</Text>
+            ) : (
+              <View style={formStyles.typeRow}>
+                {types.map((entry) => {
+                  const active = typeId === entry._id;
+                  return (
+                    <Pressable
+                      key={entry._id}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: active }}
+                      onPress={() => {
+                        setTypeId(entry._id);
+                        setShowDishes(entry.showDishes);
+                      }}
+                      style={[formStyles.typePill, active && formStyles.typePillActive]}
+                    >
+                      <Text
+                        style={[formStyles.typePillText, active && formStyles.typePillTextActive]}
+                      >
+                        {entry.name}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
               </View>
-            ))}
+            )}
+          </View>
+        )}
 
-            {existingPhotos?.map((photo) => (
-              <View key={photo._id} style={formStyles.photoThumbWrapper}>
-                <Photo
-                  id={photo._id}
-                  alt={photo.caption || 'Visit photo'}
-                  height={88}
-                  style={formStyles.photoThumb}
-                />
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Delete photo"
-                  onPress={() =>
-                    confirm(
-                      'Delete this photo?',
-                      () => void task.run(() => removePhoto({ photoId: photo._id })),
-                    )
-                  }
-                  style={formStyles.removePhotoBtn}
-                  hitSlop={6}
-                >
-                  <Icon source="close" size={12} color={colors.paper} />
-                </Pressable>
-              </View>
-            ))}
-          </ScrollView>
-        </View>
-
-        {!initial && (
+        {!planned && (!initial || completing) && (
           <>
             {/* Dishes & Drinks: Fluid tag input and keepsake cloud */}
             <View style={formStyles.sectionBlock}>
@@ -2639,7 +2817,7 @@ function VisitForm({
               <View style={formStyles.dishInputBar}>
                 <TextInput
                   editable={!task.busy}
-                  placeholder="What did you order? (e.g. Filter Coffee)"
+                  placeholder="What did you order?"
                   placeholderTextColor={colors.muted}
                   value={dishInput}
                   onChangeText={setDishInput}
@@ -2682,23 +2860,11 @@ function VisitForm({
           </>
         )}
 
-        {params.wishlistId && !savedVisitId && (
-          <View style={styles.row}>
-            <Switch
-              accessibilityLabel="Keep this place on the wishlist after logging"
-              value={keepWishlist}
-              onValueChange={setKeepWishlist}
-              disabled={task.busy}
-              trackColor={{ true: colors.rust }}
-            />
-            <Text style={[styles.body, { flex: 1 }]}>Keep on wishlist</Text>
-          </View>
-        )}
         {/* Notes & Memories: Journal notebook canvas */}
         <View style={formStyles.sectionBlock}>
           <View style={formStyles.sectionLabelRow}>
             <Icon source="notebook-outline" size={16} color={colors.rust} />
-            <Text style={formStyles.sectionLabel}>Notes & memories</Text>
+            <Text style={formStyles.sectionLabel}>{planned ? 'Notes' : 'Notes & memories'}</Text>
           </View>
           <View style={formStyles.journalCanvas}>
             <TextInput
@@ -2706,7 +2872,11 @@ function VisitForm({
               multiline
               value={notes}
               onChangeText={setNotes}
-              placeholder="What did you love? The table by the window, the conversation, what to order next time..."
+              placeholder={
+                planned
+                  ? 'Save what you want to do'
+                  : 'What did you love? The table by the window, the conversation, what to order next time...'
+              }
               placeholderTextColor={colors.muted}
               style={formStyles.journalInput}
               maxLength={5000}
@@ -2715,22 +2885,12 @@ function VisitForm({
           </View>
         </View>
 
-        <Field
-          label="Saved link (optional)"
-          value={savedLink}
-          onChangeText={setSavedLink}
-          placeholder="https://…"
-          autoCapitalize="none"
-          keyboardType="url"
-          maxLength={500}
-        />
-
         {/* Save button */}
         <View style={formStyles.saveArea}>
-          {task.error && savedVisitId && !initial && (
+          {task.error && savedVisitId && (!initial || completing) && (
             <View style={{ gap: 8 }}>
               <Text style={styles.muted}>
-                Your visit is saved. Retry the remaining photos or open the visit.
+                Your visit is saved. Retry the remaining images or open the visit.
               </Text>
               <Button
                 secondary
@@ -2748,10 +2908,10 @@ function VisitForm({
             accessibilityLabel={
               task.busy
                 ? 'Saving visit'
-                : initial
+                : initial && !completing
                   ? 'Save changes'
                   : planned
-                    ? 'Save planned visit'
+                    ? 'Add to Wishlist'
                     : 'Save visit'
             }
             disabled={!title.trim() || task.busy}
@@ -2761,15 +2921,20 @@ function VisitForm({
               (!title.trim() || task.busy) && formStyles.savePillDisabled,
             ]}
           >
-            <Icon source="check" size={18} color={colors.paper} />
+            <MaterialCommunityIcons
+              name="check"
+              size={18}
+              color={colors.paper}
+              style={formStyles.savePillIcon}
+            />
             <Text style={formStyles.savePillText}>
               {uploadProgress ||
                 (task.busy
                   ? 'Saving…'
-                  : initial
+                  : initial && !completing
                     ? 'Save changes'
                     : planned
-                      ? 'Save planned visit'
+                      ? 'Add to Wishlist'
                       : 'Save visit')}
             </Text>
           </Pressable>
@@ -2780,6 +2945,9 @@ function VisitForm({
 }
 
 const formStyles = StyleSheet.create({
+  pageContent: {
+    paddingBottom: 16,
+  },
   container: {
     flex: 1,
     backgroundColor: colors.background,
@@ -2875,29 +3043,10 @@ const formStyles = StyleSheet.create({
     letterSpacing: 1.5,
     color: colors.rust,
   },
-  newBadge: {
-    ...styles.eyebrow,
-    color: colors.green,
-    fontSize: 9,
-    marginBottom: 2,
-  },
   cardInstruction: {
     fontFamily: 'Jakarta',
     fontSize: 12,
     color: colors.muted,
-  },
-  clearLocationBtn: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-    backgroundColor: colors.coralLight,
-    borderWidth: 1,
-    borderColor: colors.coralBorder,
-  },
-  clearLocationText: {
-    fontFamily: 'JakartaSemiBold',
-    fontSize: 11,
-    color: colors.rust,
   },
   titleInputRow: {
     flexDirection: 'row',
@@ -2947,7 +3096,15 @@ const formStyles = StyleSheet.create({
   primaryActionText: {
     fontFamily: 'JakartaSemiBold',
     fontSize: 15,
+    lineHeight: 20,
+    includeFontPadding: false,
+    textAlignVertical: 'center',
     color: colors.paper,
+  },
+  primaryActionIcon: {
+    lineHeight: 20,
+    includeFontPadding: false,
+    textAlignVertical: 'center',
   },
   headerBlock: {
     paddingHorizontal: 22,
@@ -3201,7 +3358,6 @@ const formStyles = StyleSheet.create({
   saveArea: {
     paddingTop: 8,
     gap: 10,
-    paddingBottom: 24,
   },
   savePillButton: {
     height: 52,
@@ -3223,7 +3379,15 @@ const formStyles = StyleSheet.create({
   savePillText: {
     fontFamily: 'JakartaSemiBold',
     fontSize: 16,
+    lineHeight: 22,
+    includeFontPadding: false,
+    textAlignVertical: 'center',
     color: colors.paper,
+  },
+  savePillIcon: {
+    lineHeight: 22,
+    includeFontPadding: false,
+    textAlignVertical: 'center',
   },
   photosScrollContainer: {
     flexDirection: 'row',
@@ -3231,8 +3395,9 @@ const formStyles = StyleSheet.create({
     paddingVertical: 2,
   },
   addPhotoTile: {
-    width: 88,
+    width: '100%',
     height: 88,
+    flexDirection: 'row',
     borderRadius: 16,
     borderWidth: 1.5,
     borderColor: colors.coralBorder,
@@ -3240,7 +3405,7 @@ const formStyles = StyleSheet.create({
     backgroundColor: colors.coralLight,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 4,
+    gap: 10,
   },
   addPhotoIconCircle: {
     width: 32,
@@ -3252,7 +3417,7 @@ const formStyles = StyleSheet.create({
   },
   addPhotoText: {
     fontFamily: 'JakartaSemiBold',
-    fontSize: 11,
+    fontSize: 14,
     color: colors.rust,
   },
   photoThumbWrapper: {
@@ -3281,27 +3446,6 @@ const formStyles = StyleSheet.create({
 });
 
 const datePickerStyles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(27, 26, 23, 0.45)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  dialog: {
-    width: '100%',
-    maxWidth: 340,
-    backgroundColor: colors.paper,
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: 18,
-    elevation: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -3403,103 +3547,93 @@ const datePickerStyles = StyleSheet.create({
 });
 
 const summaryStyles = StyleSheet.create({
-  headerSection: { gap: 16 },
-  headerTopRow: {
+  content: { gap: 16 },
+  headerSection: { gap: 6 },
+  visitLabelRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     justifyContent: 'space-between',
     gap: 12,
   },
-  titleWrapper: {
+  headerTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  placeTitleLink: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  heroTitle: {
-    fontSize: 26,
-    lineHeight: 32,
-    color: colors.ink,
-    letterSpacing: -0.6,
-  },
-  typePill: {
-    backgroundColor: colors.sageLight,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: colors.sageBorder,
-  },
-  typeText: {
-    fontFamily: 'JakartaSemiBold',
-    fontSize: 12,
-    color: colors.green,
-  },
-  menuTriggerBtn: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.background,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  metaBlock: {
-    gap: 8,
-  },
-  metaItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    minHeight: 44,
     gap: 6,
   },
-  metaText: {
+  heroTitle: {
+    flex: 1,
+    fontSize: 26,
+    lineHeight: 34,
+  },
+  typeText: {
     fontFamily: 'Jakarta',
     fontSize: 13,
     color: colors.muted,
   },
+  menuTriggerBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.background,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  metaItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexShrink: 1,
+    gap: 6,
+  },
+  dateIcon: {
+    width: 20,
+    height: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    transform: [{ translateY: 1 }],
+  },
+  metaText: {
+    fontFamily: 'Jakarta',
+    fontSize: 13,
+    lineHeight: 20,
+    includeFontPadding: false,
+    textAlignVertical: 'center',
+    color: colors.muted,
+    flexShrink: 1,
+  },
   locationRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-  },
-  locationIconCircle: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: colors.peachLight,
-    alignItems: 'center',
-    justifyContent: 'center',
+    gap: 5,
   },
   locationText: {
     fontFamily: 'Jakarta',
     fontSize: 13,
-    color: colors.rust,
+    color: colors.muted,
     flex: 1,
   },
-  noteBox: {
-    flexDirection: 'row',
+  detailSection: {
     gap: 8,
-    backgroundColor: colors.background,
-    borderRadius: 12,
-    padding: 12,
-    borderLeftWidth: 3,
-    borderLeftColor: colors.peachBorder,
+  },
+  notesBody: {
+    paddingVertical: 12,
+  },
+  sectionBox: {
+    backgroundColor: colors.paper,
     borderWidth: 1,
     borderColor: colors.border,
-  },
-  noteText: {
-    fontFamily: 'Jakarta',
-    fontSize: 13,
-    lineHeight: 19,
-    color: colors.ink,
-    fontStyle: 'italic',
-    flex: 1,
-  },
-  headerExperienceBlock: {
-    marginTop: 4,
-    gap: 0,
+    borderRadius: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 4,
   },
   experienceBlockHeader: {
     flexDirection: 'row',
@@ -3518,37 +3652,15 @@ const summaryStyles = StyleSheet.create({
     fontSize: 11,
     color: colors.muted,
   },
-  dishesSection: {
-    backgroundColor: colors.paper,
-    borderRadius: 20,
-    padding: 18,
-    gap: 12,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
   dishesHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'baseline',
   },
-  dishesTitleGroup: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+  sectionTitle: {
+    ...styles.subtitle,
+    includeFontPadding: false,
     flexShrink: 1,
-  },
-  countBadge: {
-    backgroundColor: colors.peachLight,
-    borderWidth: 1,
-    borderColor: colors.peachBorder,
-    borderRadius: 999,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-  },
-  countBadgeText: {
-    fontFamily: 'JakartaSemiBold',
-    fontSize: 11,
-    color: colors.rust,
   },
   dishAvgBadge: {
     backgroundColor: colors.sageLight,
@@ -3562,11 +3674,6 @@ const summaryStyles = StyleSheet.create({
     fontFamily: 'JakartaSemiBold',
     fontSize: 11,
     color: colors.green,
-  },
-  dishesActionsGroup: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
   },
   editDishesBtn: {
     flexDirection: 'row',
@@ -3585,31 +3692,28 @@ const summaryStyles = StyleSheet.create({
     color: colors.rust,
   },
   addDishBtn: {
-    minHeight: 48,
-    minWidth: 48,
+    minHeight: 36,
+    minWidth: 44,
     justifyContent: 'center',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: colors.rust,
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
   },
   addDishBtnText: {
     fontFamily: 'JakartaSemiBold',
     fontSize: 13,
-    color: colors.paper,
+    lineHeight: 26,
+    includeFontPadding: false,
+    color: colors.rust,
   },
   dishesList: {
     gap: 0,
   },
   itemRow: {
-    minHeight: 60,
+    minHeight: 48,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 10,
+    paddingVertical: 8,
     borderTopWidth: 1,
     borderColor: colors.border,
     gap: 10,
@@ -3748,6 +3852,7 @@ const modalStyles = StyleSheet.create({
   sheetContainer: {
     width: '100%',
     maxWidth: 600,
+    flexShrink: 1,
     backgroundColor: colors.paper,
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
@@ -3761,6 +3866,11 @@ const modalStyles = StyleSheet.create({
     shadowOpacity: 0.18,
     shadowRadius: 14,
   },
+  membersScroll: {
+    flexGrow: 0,
+    flexShrink: 1,
+    maxHeight: 420,
+  },
   sheetHeader: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -3769,6 +3879,20 @@ const modalStyles = StyleSheet.create({
     borderBottomWidth: 1,
     borderColor: colors.border,
     gap: 10,
+  },
+  sheetTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  dishNameInput: {
+    ...styles.input,
+    flex: 1,
+    minWidth: 0,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontFamily: 'EpilogueSemiBold',
+    fontSize: 18,
   },
   sheetTitle: {
     fontFamily: 'EpilogueSemiBold',
@@ -3795,31 +3919,22 @@ const modalStyles = StyleSheet.create({
   },
   memberCard: {
     backgroundColor: colors.background,
-    borderRadius: 18,
-    padding: 14,
-    gap: 12,
+    borderRadius: 14,
+    padding: 10,
+    gap: 8,
     borderWidth: 1,
     borderColor: colors.border,
-  },
-  memberCardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
   },
   memberInfo: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 6,
   },
   memberName: {
+    flexShrink: 1,
     fontFamily: 'JakartaSemiBold',
-    fontSize: 14,
+    fontSize: 13,
     color: colors.ink,
-  },
-  memberCurrentScore: {
-    fontFamily: 'JakartaSemiBold',
-    fontSize: 14,
-    color: colors.rust,
   },
   noteInput: {
     backgroundColor: colors.paper,
@@ -3884,25 +3999,5 @@ const modalStyles = StyleSheet.create({
     fontFamily: 'JakartaSemiBold',
     fontSize: 12,
     color: colors.muted,
-  },
-  centerModalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(27, 26, 23, 0.55)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  centerModalDialog: {
-    width: '100%',
-    maxWidth: 360,
-    backgroundColor: colors.paper,
-    borderRadius: 24,
-    padding: 20,
-    gap: 16,
-    elevation: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.18,
-    shadowRadius: 14,
   },
 });

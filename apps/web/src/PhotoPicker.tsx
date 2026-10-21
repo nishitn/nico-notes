@@ -45,7 +45,7 @@ export function PhotoPicker({
           event.target.value = '';
           if (!files.length) return;
           if (files.length + value.length > max) {
-            setError(`You can add up to ${max} more photos.`);
+            setError(`You can add up to ${max} more images.`);
             return;
           }
           if (files.some((file) => !PHOTO_TYPES.includes(file.type))) {

@@ -1,7 +1,11 @@
 import { useMutation, usePaginatedQuery, useQuery } from './convexLive';
 import { Link, useParams } from 'react-router-dom';
-import { ArrowRight, Bell, CheckCheck } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { ArrowRight, Bell, Check, CheckCheck } from 'lucide-react';
 import { api } from '@nico-notes/backend/api';
+import { notificationTime } from '@nico-notes/backend/notificationTime';
+import { notificationText } from '@nico-notes/backend/notificationText';
+import { GoogleAttribution } from './GoogleAttribution';
 import type { Id } from '@nico-notes/backend/dataModel';
 import { BoardHeader } from './BoardDashboard';
 import { ErrorNote, Spinner, useTask } from './ui';
@@ -27,18 +31,22 @@ export function BoardNotifications({ boardId }: { boardId: Id<'boards'> }) {
     { initialNumItems: 30 },
   );
   const markRead = useMutation(api.notifications.markRead);
+  const markOneRead = useMutation(api.notifications.markOneRead);
+  const hasUnread = useQuery(api.notifications.hasUnread, { boardId });
   const task = useTask();
   const newest = results[0];
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
   return (
     <section aria-labelledby="notifications-title">
       <div className="page-heading notifications-heading">
-        <div>
-          <h2 id="notifications-title">Notifications</h2>
-          <p className="muted">What’s changed on your board, newest first.</p>
-        </div>
+        <h2 id="notifications-title">Notifications</h2>
         <button
           className="button secondary small"
-          disabled={!newest?.unread || task.busy}
+          disabled={!newest || !(hasUnread ?? results.some((item) => item.unread)) || task.busy}
           onClick={() =>
             newest && void task.run(() => markRead({ boardId, throughId: newest._id }))
           }
@@ -54,25 +62,42 @@ export function BoardNotifications({ boardId }: { boardId: Id<'boards'> }) {
           {results.map((item) => (
             <li key={item._id} className={`notification-card ${item.unread ? 'unread' : ''}`}>
               <span className="notification-icon" aria-hidden="true">
-                <Bell size={19} />
+                <Bell size={16} />
               </span>
               <div className="notification-content">
                 <p>
-                  <strong>{item.actorName}</strong> {item.summary}
+                  <strong>{item.actorName}</strong> {notificationText(item)}
                 </p>
-                <time className="small muted" dateTime={new Date(item.createdAt).toISOString()}>
-                  {new Date(item.createdAt).toLocaleString(undefined, {
-                    dateStyle: 'medium',
-                    timeStyle: 'short',
-                  })}
-                </time>
-                {item.visitId && (
-                  <Link className="notification-link" to={`/visits/${item.visitId}`}>
-                    View visit <ArrowRight size={14} />
-                  </Link>
+                {item.message?.googlePlaceId && (
+                  <GoogleAttribution placeId={item.message.googlePlaceId} />
                 )}
+                <div className="notification-actions">
+                  {item.visitId && (
+                    <Link className="notification-link" to={`/visits/${item.visitId}`}>
+                      {item.visitStatus === 'planned' ? 'View wishlist item' : 'View visit'}{' '}
+                      <ArrowRight size={13} />
+                    </Link>
+                  )}
+                  {item.unread && (
+                    <button
+                      className="notification-read"
+                      disabled={task.busy}
+                      onClick={() =>
+                        void task.run(() => markOneRead({ boardId, notificationId: item._id }))
+                      }
+                    >
+                      <Check size={14} /> Mark as read
+                    </button>
+                  )}
+                </div>
               </div>
-              {item.unread && <span className="notification-new">New</span>}
+              <time
+                className="notification-time muted"
+                dateTime={new Date(item.createdAt).toISOString()}
+                title={new Date(item.createdAt).toLocaleString()}
+              >
+                {notificationTime(item.createdAt, now)}
+              </time>
             </li>
           ))}
         </ol>
@@ -80,7 +105,7 @@ export function BoardNotifications({ boardId }: { boardId: Id<'boards'> }) {
         <div className="first-memory">
           <Bell size={35} />
           <h3>No changes yet</h3>
-          <p>New visits, ratings, photos, and other board changes will appear here.</p>
+          <p>Visits, wishlist updates, photos, and board changes will appear here.</p>
         </div>
       )}
       {(status === 'CanLoadMore' || status === 'LoadingMore') && (

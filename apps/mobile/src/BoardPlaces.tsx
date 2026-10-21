@@ -14,8 +14,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import MapView, { PROVIDER_GOOGLE } from 'react-native-maps';
 import Constants from 'expo-constants';
 import { useMutation, usePaginatedQuery, useQuery } from './convexLive';
-import { Icon, Menu, PaperProvider, Searchbar, useTheme } from 'react-native-paper';
-import { GoogleAttribution } from './GoogleAttribution';
+import { usePaginatedQuery as useRawPaginatedQuery } from 'convex/react';
+import { Icon, Menu, PaperProvider, useTheme } from 'react-native-paper';
+import { SearchField } from './SearchField';
 import { placeMarkers, nearbyRegion, type MapRegion } from './mapGeometry';
 import { preferVisitedPlaces } from '@nico-notes/backend/mapMarkers';
 import { PlaceMapMarker } from './PlaceMapMarker';
@@ -23,7 +24,9 @@ import { mapSelectionReducer } from './mapSelection';
 import { createMapViewport, mapViewportReducer } from './mapViewport';
 import { PlacePreview } from './PlacePreview';
 import { PlaceSearchResults } from './PlaceSearchResults';
+import { PlaceLookupNotice } from './PlaceLookupNotice';
 import { distanceBetween, formatDistance, matchingPlaces } from './placeSearch';
+import { comparePlacesByLatestVisit, latestBoardVisitsByPlace } from './placeSort';
 import { usePlaceSearch } from './usePlaceSearch';
 import type { GooglePlace } from '../modules/google-places';
 import { useCurrentLocation } from './useCurrentLocation';
@@ -45,7 +48,7 @@ export type PlaceSortOption = 'visits' | 'distance' | 'recent' | 'name_asc' | 'n
 export const PLACE_SORT_OPTIONS: { value: PlaceSortOption; label: string; icon: string }[] = [
   { value: 'visits', label: 'Most visits', icon: 'book-open-outline' },
   { value: 'distance', label: 'Nearest to you', icon: 'navigation-variant-outline' },
-  { value: 'recent', label: 'Recently added', icon: 'clock-outline' },
+  { value: 'recent', label: 'Latest visit', icon: 'clock-outline' },
   { value: 'name_asc', label: 'Name (A to Z)', icon: 'sort-alphabetical-ascending' },
   { value: 'name_desc', label: 'Name (Z to A)', icon: 'sort-alphabetical-descending' },
 ];
@@ -68,6 +71,8 @@ export function BoardPlaces({
   onOpen,
   onAdd,
   onViewAll,
+  showHeading = true,
+  showMap = true,
   showList = false,
   fillMap = false,
 }: {
@@ -75,6 +80,8 @@ export function BoardPlaces({
   onOpen: (place: SavedPlace) => void;
   onAdd: (place?: VisitPlace, title?: string) => void;
   onViewAll?: () => void;
+  showHeading?: boolean;
+  showMap?: boolean;
   showList?: boolean;
   fillMap?: boolean;
 }) {
@@ -87,20 +94,42 @@ export function BoardPlaces({
     results: wishlist,
     status: wishlistStatus,
     loadMore: loadWishlist,
-  } = usePaginatedQuery(api.wishlist.list, { boardId }, { initialNumItems: 100 });
+  } = usePaginatedQuery(api.wishlist.list, showMap ? { boardId } : 'skip', {
+    initialNumItems: 100,
+  });
+  const {
+    results: boardVisits,
+    status: boardVisitStatus,
+    loadMore: loadBoardVisits,
+  } = useRawPaginatedQuery(api.visits.places, showList ? { boardId } : 'skip', {
+    initialNumItems: 100,
+  });
+  useEffect(() => {
+    if (showList && boardVisitStatus === 'CanLoadMore') loadBoardVisits(100);
+  }, [showList, boardVisitStatus, loadBoardVisits]);
+  const latestBoardVisits = useMemo(
+    () => latestBoardVisitsByPlace(boardVisits, boardVisitStatus === 'Exhausted'),
+    [boardVisits, boardVisitStatus],
+  );
   const theme = useTheme();
   const [filterMenuVisible, setFilterMenuVisible] = useState(false);
   const [placeFilter, setPlaceFilter] = useState<'visited' | 'wishlist' | 'all'>('all');
+  const mapPlaceIds = [
+    ...(placeFilter !== 'wishlist' ? results : []),
+    ...(placeFilter !== 'visited' ? wishlist : []),
+  ].flatMap((place) => (place.googlePlaceId ? [place.googlePlaceId] : []));
   const [fullscreen, setFullscreen] = useState(false);
   useEffect(() => {
-    if (placeFilter !== 'visited' && wishlistStatus === 'CanLoadMore') loadWishlist(100);
-  }, [placeFilter, wishlistStatus, loadWishlist]);
+    if (showMap && placeFilter !== 'visited' && wishlistStatus === 'CanLoadMore') loadWishlist(100);
+  }, [showMap, placeFilter, wishlistStatus, loadWishlist]);
   const link = useMutation(api.places.ensureLinked);
   const wishlistPlaceIds = useQuery(api.wishlist.savedPlaceIds, { boardId });
   const addToWishlist = useMutation(api.wishlist.add);
   const { run, error } = useTask();
   const [search, setSearch] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
+  const [missingLocationOnly, setMissingLocationOnly] = useState(false);
+  const filterMissingLocation = showList && !showMap && missingLocationOnly;
   const [sortBy, setSortBy] = useState<PlaceSortOption>('visits');
   const [sortMenuVisible, setSortMenuVisible] = useState(false);
   const [selection, dispatchSelection] = useReducer(mapSelectionReducer<PlaceSelection>, undefined);
@@ -139,10 +168,17 @@ export function BoardPlaces({
   useEffect(() => {
     void run(() => link({ boardId }));
   }, [boardId, link, run]);
-  const filtered = useMemo(() => matchingPlaces(results, search), [results, search]);
+  const filtered = useMemo(
+    () =>
+      matchingPlaces(results, search).filter(
+        (place) => !filterMissingLocation || (!place.location && !place.googlePlaceId),
+      ),
+    [results, search, filterMissingLocation],
+  );
   useEffect(() => {
-    if (search.trim() && status === 'CanLoadMore') loadMore(100);
-  }, [search, status, loadMore]);
+    if ((search.trim() || sortBy === 'recent' || filterMissingLocation) && status === 'CanLoadMore')
+      loadMore(100);
+  }, [search, sortBy, filterMissingLocation, status, loadMore]);
   const located = useMemo(
     () =>
       filtered.filter(
@@ -205,17 +241,22 @@ export function BoardPlaces({
       ? Constants.expoConfig?.extra?.hasIosMapsKey
       : Constants.expoConfig?.extra?.hasAndroidMapsKey,
   );
-  const current = useCurrentLocation(!!hasMap);
+  const current = useCurrentLocation((showMap && hasMap) || showList);
   const savedWithDistance = useMemo(
     () =>
-      filtered.map((p) => ({
-        ...p,
-        distance:
-          p.location && current.location
-            ? distanceBetween(p.location, current.location)
-            : undefined,
-      })),
-    [filtered, current.location],
+      filtered.map((p) => {
+        const latestVisit = latestBoardVisits.get(p._id);
+        return {
+          ...p,
+          latestVisit: latestVisit ?? p.latestVisit,
+          lastVisitDate: latestVisit ? latestVisit.date : p.lastVisitDate,
+          distance:
+            p.location && current.location
+              ? distanceBetween(p.location, current.location)
+              : undefined,
+        };
+      }),
+    [filtered, current.location, latestBoardVisits],
   );
   const sortedPlaces = useMemo(() => {
     const list = [...savedWithDistance];
@@ -233,12 +274,8 @@ export function BoardPlaces({
           if (distA !== distB) return distA - distB;
           return a.name.localeCompare(b.name);
         }
-        case 'recent': {
-          const timeA = a._creationTime ?? 0;
-          const timeB = b._creationTime ?? 0;
-          if (timeB !== timeA) return timeB - timeA;
-          return a.name.localeCompare(b.name);
-        }
+        case 'recent':
+          return comparePlacesByLatestVisit(a, b);
         case 'name_asc':
           return a.name.localeCompare(b.name);
         case 'name_desc':
@@ -250,7 +287,7 @@ export function BoardPlaces({
   }, [savedWithDistance, sortBy]);
   const currentSort =
     PLACE_SORT_OPTIONS.find((opt) => opt.value === sortBy) ?? PLACE_SORT_OPTIONS[0];
-  const nearby = usePlaceSearch(search, current.location, searchOpen);
+  const nearby = usePlaceSearch(search, current.location, showMap && searchOpen);
   const markers = useMemo(
     () => placeMarkers(mapLocated, region, mapSize),
     [mapLocated, region, mapSize],
@@ -323,7 +360,7 @@ export function BoardPlaces({
   }
   const content = (
     <View style={[{ gap: 16 }, (fillMap || fullscreen) && { flex: 1 }]}>
-      {!fullscreen && (
+      {showHeading && !fullscreen && (
         <SectionHeading
           title="Your Places"
           count={`${results.length}${status !== 'Exhausted' ? '+' : ''}`}
@@ -332,27 +369,22 @@ export function BoardPlaces({
       )}
       <View style={placeStyles.searchToolbar}>
         <View style={placeStyles.searchContainer}>
-          <Searchbar
+          <SearchField
             placeholder="Search places…"
             accessibilityLabel="Search places"
             value={search}
             onChangeText={(value) => {
               setSearch(value);
-              setSearchOpen(!!value.trim());
+              setSearchOpen(showMap && !!value.trim());
               dispatchSelection({ type: 'clear' });
             }}
-            onFocus={() => setSearchOpen(!!search.trim())}
+            onFocus={() => setSearchOpen(showMap && !!search.trim())}
             onSubmitEditing={() => {
-              if (filtered.length === 1) selectSaved(filtered[0]);
+              if (showMap && filtered.length === 1) selectSaved(filtered[0]);
               else Keyboard.dismiss();
             }}
-            returnKeyType="search"
-            autoCorrect={false}
-            style={placeStyles.search}
-            inputStyle={[styles.body, placeStyles.searchInput]}
-            iconColor={colors.rust}
           />
-          {searchOpen && !!search.trim() && (
+          {showMap && searchOpen && !!search.trim() && (
             <View style={placeStyles.dropdown}>
               <PlaceSearchResults
                 query={search}
@@ -372,48 +404,55 @@ export function BoardPlaces({
             </View>
           )}
         </View>
-        <Menu
-          visible={filterMenuVisible}
-          onDismiss={() => setFilterMenuVisible(false)}
-          anchorPosition="bottom"
-          statusBarHeight={0}
-          style={placeStyles.filterMenuPosition}
-          contentStyle={placeStyles.filterMenuContent}
-          anchor={
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={`Filter places on map: ${placeFilter === 'visited' ? 'Visited' : placeFilter === 'wishlist' ? 'Wishlist' : 'All'}`}
-              accessibilityState={{ expanded: filterMenuVisible }}
-              onPress={() => {
-                setSearchOpen(false);
-                Keyboard.dismiss();
-                setFilterMenuVisible(true);
-              }}
-              style={placeStyles.filterButton}
-            >
-              <Icon source="filter-outline" size={22} color={colors.rust} />
-            </Pressable>
-          }
-        >
-          {(['visited', 'wishlist', 'all'] as const).map((filter) => (
-            <Menu.Item
-              key={filter}
-              title={filter === 'visited' ? 'Visited' : filter === 'wishlist' ? 'Wishlist' : 'All'}
-              trailingIcon={placeFilter === filter ? 'check' : undefined}
-              dense
-              titleStyle={placeStyles.menuItemText}
-              style={placeStyles.filterMenuItem}
-              contentStyle={placeStyles.filterMenuItemContent}
-              onPress={() => {
-                setPlaceFilter(filter);
-                setFilterMenuVisible(false);
-                dispatchSelection({ type: 'clear' });
-              }}
-            />
-          ))}
-        </Menu>
+        {showMap && (
+          <Menu
+            visible={filterMenuVisible}
+            onDismiss={() => setFilterMenuVisible(false)}
+            anchorPosition="bottom"
+            statusBarHeight={0}
+            style={placeStyles.filterMenuPosition}
+            contentStyle={placeStyles.filterMenuContent}
+            anchor={
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Filter places on map: ${placeFilter === 'visited' ? 'Visited' : placeFilter === 'wishlist' ? 'Wishlist' : 'All'}`}
+                accessibilityState={{ expanded: filterMenuVisible }}
+                onPress={() => {
+                  setSearchOpen(false);
+                  Keyboard.dismiss();
+                  setFilterMenuVisible(true);
+                }}
+                style={placeStyles.filterButton}
+              >
+                <Icon source="filter-outline" size={22} color={colors.rust} />
+                {placeFilter !== 'all' && (
+                  <View accessible={false} style={placeStyles.filterActiveDot} />
+                )}
+              </Pressable>
+            }
+          >
+            {(['visited', 'wishlist', 'all'] as const).map((filter) => (
+              <Menu.Item
+                key={filter}
+                title={
+                  filter === 'visited' ? 'Visited' : filter === 'wishlist' ? 'Wishlist' : 'All'
+                }
+                trailingIcon={placeFilter === filter ? 'check' : undefined}
+                dense
+                titleStyle={placeStyles.menuItemText}
+                style={placeStyles.filterMenuItem}
+                contentStyle={placeStyles.filterMenuItemContent}
+                onPress={() => {
+                  setPlaceFilter(filter);
+                  setFilterMenuVisible(false);
+                  dispatchSelection({ type: 'clear' });
+                }}
+              />
+            ))}
+          </Menu>
+        )}
       </View>
-      {placeFilter !== 'visited' && wishlistStatus !== 'Exhausted' && (
+      {showMap && placeFilter !== 'visited' && wishlistStatus !== 'Exhausted' && (
         <Text style={styles.muted}>Loading wishlist places…</Text>
       )}
       <ErrorNote error={error || current.error} />
@@ -424,269 +463,318 @@ export function BoardPlaces({
           onPress={() => void current.openSettings()}
         />
       )}
-      <>
-        <View
-          style={[
-            placeStyles.mapShell,
-            fillMap && placeStyles.mapShellFill,
-            fullscreen && placeStyles.fullscreenMapShell,
-          ]}
-          onLayout={({ nativeEvent: { layout } }) => {
-            dispatchViewport({
-              type: 'resize',
-              instance: mapInstance,
-              size: { width: layout.width, height: layout.height },
-            });
-          }}
-        >
-          {hasMap ? (
-            <MapView
-              key={`${mapMode}:${mapInstance}`}
-              provider={PROVIDER_GOOGLE}
-              ref={map}
-              style={
-                fullscreen
-                  ? placeStyles.fullscreenMap
-                  : fillMap
-                    ? placeStyles.mapFill
-                    : placeStyles.map
-              }
-              initialRegion={region}
-              onMapReady={() => {
-                dispatchViewport({ type: 'ready', instance: mapInstance });
-              }}
-              onRegionChange={updateMapRegion}
-              onRegionChangeComplete={updateMapRegion}
-              onPress={({ nativeEvent }) => {
-                if (nativeEvent.action === 'marker-press') return;
-                dispatchSelection({ type: 'clear' });
-                if (searchOpen) {
-                  setSearchOpen(false);
-                  Keyboard.dismiss();
+      {showMap && (
+        <>
+          {!fullscreen && <PlaceLookupNotice placeIds={mapPlaceIds} map />}
+          <View
+            style={[
+              placeStyles.mapShell,
+              fillMap && placeStyles.mapShellFill,
+              fullscreen && placeStyles.fullscreenMapShell,
+            ]}
+            onLayout={({ nativeEvent: { layout } }) => {
+              dispatchViewport({
+                type: 'resize',
+                instance: mapInstance,
+                size: { width: layout.width, height: layout.height },
+              });
+            }}
+          >
+            {fullscreen && (
+              <View style={{ position: 'absolute', top: 65, left: 12, right: 12, zIndex: 10 }}>
+                <PlaceLookupNotice placeIds={mapPlaceIds} map />
+              </View>
+            )}
+            {hasMap ? (
+              <MapView
+                key={`${mapMode}:${mapInstance}`}
+                provider={PROVIDER_GOOGLE}
+                ref={map}
+                style={
+                  fullscreen
+                    ? placeStyles.fullscreenMap
+                    : fillMap
+                      ? placeStyles.mapFill
+                      : placeStyles.map
                 }
-              }}
-              onPanDrag={() => {
-                if (searchOpen) {
-                  setSearchOpen(false);
-                  Keyboard.dismiss();
-                }
-              }}
-              showsUserLocation={!!current.location}
-              showsMyLocationButton={false}
-              toolbarEnabled={false}
-              moveOnMarkerPress={false}
-              rotateEnabled={false}
-              pitchEnabled={false}
-            >
-              {markers.map(({ place, diameter }) => (
-                <PlaceMapMarker
-                  key={place._id}
-                  coordinate={place.location}
-                  title={place.name}
-                  diameter={diameter}
-                  selected={(selectedId ?? selectedWishlist?._id) === place._id}
-                  wishlist={!!place.wishlist}
-                  onPress={() => selectMapPlace(place)}
-                />
-              ))}
-              {newPlace && (
-                <PlaceMapMarker
-                  key={`new:${newPlace.id}`}
-                  coordinate={newPlace.location}
-                  onPress={() => selectNew(newPlace)}
-                  title={newPlace.name}
-                  diameter={30}
-                  selected
-                  symbol="compass"
-                />
-              )}
-            </MapView>
-          ) : (
-            <View style={placeStyles.mapFallback}>
-              <Icon source="map-marker-outline" size={42} color={colors.rust} />
-              <Heading>Your places, together.</Heading>
-              <Text style={[styles.muted, { textAlign: 'center' }]}>
-                Tap View List to browse your saved places and get directions.
-              </Text>
-            </View>
-          )}
-          {hasMap && (
-            <>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={fullscreen ? 'Exit fullscreen map' : 'Fullscreen map'}
-                onPress={() => {
-                  changeFullscreen(!fullscreen);
+                initialRegion={region}
+                onMapReady={() => {
+                  dispatchViewport({ type: 'ready', instance: mapInstance });
                 }}
-                style={placeStyles.fullscreenButton}
+                onRegionChange={updateMapRegion}
+                onRegionChangeComplete={updateMapRegion}
+                onPress={({ nativeEvent }) => {
+                  if (nativeEvent.action === 'marker-press') return;
+                  dispatchSelection({ type: 'clear' });
+                  if (searchOpen) {
+                    setSearchOpen(false);
+                    Keyboard.dismiss();
+                  }
+                }}
+                onPanDrag={() => {
+                  if (searchOpen) {
+                    setSearchOpen(false);
+                    Keyboard.dismiss();
+                  }
+                }}
+                showsUserLocation={!!current.location}
+                showsMyLocationButton={false}
+                toolbarEnabled={false}
+                moveOnMarkerPress={false}
+                rotateEnabled={false}
+                pitchEnabled={false}
               >
-                <Icon
-                  source={fullscreen ? 'fullscreen-exit' : 'fullscreen'}
-                  size={26}
-                  color={colors.rust}
-                />
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Show current location and center map"
-                accessibilityState={{ disabled: current.locating, busy: current.locating }}
-                disabled={current.locating}
-                onPress={centerOnCurrentLocation}
-                style={({ pressed }) => [
-                  placeStyles.locateButton,
-                  { opacity: pressed || current.locating ? 0.7 : 1 },
-                ]}
-              >
-                {current.locating ? (
-                  <ActivityIndicator size="small" color={colors.rust} />
-                ) : (
-                  <Icon source="crosshairs-gps" size={24} color={colors.rust} />
+                {markers.map(({ place, diameter }) => (
+                  <PlaceMapMarker
+                    key={place._id}
+                    coordinate={place.location}
+                    title={place.name}
+                    diameter={diameter}
+                    selected={(selectedId ?? selectedWishlist?._id) === place._id}
+                    wishlist={!!place.wishlist}
+                    onPress={() => selectMapPlace(place)}
+                  />
+                ))}
+                {newPlace && (
+                  <PlaceMapMarker
+                    key={`new:${newPlace.id}`}
+                    coordinate={newPlace.location}
+                    onPress={() => selectNew(newPlace)}
+                    title={newPlace.name}
+                    diameter={30}
+                    selected
+                    symbol="compass"
+                  />
                 )}
-              </Pressable>
-              {mapLocated.length > 0 && (
-                <View pointerEvents="none" style={placeStyles.hint}>
-                  <Icon source="heart-outline" size={14} color={colors.rust} />
-                  <Text style={placeStyles.hintText}>Tap a place to explore</Text>
-                </View>
-              )}
-            </>
-          )}
-        </View>
-        {selectedWishlist ? (
-          <PlacePreview
-            googlePlaceId={selectedWishlist.googlePlaceId}
-            name={selectedWishlist.title}
-            address={selectedWishlist.place ?? ''}
-            isWishlisted
-            onClose={() => dispatchSelection({ type: 'clear' })}
-            onMaps={() =>
-              openMaps({
-                wishlistId: selectedWishlist._id,
-                name: selectedWishlist.title,
-                address: selectedWishlist.place ?? '',
-                googlePlaceId: selectedWishlist.googlePlaceId,
-                location: selectedWishlist.location,
-              })
-            }
-            onAdd={() =>
-              add({
-                wishlistId: selectedWishlist._id,
-                name: selectedWishlist.title,
-                address: selectedWishlist.place ?? '',
-                googlePlaceId: selectedWishlist.googlePlaceId,
-                location: selectedWishlist.location,
-              })
-            }
-          />
-        ) : newPlace ? (
-          <PlacePreview
-            googlePlaceId={newPlace.id}
-            attributions={newPlace.attributions}
-            name={newPlace.name}
-            address={newPlace.address}
-            isNew
-            isWishlisted={wishlistPlaceIds?.includes(newPlace.id)}
-            onClose={() => dispatchSelection({ type: 'clear' })}
-            onMaps={() => openMaps({ ...newPlace, googlePlaceId: newPlace.id })}
-            onAdd={() => add({ ...newPlace, googlePlaceId: newPlace.id })}
-            onWishlist={() =>
-              void addToWishlist({
-                boardId,
-                title: newPlace.name,
-                place: newPlace.address,
-                location: newPlace.location,
-                googlePlaceId: newPlace.id,
-              })
-            }
-          />
-        ) : (
-          selected && (
+              </MapView>
+            ) : (
+              <View style={placeStyles.mapFallback}>
+                <Icon source="map-marker-outline" size={42} color={colors.rust} />
+                <Heading>Your places, together.</Heading>
+                <Text style={[styles.muted, { textAlign: 'center' }]}>
+                  Tap View List to browse your saved places and get directions.
+                </Text>
+              </View>
+            )}
+            {hasMap && (
+              <>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={fullscreen ? 'Exit fullscreen map' : 'Fullscreen map'}
+                  onPress={() => {
+                    changeFullscreen(!fullscreen);
+                  }}
+                  style={placeStyles.fullscreenButton}
+                >
+                  <Icon
+                    source={fullscreen ? 'fullscreen-exit' : 'fullscreen'}
+                    size={26}
+                    color={colors.rust}
+                  />
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Show current location and center map"
+                  accessibilityState={{ disabled: current.locating, busy: current.locating }}
+                  disabled={current.locating}
+                  onPress={centerOnCurrentLocation}
+                  style={({ pressed }) => [
+                    placeStyles.locateButton,
+                    { opacity: pressed || current.locating ? 0.7 : 1 },
+                  ]}
+                >
+                  {current.locating ? (
+                    <ActivityIndicator size="small" color={colors.rust} />
+                  ) : (
+                    <Icon source="crosshairs-gps" size={24} color={colors.rust} />
+                  )}
+                </Pressable>
+                {mapLocated.length > 0 && (
+                  <View pointerEvents="none" style={placeStyles.hint}>
+                    <Icon source="heart-outline" size={14} color={colors.rust} />
+                    <Text style={placeStyles.hintText}>Tap a place to explore</Text>
+                  </View>
+                )}
+              </>
+            )}
+          </View>
+          {selectedWishlist ? (
             <PlacePreview
-              googlePlaceId={selected.googlePlaceId}
-              name={selected.name}
-              address={selected.address}
-              isWishlisted={
-                !!selected.googlePlaceId && wishlistPlaceIds?.includes(selected.googlePlaceId)
-              }
+              googlePlaceId={selectedWishlist.googlePlaceId}
+              name={selectedWishlist.title}
+              address={selectedWishlist.place ?? ''}
+              isWishlisted
               onClose={() => dispatchSelection({ type: 'clear' })}
-              onOpen={() => {
-                dispatchSelection({ type: 'clear' });
-                changeFullscreen(false);
-                onOpen(selected);
-              }}
-              onMaps={() => openMaps(selected)}
-              onAdd={() => add(selected)}
-              onWishlist={() =>
-                void addToWishlist({
-                  boardId,
-                  title: selected.name,
-                  place: selected.address,
-                  location: selected.location,
-                  googlePlaceId: selected.googlePlaceId,
+              onMaps={() =>
+                openMaps({
+                  wishlistId: selectedWishlist._id,
+                  name: selectedWishlist.title,
+                  address: selectedWishlist.place ?? '',
+                  googlePlaceId: selectedWishlist.googlePlaceId,
+                  location: selectedWishlist.location,
+                })
+              }
+              onAdd={() =>
+                add({
+                  wishlistId: selectedWishlist._id,
+                  name: selectedWishlist.title,
+                  address: selectedWishlist.place ?? '',
+                  googlePlaceId: selectedWishlist.googlePlaceId,
+                  location: selectedWishlist.location,
                 })
               }
             />
-          )
-        )}
-      </>
+          ) : newPlace ? (
+            <PlacePreview
+              googlePlaceId={newPlace.id}
+              attributions={newPlace.attributions}
+              name={newPlace.name}
+              address={newPlace.address}
+              isNew
+              isWishlisted={wishlistPlaceIds?.includes(newPlace.id)}
+              onClose={() => dispatchSelection({ type: 'clear' })}
+              onMaps={() => openMaps({ ...newPlace, googlePlaceId: newPlace.id })}
+              onAdd={() => add({ ...newPlace, googlePlaceId: newPlace.id })}
+              onWishlist={() =>
+                void addToWishlist({
+                  boardId,
+                  title: newPlace.name,
+                  place: newPlace.address,
+                  location: newPlace.location,
+                  googlePlaceId: newPlace.id,
+                })
+              }
+            />
+          ) : (
+            selected && (
+              <PlacePreview
+                googlePlaceId={selected.googlePlaceId}
+                name={selected.name}
+                address={selected.address}
+                isWishlisted={
+                  !!selected.googlePlaceId && wishlistPlaceIds?.includes(selected.googlePlaceId)
+                }
+                onClose={() => dispatchSelection({ type: 'clear' })}
+                onOpen={() => {
+                  dispatchSelection({ type: 'clear' });
+                  changeFullscreen(false);
+                  onOpen(selected);
+                }}
+                onMaps={() => openMaps(selected)}
+                onAdd={() => add(selected)}
+                onWishlist={() =>
+                  void addToWishlist({
+                    boardId,
+                    title: selected.name,
+                    place: selected.address,
+                    location: selected.location,
+                    googlePlaceId: selected.googlePlaceId,
+                  })
+                }
+              />
+            )
+          )}
+        </>
+      )}
       {showList && !fullscreen && (
         <>
-          {savedWithDistance.length > 0 && (
-            <View style={placeStyles.listHeaderRow}>
-              <View style={placeStyles.listHeaderTitleGroup}>
-                <Text style={placeStyles.listHeaderTitle}>All Places</Text>
-                <View style={placeStyles.countPill}>
-                  <Text style={placeStyles.countPillText}>{sortedPlaces.length}</Text>
-                </View>
-              </View>
-              <Menu
-                visible={sortMenuVisible}
-                onDismiss={() => setSortMenuVisible(false)}
-                anchorPosition="bottom"
-                contentStyle={placeStyles.sortMenuContent}
-                anchor={
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel={`Sort places by ${currentSort.label}`}
-                    onPress={() => setSortMenuVisible(true)}
-                    style={({ pressed }) => [placeStyles.sortButton, pressed && { opacity: 0.8 }]}
-                  >
-                    <Icon source="sort-variant" size={16} color={colors.rust} />
-                    <Text style={placeStyles.sortButtonText}>{currentSort.label}</Text>
-                    <Icon
-                      source={sortMenuVisible ? 'chevron-up' : 'chevron-down'}
-                      size={16}
-                      color={colors.rust}
-                    />
-                  </Pressable>
-                }
-              >
-                {PLACE_SORT_OPTIONS.map((option) => {
-                  const selected = sortBy === option.value;
-                  return (
-                    <Menu.Item
-                      key={option.value}
-                      onPress={() => {
-                        setSortBy(option.value);
-                        setSortMenuVisible(false);
-                      }}
-                      title={option.label}
-                      titleStyle={[
-                        placeStyles.menuItemText,
-                        selected && placeStyles.menuItemTextActive,
-                      ]}
-                      leadingIcon={option.icon}
-                      trailingIcon={selected ? 'check' : undefined}
-                      dense
-                      style={[placeStyles.menuItem, selected && placeStyles.menuItemActive]}
-                    />
-                  );
-                })}
-              </Menu>
-            </View>
-          )}
+          <View style={placeStyles.listHeaderRow}>
+            <Menu
+              visible={filterMenuVisible}
+              onDismiss={() => setFilterMenuVisible(false)}
+              anchorPosition="bottom"
+              statusBarHeight={0}
+              contentStyle={placeStyles.sortMenuContent}
+              anchor={
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Filter visited places: ${missingLocationOnly ? 'Missing location' : 'All'}`}
+                  accessibilityState={{ expanded: filterMenuVisible }}
+                  onPress={() => {
+                    Keyboard.dismiss();
+                    setFilterMenuVisible(true);
+                  }}
+                  style={[
+                    placeStyles.filterButton,
+                    missingLocationOnly && placeStyles.menuItemActive,
+                  ]}
+                >
+                  <Icon source="filter-outline" size={22} color={colors.rust} />
+                  {missingLocationOnly && (
+                    <View accessible={false} style={placeStyles.filterActiveDot} />
+                  )}
+                </Pressable>
+              }
+            >
+              {[false, true].map((missing) => (
+                <Menu.Item
+                  key={String(missing)}
+                  title={missing ? 'Missing location' : 'All'}
+                  trailingIcon={missingLocationOnly === missing ? 'check' : undefined}
+                  titleStyle={placeStyles.menuItemText}
+                  style={placeStyles.menuItem}
+                  onPress={() => {
+                    setMissingLocationOnly(missing);
+                    setFilterMenuVisible(false);
+                  }}
+                />
+              ))}
+            </Menu>
+            <Menu
+              visible={sortMenuVisible}
+              onDismiss={() => setSortMenuVisible(false)}
+              anchorPosition="bottom"
+              contentStyle={placeStyles.sortMenuContent}
+              anchor={
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Sort places by ${currentSort.label}`}
+                  onPress={() => setSortMenuVisible(true)}
+                  style={({ pressed }) => [placeStyles.sortButton, pressed && { opacity: 0.8 }]}
+                >
+                  <Icon source="sort-variant" size={16} color={colors.rust} />
+                  <Text style={placeStyles.sortButtonText}>{currentSort.label}</Text>
+                  <Icon
+                    source={sortMenuVisible ? 'chevron-up' : 'chevron-down'}
+                    size={16}
+                    color={colors.rust}
+                  />
+                </Pressable>
+              }
+            >
+              {PLACE_SORT_OPTIONS.map((option) => {
+                const selected = sortBy === option.value;
+                return (
+                  <Menu.Item
+                    key={option.value}
+                    onPress={() => {
+                      setSortBy(option.value);
+                      setSortMenuVisible(false);
+                    }}
+                    title={option.label}
+                    titleStyle={[
+                      placeStyles.menuItemText,
+                      selected && placeStyles.menuItemTextActive,
+                    ]}
+                    leadingIcon={option.icon}
+                    trailingIcon={selected ? 'check' : undefined}
+                    dense
+                    style={[placeStyles.menuItem, selected && placeStyles.menuItemActive]}
+                  />
+                );
+              })}
+            </Menu>
+          </View>
           {sortedPlaces.map((p) => {
             const visitCount = p.visitCount ?? 1;
+            const latestVisitNumber = latestBoardVisits.get(p._id)?.number;
+            const lastVisitDate = p.lastVisitDate
+              ? new Date(`${p.lastVisitDate}T12:00:00`).toLocaleDateString('en-US', {
+                  month: 'short',
+                  day: 'numeric',
+                  year: 'numeric',
+                })
+              : undefined;
             return (
               <Pressable
                 key={p._id}
@@ -697,17 +785,24 @@ export function BoardPlaces({
                 <View style={placeStyles.placeIcon}>
                   <Icon source="map-marker-outline" size={18} color={colors.rust} />
                 </View>
-                <View style={{ flex: 1, gap: 2 }}>
+                <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
                   <Text numberOfLines={1} style={placeStyles.placeName}>
                     {p.name}
                   </Text>
-                  {p.googlePlaceId && <GoogleAttribution placeId={p.googlePlaceId} />}
                   <Text numberOfLines={1} style={placeStyles.placeMeta}>
-                    {p.address ? `${p.address} · ` : ''}
+                    {[p.distance !== undefined ? formatDistance(p.distance) : undefined, p.address]
+                      .filter(Boolean)
+                      .join(' · ')}
+                  </Text>
+                  <Text style={placeStyles.placeMeta}>
                     <Text style={placeStyles.metaHighlight}>
                       {visitCount} {visitCount === 1 ? 'visit' : 'visits'}
                     </Text>
-                    {p.distance !== undefined ? ` · ${formatDistance(p.distance)}` : ''}
+                    {lastVisitDate
+                      ? ` · Last Visit: ${lastVisitDate}`
+                      : latestVisitNumber !== undefined
+                        ? ` · Latest Visit #${latestVisitNumber}`
+                        : ' · Latest Visit…'}
                   </Text>
                 </View>
                 <Icon source="chevron-right" size={18} color={colors.rust} />
@@ -716,13 +811,28 @@ export function BoardPlaces({
           })}
         </>
       )}
-      {placeFilter === 'wishlist' && wishlistStatus === 'Exhausted' && !mapLocated.length && (
-        <Text style={styles.muted}>No matching wishlist places with a map pin.</Text>
-      )}
+      {showMap &&
+        placeFilter === 'wishlist' &&
+        wishlistStatus === 'Exhausted' &&
+        !mapLocated.length && (
+          <Text style={styles.muted}>No matching wishlist places with a map pin.</Text>
+        )}
       {!fullscreen &&
         placeFilter !== 'wishlist' &&
         (status === 'LoadingFirstPage' ? (
           <Text style={styles.muted}>Loading your places…</Text>
+        ) : !showMap && filtered.length === 0 ? (
+          <Text style={styles.muted}>
+            {filterMissingLocation
+              ? status !== 'Exhausted'
+                ? 'Checking more places for missing locations…'
+                : search.trim()
+                  ? 'No matching visited places are missing a location.'
+                  : 'No visited places are missing a location.'
+              : search.trim()
+                ? 'No matching visited places.'
+                : 'No visited places yet.'}
+          </Text>
         ) : (
           !search.trim() &&
           filtered.length === 0 && (
@@ -744,7 +854,7 @@ export function BoardPlaces({
           {onViewAll && (
             <Pressable accessibilityRole="button" onPress={onViewAll} style={styles.textButton}>
               <Icon source="format-list-bulleted" size={17} color={colors.rust} />
-              <Text style={styles.link}>View All Places</Text>
+              <Text style={styles.link}>View List</Text>
               <Icon source="arrow-right" size={16} color={colors.rust} />
             </Pressable>
           )}
@@ -784,6 +894,15 @@ const placeStyles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.paper,
+  },
+  filterActiveDot: {
+    position: 'absolute',
+    top: 9,
+    right: 9,
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: colors.rust,
   },
   filterMenuPosition: { marginTop: 4 },
   filterMenuContent: {
@@ -828,15 +947,6 @@ const placeStyles = StyleSheet.create({
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.15,
     shadowRadius: 10,
-  },
-  searchInput: { minHeight: 46, paddingVertical: 0 },
-  search: {
-    height: 48,
-    backgroundColor: colors.paper,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 16,
-    elevation: 0,
   },
   mapShell: {
     marginHorizontal: -22,
@@ -925,28 +1035,6 @@ const placeStyles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingTop: 8,
     paddingBottom: 4,
-  },
-  listHeaderTitleGroup: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  listHeaderTitle: {
-    fontFamily: 'EpilogueSemiBold',
-    fontSize: 18,
-    color: colors.ink,
-    letterSpacing: -0.3,
-  },
-  countPill: {
-    backgroundColor: colors.coralLight,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 12,
-  },
-  countPillText: {
-    fontFamily: 'JakartaSemiBold',
-    fontSize: 12,
-    color: colors.rust,
   },
   sortButton: {
     flexDirection: 'row',

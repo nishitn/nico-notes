@@ -1,3 +1,4 @@
+import { PlaceLookupNotice } from './PlaceLookupNotice';
 import { GoogleAttribution, GoogleSearchInfo } from './GoogleAttribution';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { usePaginatedQuery, useQuery } from './convexLive';
@@ -416,6 +417,11 @@ export function BoardDashboard({
     );
   }, [groups, wishlist, placeFilter, query]);
 
+  const mapLookupIds = [
+    ...(placeFilter !== 'wishlist' ? places : []),
+    ...(placeFilter !== 'visited' ? wishlist : []),
+  ].flatMap((place) => (place.googlePlaceId ? [place.googlePlaceId] : []));
+
   const pins = useMemo(() => {
     const list: MapPlace[] = matching.flatMap(({ key, count, visit, wishlist }) =>
       visit.location
@@ -830,6 +836,8 @@ export function BoardDashboard({
                 )}
               </div>
 
+              <PlaceLookupNotice placeIds={mapLookupIds} map />
+
               {placePreview}
 
               {placesStatus !== 'Exhausted' && (
@@ -895,7 +903,7 @@ export function BoardDashboard({
           <div className="first-memory">
             <Heart size={35} />
             <h3>Your first visit goes here</h3>
-            <p>Add a place, a few dishes, and your photos.</p>
+            <p>Add a place, a few dishes, and your images.</p>
             <Link className="button primary" to={`/boards/${id}/visits/new`}>
               <Plus size={18} />
               Add visit
