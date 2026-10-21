@@ -1,3 +1,4 @@
+import { PlaceMapMarker } from '../PlaceMapMarker';
 import { useLivePlace } from '../convexLive';
 import { GoogleAttribution } from '../GoogleAttribution';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -60,7 +61,7 @@ import { PlaceTopBar } from './Places';
 import { useCurrentLocation } from '../useCurrentLocation';
 import { usePlaceSearch } from '../usePlaceSearch';
 import { PlaceSearchResults } from '../PlaceSearchResults';
-import { clusterPlaces, nearbyRegion, type MapRegion, type MapSize } from '../mapGeometry';
+import { placeMarkers, nearbyRegion, type MapRegion, type MapSize } from '../mapGeometry';
 import { distanceBetween, matchingPlaces } from '../placeSearch';
 import type { SavedPlace } from '../BoardPlaces';
 import type { GooglePlace } from '../../modules/google-places';
@@ -1881,10 +1882,7 @@ function VisitForm({
     [filtered],
   );
 
-  const clusters = useMemo(
-    () => clusterPlaces(located, region, mapSize),
-    [located, region, mapSize],
-  );
+  const markers = useMemo(() => placeMarkers(located, region, mapSize), [located, region, mapSize]);
 
   const nearby = usePlaceSearch(search, current.location, searchOpen);
 
@@ -1971,29 +1969,6 @@ function VisitForm({
     setSearchOpen(false);
     Keyboard.dismiss();
     setStep(2);
-  }
-
-  function selectCluster(cluster: (typeof clusters)[number]) {
-    setSearchOpen(false);
-    Keyboard.dismiss();
-    const first = cluster.places[0].location;
-    const samePoint = cluster.places.every(
-      (p) =>
-        Math.abs(p.location.latitude - first.latitude) < 0.00001 &&
-        Math.abs(p.location.longitude - first.longitude) < 0.00001,
-    );
-    if (samePoint || region.latitudeDelta < 0.0003) {
-      selectSaved(cluster.places[0]);
-      return;
-    }
-    map.current?.animateToRegion(
-      {
-        ...cluster.coordinate,
-        latitudeDelta: region.latitudeDelta / 2.5,
-        longitudeDelta: region.longitudeDelta / 2.5,
-      },
-      350,
-    );
   }
 
   function addDish() {
@@ -2147,6 +2122,7 @@ function VisitForm({
                 setMapSize({ width: layout.width, height: layout.height })
               }
               onMapReady={() => setMapReady(true)}
+              onRegionChange={setRegion}
               onRegionChangeComplete={setRegion}
               onPress={() => {
                 if (searchOpen) setSearchOpen(false);
@@ -2163,55 +2139,26 @@ function VisitForm({
               rotateEnabled={false}
               pitchEnabled={false}
             >
-              {clusters.map((cluster) =>
-                cluster.places.length > 1 ? (
-                  <Marker
-                    key={`cluster:${cluster.id}`}
-                    coordinate={cluster.coordinate}
-                    onPress={() => selectCluster(cluster)}
-                    accessibilityLabel={`${cluster.places.length} places`}
-                  >
-                    <View style={formStyles.cluster}>
-                      <Text style={formStyles.clusterCount}>{cluster.places.length}</Text>
-                    </View>
-                  </Marker>
-                ) : (
-                  <Marker
-                    key={cluster.places[0]._id}
-                    coordinate={cluster.places[0].location}
-                    onPress={() => selectSaved(cluster.places[0])}
-                    accessibilityLabel={cluster.places[0].name}
-                  >
-                    <View
-                      style={[
-                        formStyles.pin,
-                        selectedSavedPlace?._id === cluster.places[0]._id && formStyles.selectedPin,
-                      ]}
-                    >
-                      <Icon
-                        source="heart"
-                        size={15}
-                        color={
-                          selectedSavedPlace?._id === cluster.places[0]._id
-                            ? colors.paper
-                            : colors.rust
-                        }
-                      />
-                    </View>
-                  </Marker>
-                ),
-              )}
+              {markers.map(({ place, diameter }) => (
+                <PlaceMapMarker
+                  key={place._id}
+                  coordinate={place.location}
+                  title={place.name}
+                  diameter={diameter}
+                  selected={selectedSavedPlace?._id === place._id}
+                  onPress={() => selectSaved(place)}
+                />
+              ))}
               {selectedGooglePlace && (
-                <Marker
+                <PlaceMapMarker
                   key={`new:${selectedGooglePlace.id}`}
                   coordinate={selectedGooglePlace.location}
                   onPress={() => selectGoogle(selectedGooglePlace)}
-                  accessibilityLabel={selectedGooglePlace.name}
-                >
-                  <View style={[formStyles.pin, formStyles.selectedPin]}>
-                    <Icon source="compass-outline" size={16} color={colors.paper} />
-                  </View>
-                </Marker>
+                  title={selectedGooglePlace.name}
+                  diameter={30}
+                  selected
+                  symbol="compass"
+                />
               )}
             </MapView>
           ) : (
@@ -3027,22 +2974,6 @@ const formStyles = StyleSheet.create({
   },
   selectedPin: {
     backgroundColor: colors.rust,
-  },
-  cluster: {
-    minWidth: 36,
-    height: 36,
-    paddingHorizontal: 8,
-    borderRadius: 18,
-    backgroundColor: colors.rust,
-    borderWidth: 2.5,
-    borderColor: colors.paper,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  clusterCount: {
-    fontFamily: 'JakartaSemiBold',
-    color: colors.paper,
-    fontSize: 13,
   },
   step2HeaderRow: {
     flexDirection: 'row',

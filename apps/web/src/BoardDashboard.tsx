@@ -25,6 +25,7 @@ import { Initials, Modal, Spinner, formatDate } from './ui';
 import { Invitations } from './Settings';
 import { PhotoCarousel } from './Photos';
 import { PlacesMap, mapsLink, type MapLocation, type MapPlace } from './PlacesMap';
+import { preferVisitedPlaces } from '@nico-notes/backend/mapMarkers';
 import { usePlaceLinking } from './usePlaceLinking';
 import { googleMapsConfigured, placeSearchErrorMessage, searchNearbyPlaces } from './googleMaps';
 
@@ -402,7 +403,13 @@ export function BoardDashboard({
         ? visited
         : placeFilter === 'wishlist'
           ? wishes
-          : [...visited, ...wishes];
+          : preferVisitedPlaces([...visited, ...wishes], ({ visit, wishlist }) => ({
+              name: visit.title,
+              address: visit.place,
+              googlePlaceId: visit.googlePlaceId,
+              location: visit.location,
+              wishlist,
+            }));
     const trimmed = query.trim().toLowerCase();
     return candidates.filter(({ visit }) =>
       `${visit.title} ${visit.place}`.toLowerCase().includes(trimmed),

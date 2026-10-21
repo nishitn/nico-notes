@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { MarkerClusterer } from '@googlemaps/markerclusterer';
+import { FULL_MARKER_SIZE, markerSizes } from '@nico-notes/backend/mapMarkers';
 import {
   Expand,
   LoaderCircle,
@@ -176,8 +176,11 @@ export function PlacesMap({
       heart.setAttribute('aria-hidden', 'true');
       content.append(heart);
       const marker = new google.maps.marker.AdvancedMarkerElement({
+        map: instance,
         position: latLng(place.location),
         content,
+        anchorTop: '-50%',
+        collisionBehavior: google.maps.CollisionBehavior.REQUIRED,
         title: place.wishlist
           ? `${place.title}, Wishlist`
           : `${place.title}, ${place.count} ${place.count === 1 ? 'visit' : 'visits'}`,
@@ -186,20 +189,35 @@ export function PlacesMap({
       next.set(place.id, marker);
     }
     markers.current = next;
-    // Keep the selected marker outside clusters so it remains visible at close zoom levels.
-    const selected = selectedId ? next.get(selectedId) : undefined;
-    if (selected) selected.map = instance;
-    const cluster = new MarkerClusterer({
-      map: instance,
-      markers: [...next.values()].filter((marker) => marker !== selected),
-    });
+    // Use Google's screen projection so resizing follows zoom and map layout changes.
+    const sizing = new google.maps.OverlayView();
+    sizing.onAdd = () => {};
+    sizing.onRemove = () => {};
+    sizing.draw = () => {
+      const projection = sizing.getProjection();
+      const points = places.flatMap((place) => {
+        const point = projection.fromLatLngToDivPixel(
+          new google.maps.LatLng(latLng(place.location)),
+        );
+        return point ? [{ id: place.id, x: point.x, y: point.y }] : [];
+      });
+      const sizes = markerSizes(points);
+      next.forEach((marker, id) => {
+        const diameter = id === selectedId ? FULL_MARKER_SIZE : (sizes.get(id) ?? FULL_MARKER_SIZE);
+        const content = marker.content as HTMLElement;
+        content.style.setProperty('--marker-size', `${diameter}px`);
+        content.classList.toggle('compact', diameter < 22);
+        content.classList.toggle('selected', id === selectedId);
+        marker.zIndex = id === selectedId ? 1000 : diameter < 22 ? 1 : 2;
+      });
+    };
+    sizing.setMap(instance);
     if (onPick && places[0]) {
       intent.current = 'selected';
       instance.panTo(latLng(places[0].location));
     }
     return () => {
-      cluster.clearMarkers();
-      cluster.setMap(null);
+      sizing.setMap(null);
       listeners.forEach((listener) => listener.remove());
       next.forEach((marker) => {
         marker.map = null;

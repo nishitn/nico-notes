@@ -14,7 +14,6 @@
     "@fontsource/epilogue": "latest",
     "@fontsource/plus-jakarta-sans": "latest",
     "@googlemaps/js-api-loader": "^2.1.3",
-    "@googlemaps/markerclusterer": "^2.6.2",
     "@nico-notes/backend": "workspace:*",
     "convex": "latest",
     "lucide-react": "latest",

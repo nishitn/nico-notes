@@ -9,7 +9,8 @@
     "./shared": "./shared.ts",
     "./legal": "./legal.ts",
     "./livePlaces": "./livePlaces.ts",
-    "./attributions": "./attributions.ts"
+    "./attributions": "./attributions.ts",
+    "./mapMarkers": "./mapMarkers.ts"
   },
   "scripts": {
     "dev": "convex dev",

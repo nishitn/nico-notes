@@ -2773,10 +2773,14 @@ progress {
 .visit-pin {
   background: transparent;
   border: 0;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
 }
 .visit-pin > span {
-  width: 30px;
-  height: 30px;
+  width: var(--marker-size, 30px);
+  height: var(--marker-size, 30px);
   border-radius: 50% 50% 50% 6px;
   transform: rotate(-45deg);
   background: var(--rust);
@@ -2784,6 +2788,15 @@ progress {
   color: transparent;
   border: 3px solid #fffdf9;
   display: block;
+}
+.visit-pin.compact > span {
+  border-radius: 50%;
+  transform: none;
+  border-width: 1.5px;
+  box-shadow: 0 1px 3px #58362433;
+}
+.visit-pin.compact > span::after {
+  display: none;
 }
 .visit-pin > span::after {
   content: '♥';
@@ -2797,8 +2810,8 @@ progress {
   inset: 0;
 }
 .visit-pin.selected > span {
-  background: var(--green);
-  box-shadow: 0 0 0 6px #7a9a8145;
+  background: var(--rust);
+  box-shadow: 0 0 0 6px #a33e2745;
 }
 .map-hint,
 .map-instruction {
@@ -6031,10 +6044,17 @@ img.avatar {
   cursor: pointer;
 }
 .wishlist-pin > span {
-  background: var(--green);
+  background: #0f766e;
 }
 .wishlist-pin > span::after {
-  content: '★';
+  content: '';
+  inset: 5px 8px;
+  background: #fffdf9;
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 75%, 0 100%);
+}
+.wishlist-pin.selected > span {
+  background: #0f766e;
+  box-shadow: 0 0 0 6px #0f766e45;
 }
 .modal.fullscreen-map-modal {
   width: 100%;

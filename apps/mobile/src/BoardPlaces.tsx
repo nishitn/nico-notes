@@ -1,5 +1,4 @@
-import { GoogleAttribution } from './GoogleAttribution';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Keyboard,
@@ -12,11 +11,16 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
+import MapView, { PROVIDER_GOOGLE } from 'react-native-maps';
 import Constants from 'expo-constants';
 import { useMutation, usePaginatedQuery, useQuery } from './convexLive';
 import { Icon, Menu, PaperProvider, Searchbar, useTheme } from 'react-native-paper';
-import { clusterPlaces, nearbyRegion, type MapRegion, type MapSize } from './mapGeometry';
+import { GoogleAttribution } from './GoogleAttribution';
+import { placeMarkers, nearbyRegion, type MapRegion } from './mapGeometry';
+import { preferVisitedPlaces } from '@nico-notes/backend/mapMarkers';
+import { PlaceMapMarker } from './PlaceMapMarker';
+import { mapSelectionReducer } from './mapSelection';
+import { createMapViewport, mapViewportReducer } from './mapViewport';
 import { PlacePreview } from './PlacePreview';
 import { PlaceSearchResults } from './PlaceSearchResults';
 import { distanceBetween, formatDistance, matchingPlaces } from './placeSearch';
@@ -24,7 +28,7 @@ import { usePlaceSearch } from './usePlaceSearch';
 import type { GooglePlace } from '../modules/google-places';
 import { useCurrentLocation } from './useCurrentLocation';
 import { api } from '@nico-notes/backend/api';
-import type { Doc, Id } from '@nico-notes/backend/dataModel';
+import type { Id } from '@nico-notes/backend/dataModel';
 import { Button, Card, colors, ErrorNote, Heading, SectionHeading, styles, useTask } from './ui';
 
 export type VisitPlace = {
@@ -53,6 +57,11 @@ export type SavedPlace = {
   location?: { latitude: number; longitude: number };
   distance?: number;
 };
+
+type PlaceSelection =
+  | { kind: 'saved'; id: Id<'places'> }
+  | { kind: 'wishlist'; id: Id<'wishlist'> }
+  | { kind: 'google'; id: string; place: GooglePlace };
 
 export function BoardPlaces({
   boardId,
@@ -83,7 +92,6 @@ export function BoardPlaces({
   const [filterMenuVisible, setFilterMenuVisible] = useState(false);
   const [placeFilter, setPlaceFilter] = useState<'visited' | 'wishlist' | 'all'>('all');
   const [fullscreen, setFullscreen] = useState(false);
-  const [selectedWishlist, setSelectedWishlist] = useState<Doc<'wishlist'>>();
   useEffect(() => {
     if (placeFilter !== 'visited' && wishlistStatus === 'CanLoadMore') loadWishlist(100);
   }, [placeFilter, wishlistStatus, loadWishlist]);
@@ -95,18 +103,37 @@ export function BoardPlaces({
   const [searchOpen, setSearchOpen] = useState(false);
   const [sortBy, setSortBy] = useState<PlaceSortOption>('visits');
   const [sortMenuVisible, setSortMenuVisible] = useState(false);
-  const [newPlace, setNewPlace] = useState<GooglePlace>();
-  const [selectedId, setSelectedId] = useState<Id<'places'>>();
+  const [selection, dispatchSelection] = useReducer(mapSelectionReducer<PlaceSelection>, undefined);
+  const selectedId = selection?.kind === 'saved' ? selection.id : undefined;
+  const selectedWishlist =
+    selection?.kind === 'wishlist'
+      ? wishlist.find((place) => place._id === selection.id)
+      : undefined;
+  const newPlace = selection?.kind === 'google' ? selection.place : undefined;
   const map = useRef<MapView>(null);
-  const [mapReady, setMapReady] = useState(false);
-  const [mapSize, setMapSize] = useState<MapSize>({ width: 0, height: 300 });
-  const [region, setRegion] = useState<MapRegion>({
-    latitude: 20.5937,
-    longitude: 78.9629,
-    latitudeDelta: 25,
-    longitudeDelta: 25,
-  });
-  const [selectedClusterIds, setSelectedClusterIds] = useState<string[]>([]);
+  const mapMode = fullscreen ? 'fullscreen' : 'inline';
+  const [viewport, dispatchViewport] = useReducer(
+    mapViewportReducer,
+    {
+      latitude: 20.5937,
+      longitude: 78.9629,
+      latitudeDelta: 25,
+      longitudeDelta: 25,
+    },
+    createMapViewport,
+  );
+  const { ready: mapReady, size: mapSize, region, instance: mapInstance } = viewport;
+  function changeFullscreen(next: boolean) {
+    if (next === fullscreen) return;
+    dispatchViewport({ type: 'replace' });
+    dispatchSelection({ type: 'clear' });
+    setSearchOpen(false);
+    Keyboard.dismiss();
+    setFullscreen(next);
+  }
+  function updateMapRegion(next: MapRegion) {
+    dispatchViewport({ type: 'region', instance: mapInstance, region: next });
+  }
   const fallbackApplied = useRef(false);
   const initialCenterApplied = useRef(false);
   useEffect(() => {
@@ -124,9 +151,14 @@ export function BoardPlaces({
     [filtered],
   );
   const mapLocated = useMemo(() => {
-    const visited = located.map((place) => ({ ...place, wishlist: undefined }));
-    const wishes = matchingPlaces(
-      wishlist.map((item) => ({
+    const visited = results
+      .filter(
+        (place): place is typeof place & { location: NonNullable<typeof place.location> } =>
+          !!place.location,
+      )
+      .map((place) => ({ ...place, wishlist: undefined }));
+    const wishes = wishlist
+      .map((item) => ({
         _id: item._id,
         name: item.title,
         googlePlaceId: item.googlePlaceId,
@@ -134,15 +166,19 @@ export function BoardPlaces({
         location: item.location,
         visitCount: 0,
         wishlist: item,
-      })),
-      search,
-    ).filter((p): p is typeof p & { location: NonNullable<typeof p.location> } => !!p.location);
-    return placeFilter === 'visited'
-      ? visited
-      : placeFilter === 'wishlist'
-        ? wishes
-        : [...visited, ...wishes];
-  }, [located, wishlist, search, placeFilter]);
+      }))
+      .filter((p): p is typeof p & { location: NonNullable<typeof p.location> } => !!p.location);
+    const candidates =
+      placeFilter === 'visited'
+        ? visited
+        : placeFilter === 'wishlist'
+          ? wishes
+          : preferVisitedPlaces([...visited, ...wishes], (place) => ({
+              ...place,
+              wishlist: !!place.wishlist,
+            }));
+    return matchingPlaces(candidates, search);
+  }, [results, wishlist, search, placeFilter]);
   const appliedFilter = useRef(placeFilter);
   useEffect(() => {
     if (!mapReady || appliedFilter.current === placeFilter || !mapLocated.length) return;
@@ -157,14 +193,11 @@ export function BoardPlaces({
   }, [mapReady, placeFilter, mapLocated]);
   function selectMapPlace(place: (typeof mapLocated)[number]) {
     if (place.wishlist) {
-      setSelectedWishlist(place.wishlist);
-      setSelectedId(undefined);
-      setSelectedClusterIds([]);
-      setNewPlace(undefined);
+      dispatchSelection({ type: 'select', place: { kind: 'wishlist', id: place.wishlist._id } });
       setSearchOpen(false);
       Keyboard.dismiss();
-      map.current?.animateToRegion(nearbyRegion(place.location, mapSize, 0.8), 350);
-    } else selectSaved(place);
+      map.current?.animateCamera({ center: place.location }, { duration: 250 });
+    } else selectSaved(place, false);
   }
   const selected = results.find((p) => p._id === selectedId);
   const hasMap = Boolean(
@@ -218,11 +251,10 @@ export function BoardPlaces({
   const currentSort =
     PLACE_SORT_OPTIONS.find((opt) => opt.value === sortBy) ?? PLACE_SORT_OPTIONS[0];
   const nearby = usePlaceSearch(search, current.location, searchOpen);
-  const clusters = useMemo(
-    () => clusterPlaces(mapLocated, region, mapSize),
+  const markers = useMemo(
+    () => placeMarkers(mapLocated, region, mapSize),
     [mapLocated, region, mapSize],
   );
-  const selectedCluster = mapLocated.filter((p) => selectedClusterIds.includes(p._id));
   useEffect(() => {
     if (!mapReady || !mapSize.width || !current.location || initialCenterApplied.current) return;
     initialCenterApplied.current = true;
@@ -243,29 +275,27 @@ export function BoardPlaces({
     fallbackApplied.current = true;
     map.current?.animateToRegion(nearbyRegion(located[0].location, mapSize), 450);
   }, [mapReady, mapSize, current.locating, current.location, located]);
-  function selectSaved(place: SavedPlace) {
-    setSelectedWishlist(undefined);
-    setNewPlace(undefined);
-    setSelectedId(place._id);
-    setSelectedClusterIds([]);
+  function selectSaved(place: SavedPlace, zoomToPlace = true) {
+    dispatchSelection({ type: 'select', place: { kind: 'saved', id: place._id } });
     setSearchOpen(false);
     Keyboard.dismiss();
-    if (place.location)
-      map.current?.animateToRegion(nearbyRegion(place.location, mapSize, 0.8), 350);
+    if (place.location) {
+      if (zoomToPlace)
+        map.current?.animateToRegion(nearbyRegion(place.location, mapSize, 0.8), 350);
+      else map.current?.animateCamera({ center: place.location }, { duration: 250 });
+    }
   }
   function selectNew(place: GooglePlace) {
-    setSelectedWishlist(undefined);
-    setSelectedId(undefined);
-    setSelectedClusterIds([]);
+    dispatchSelection({ type: 'select', place: { kind: 'google', id: place.id, place } });
     setSearchOpen(false);
-    setNewPlace(place);
     Keyboard.dismiss();
     map.current?.animateToRegion(nearbyRegion(place.location, mapSize, 0.8), 350);
   }
   function add(place?: VisitPlace, title?: string) {
     setSearchOpen(false);
+    dispatchSelection({ type: 'clear' });
     Keyboard.dismiss();
-    setFullscreen(false);
+    changeFullscreen(false);
     onAdd(place, title);
   }
   function openMaps(place: VisitPlace) {
@@ -275,39 +305,10 @@ export function BoardPlaces({
       ),
     );
   }
-  function selectCluster(cluster: (typeof clusters)[number]) {
-    setSelectedWishlist(undefined);
-    setSearchOpen(false);
-    setNewPlace(undefined);
-    Keyboard.dismiss();
-    setSelectedId(undefined);
-    const first = cluster.places[0].location;
-    const samePoint = cluster.places.every(
-      (p) =>
-        Math.abs(p.location.latitude - first.latitude) < 0.00001 &&
-        Math.abs(p.location.longitude - first.longitude) < 0.00001,
-    );
-    if (samePoint || region.latitudeDelta < 0.0003) {
-      setSelectedClusterIds(cluster.places.map((p) => p._id));
-      return;
-    }
-    setSelectedClusterIds([]);
-    map.current?.animateToRegion(
-      {
-        ...cluster.coordinate,
-        latitudeDelta: region.latitudeDelta / 2.5,
-        longitudeDelta: region.longitudeDelta / 2.5,
-      },
-      350,
-    );
-  }
   function centerOnCurrentLocation() {
-    setSelectedWishlist(undefined);
+    dispatchSelection({ type: 'clear' });
     setSearch('');
     setSearchOpen(false);
-    setNewPlace(undefined);
-    setSelectedId(undefined);
-    setSelectedClusterIds([]);
     Keyboard.dismiss();
 
     if (current.location && mapSize.width) {
@@ -338,9 +339,7 @@ export function BoardPlaces({
             onChangeText={(value) => {
               setSearch(value);
               setSearchOpen(!!value.trim());
-              setNewPlace(undefined);
-              setSelectedId(undefined);
-              setSelectedClusterIds([]);
+              dispatchSelection({ type: 'clear' });
             }}
             onFocus={() => setSearchOpen(!!search.trim())}
             onSubmitEditing={() => {
@@ -408,10 +407,7 @@ export function BoardPlaces({
               onPress={() => {
                 setPlaceFilter(filter);
                 setFilterMenuVisible(false);
-                setSelectedId(undefined);
-                setSelectedWishlist(undefined);
-                setSelectedClusterIds([]);
-                setNewPlace(undefined);
+                dispatchSelection({ type: 'clear' });
               }}
             />
           ))}
@@ -428,279 +424,211 @@ export function BoardPlaces({
           onPress={() => void current.openSettings()}
         />
       )}
-      <View
-        style={[
-          placeStyles.mapShell,
-          fillMap && placeStyles.mapShellFill,
-          fullscreen && placeStyles.fullscreenMapShell,
-        ]}
-      >
-        {hasMap ? (
-          <MapView
-            provider={PROVIDER_GOOGLE}
-            ref={map}
-            style={
-              fullscreen
-                ? placeStyles.fullscreenMap
-                : fillMap
-                  ? placeStyles.mapFill
-                  : placeStyles.map
-            }
-            initialRegion={region}
-            onLayout={({ nativeEvent: { layout } }) =>
-              setMapSize({ width: layout.width, height: layout.height })
-            }
-            onMapReady={() => setMapReady(true)}
-            onRegionChangeComplete={setRegion}
-            onPress={() => {
-              if (searchOpen) {
-                setSearchOpen(false);
-                Keyboard.dismiss();
+      <>
+        <View
+          style={[
+            placeStyles.mapShell,
+            fillMap && placeStyles.mapShellFill,
+            fullscreen && placeStyles.fullscreenMapShell,
+          ]}
+          onLayout={({ nativeEvent: { layout } }) => {
+            dispatchViewport({
+              type: 'resize',
+              instance: mapInstance,
+              size: { width: layout.width, height: layout.height },
+            });
+          }}
+        >
+          {hasMap ? (
+            <MapView
+              key={`${mapMode}:${mapInstance}`}
+              provider={PROVIDER_GOOGLE}
+              ref={map}
+              style={
+                fullscreen
+                  ? placeStyles.fullscreenMap
+                  : fillMap
+                    ? placeStyles.mapFill
+                    : placeStyles.map
               }
-            }}
-            onPanDrag={() => {
-              if (searchOpen) {
-                setSearchOpen(false);
-                Keyboard.dismiss();
-              }
-            }}
-            showsUserLocation={!!current.location}
-            showsMyLocationButton={false}
-            toolbarEnabled={false}
-            moveOnMarkerPress={false}
-            rotateEnabled={false}
-            pitchEnabled={false}
-          >
-            {clusters.map((cluster) =>
-              cluster.places.length > 1 ? (
-                <Marker
-                  key={`cluster:${cluster.id}`}
-                  coordinate={cluster.coordinate}
-                  onPress={() => selectCluster(cluster)}
-                  accessibilityLabel={`${cluster.places.length} places, tap to explore`}
-                >
-                  <View style={placeStyles.cluster}>
-                    <Text style={placeStyles.clusterCount}>{cluster.places.length}</Text>
-                  </View>
-                </Marker>
-              ) : (
-                <Marker
-                  key={cluster.places[0]._id}
-                  coordinate={cluster.places[0].location}
-                  onPress={() => {
-                    selectMapPlace(cluster.places[0]);
-                  }}
-                  accessibilityLabel={cluster.places[0].name}
-                >
-                  <View
-                    style={[
-                      placeStyles.pin,
-                      (selectedId ?? selectedWishlist?._id) === cluster.places[0]._id &&
-                        placeStyles.selectedPin,
-                    ]}
-                  >
-                    <Icon
-                      source={cluster.places[0].wishlist ? 'bookmark' : 'heart'}
-                      size={15}
-                      color={
-                        (selectedId ?? selectedWishlist?._id) === cluster.places[0]._id
-                          ? colors.paper
-                          : colors.rust
-                      }
-                    />
-                  </View>
-                </Marker>
-              ),
-            )}
-            {newPlace && (
-              <Marker
-                key={`new:${newPlace.id}`}
-                coordinate={newPlace.location}
-                onPress={() => selectNew(newPlace)}
-                accessibilityLabel={newPlace.name}
-              >
-                <View style={[placeStyles.pin, placeStyles.selectedPin]}>
-                  <Icon source="compass-outline" size={16} color={colors.paper} />
-                </View>
-              </Marker>
-            )}
-          </MapView>
-        ) : (
-          <View style={placeStyles.mapFallback}>
-            <Icon source="map-marker-outline" size={42} color={colors.rust} />
-            <Heading>Your places, together.</Heading>
-            <Text style={[styles.muted, { textAlign: 'center' }]}>
-              Open View All Places to browse your saved places and get directions.
-            </Text>
-          </View>
-        )}
-        {hasMap && (
-          <>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={fullscreen ? 'Exit fullscreen map' : 'Fullscreen map'}
-              onPress={() => {
-                setSearchOpen(false);
-                Keyboard.dismiss();
-                setFullscreen((value) => !value);
+              initialRegion={region}
+              onMapReady={() => {
+                dispatchViewport({ type: 'ready', instance: mapInstance });
               }}
-              style={placeStyles.fullscreenButton}
+              onRegionChange={updateMapRegion}
+              onRegionChangeComplete={updateMapRegion}
+              onPress={({ nativeEvent }) => {
+                if (nativeEvent.action === 'marker-press') return;
+                dispatchSelection({ type: 'clear' });
+                if (searchOpen) {
+                  setSearchOpen(false);
+                  Keyboard.dismiss();
+                }
+              }}
+              onPanDrag={() => {
+                if (searchOpen) {
+                  setSearchOpen(false);
+                  Keyboard.dismiss();
+                }
+              }}
+              showsUserLocation={!!current.location}
+              showsMyLocationButton={false}
+              toolbarEnabled={false}
+              moveOnMarkerPress={false}
+              rotateEnabled={false}
+              pitchEnabled={false}
             >
-              <Icon
-                source={fullscreen ? 'fullscreen-exit' : 'fullscreen'}
-                size={26}
-                color={colors.rust}
-              />
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Show current location and center map"
-              accessibilityState={{ disabled: current.locating, busy: current.locating }}
-              disabled={current.locating}
-              onPress={centerOnCurrentLocation}
-              style={({ pressed }) => [
-                placeStyles.locateButton,
-                { opacity: pressed || current.locating ? 0.7 : 1 },
-              ]}
-            >
-              {current.locating ? (
-                <ActivityIndicator size="small" color={colors.rust} />
-              ) : (
-                <Icon source="crosshairs-gps" size={24} color={colors.rust} />
+              {markers.map(({ place, diameter }) => (
+                <PlaceMapMarker
+                  key={place._id}
+                  coordinate={place.location}
+                  title={place.name}
+                  diameter={diameter}
+                  selected={(selectedId ?? selectedWishlist?._id) === place._id}
+                  wishlist={!!place.wishlist}
+                  onPress={() => selectMapPlace(place)}
+                />
+              ))}
+              {newPlace && (
+                <PlaceMapMarker
+                  key={`new:${newPlace.id}`}
+                  coordinate={newPlace.location}
+                  onPress={() => selectNew(newPlace)}
+                  title={newPlace.name}
+                  diameter={30}
+                  selected
+                  symbol="compass"
+                />
               )}
-            </Pressable>
-            {mapLocated.length > 0 && (
-              <View pointerEvents="none" style={placeStyles.hint}>
-                <Icon source="heart-outline" size={14} color={colors.rust} />
-                <Text style={placeStyles.hintText}>Tap a pin or count to explore</Text>
-              </View>
-            )}
-          </>
-        )}
-      </View>
-      {selectedCluster.length > 1 && (
-        <Card>
-          <View style={styles.sectionRow}>
-            <Heading>{selectedCluster.length} places here</Heading>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Close selected group"
-              onPress={() => setSelectedClusterIds([])}
-              style={styles.iconButton}
-            >
-              <Icon source="close" size={20} color={colors.muted} />
-            </Pressable>
-          </View>
-          {selectedCluster.map((place) => {
-            const placeDist = current.location
-              ? distanceBetween(place.location, current.location)
-              : undefined;
-            const visitCount = place.visitCount ?? 1;
-            return (
+            </MapView>
+          ) : (
+            <View style={placeStyles.mapFallback}>
+              <Icon source="map-marker-outline" size={42} color={colors.rust} />
+              <Heading>Your places, together.</Heading>
+              <Text style={[styles.muted, { textAlign: 'center' }]}>
+                Tap View List to browse your saved places and get directions.
+              </Text>
+            </View>
+          )}
+          {hasMap && (
+            <>
               <Pressable
-                key={place._id}
                 accessibilityRole="button"
+                accessibilityLabel={fullscreen ? 'Exit fullscreen map' : 'Fullscreen map'}
                 onPress={() => {
-                  selectMapPlace(place);
+                  changeFullscreen(!fullscreen);
                 }}
-                style={placeStyles.placeRow}
+                style={placeStyles.fullscreenButton}
               >
-                <View style={{ flex: 1, gap: 2 }}>
-                  <Text numberOfLines={1} style={placeStyles.placeName}>
-                    {place.name}
-                  </Text>
-                  {place.googlePlaceId && <GoogleAttribution placeId={place.googlePlaceId} />}
-                  <Text numberOfLines={1} style={placeStyles.placeMeta}>
-                    {place.address ? `${place.address} · ` : ''}
-                    <Text style={placeStyles.metaHighlight}>
-                      {place.wishlist
-                        ? 'Wishlist'
-                        : `${visitCount} ${visitCount === 1 ? 'visit' : 'visits'}`}
-                    </Text>
-                    {placeDist !== undefined ? ` · ${formatDistance(placeDist)}` : ''}
-                  </Text>
-                </View>
-                <Icon source="chevron-right" size={18} color={colors.rust} />
+                <Icon
+                  source={fullscreen ? 'fullscreen-exit' : 'fullscreen'}
+                  size={26}
+                  color={colors.rust}
+                />
               </Pressable>
-            );
-          })}
-        </Card>
-      )}
-      {selectedWishlist ? (
-        <PlacePreview
-          googlePlaceId={selectedWishlist.googlePlaceId}
-          name={selectedWishlist.title}
-          address={selectedWishlist.place ?? ''}
-          isWishlisted
-          onClose={() => setSelectedWishlist(undefined)}
-          onMaps={() =>
-            openMaps({
-              wishlistId: selectedWishlist._id,
-              name: selectedWishlist.title,
-              address: selectedWishlist.place ?? '',
-              googlePlaceId: selectedWishlist.googlePlaceId,
-              location: selectedWishlist.location,
-            })
-          }
-          onAdd={() =>
-            add({
-              wishlistId: selectedWishlist._id,
-              name: selectedWishlist.title,
-              address: selectedWishlist.place ?? '',
-              googlePlaceId: selectedWishlist.googlePlaceId,
-              location: selectedWishlist.location,
-            })
-          }
-        />
-      ) : newPlace ? (
-        <PlacePreview
-          googlePlaceId={newPlace.id}
-          attributions={newPlace.attributions}
-          name={newPlace.name}
-          address={newPlace.address}
-          isNew
-          isWishlisted={wishlistPlaceIds?.includes(newPlace.id)}
-          onClose={() => setNewPlace(undefined)}
-          onMaps={() => openMaps({ ...newPlace, googlePlaceId: newPlace.id })}
-          onAdd={() => add({ ...newPlace, googlePlaceId: newPlace.id })}
-          onWishlist={() =>
-            void addToWishlist({
-              boardId,
-              title: newPlace.name,
-              place: newPlace.address,
-              location: newPlace.location,
-              googlePlaceId: newPlace.id,
-            })
-          }
-        />
-      ) : (
-        selected && (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Show current location and center map"
+                accessibilityState={{ disabled: current.locating, busy: current.locating }}
+                disabled={current.locating}
+                onPress={centerOnCurrentLocation}
+                style={({ pressed }) => [
+                  placeStyles.locateButton,
+                  { opacity: pressed || current.locating ? 0.7 : 1 },
+                ]}
+              >
+                {current.locating ? (
+                  <ActivityIndicator size="small" color={colors.rust} />
+                ) : (
+                  <Icon source="crosshairs-gps" size={24} color={colors.rust} />
+                )}
+              </Pressable>
+              {mapLocated.length > 0 && (
+                <View pointerEvents="none" style={placeStyles.hint}>
+                  <Icon source="heart-outline" size={14} color={colors.rust} />
+                  <Text style={placeStyles.hintText}>Tap a place to explore</Text>
+                </View>
+              )}
+            </>
+          )}
+        </View>
+        {selectedWishlist ? (
           <PlacePreview
-            googlePlaceId={selected.googlePlaceId}
-            name={selected.name}
-            address={selected.address}
-            isWishlisted={
-              !!selected.googlePlaceId && wishlistPlaceIds?.includes(selected.googlePlaceId)
+            googlePlaceId={selectedWishlist.googlePlaceId}
+            name={selectedWishlist.title}
+            address={selectedWishlist.place ?? ''}
+            isWishlisted
+            onClose={() => dispatchSelection({ type: 'clear' })}
+            onMaps={() =>
+              openMaps({
+                wishlistId: selectedWishlist._id,
+                name: selectedWishlist.title,
+                address: selectedWishlist.place ?? '',
+                googlePlaceId: selectedWishlist.googlePlaceId,
+                location: selectedWishlist.location,
+              })
             }
-            onClose={() => setSelectedId(undefined)}
-            onOpen={() => {
-              setFullscreen(false);
-              onOpen(selected);
-            }}
-            onMaps={() => openMaps(selected)}
-            onAdd={() => add(selected)}
-            onWishlist={() =>
-              void addToWishlist({
-                boardId,
-                title: selected.name,
-                place: selected.address,
-                location: selected.location,
-                googlePlaceId: selected.googlePlaceId,
+            onAdd={() =>
+              add({
+                wishlistId: selectedWishlist._id,
+                name: selectedWishlist.title,
+                address: selectedWishlist.place ?? '',
+                googlePlaceId: selectedWishlist.googlePlaceId,
+                location: selectedWishlist.location,
               })
             }
           />
-        )
-      )}
+        ) : newPlace ? (
+          <PlacePreview
+            googlePlaceId={newPlace.id}
+            attributions={newPlace.attributions}
+            name={newPlace.name}
+            address={newPlace.address}
+            isNew
+            isWishlisted={wishlistPlaceIds?.includes(newPlace.id)}
+            onClose={() => dispatchSelection({ type: 'clear' })}
+            onMaps={() => openMaps({ ...newPlace, googlePlaceId: newPlace.id })}
+            onAdd={() => add({ ...newPlace, googlePlaceId: newPlace.id })}
+            onWishlist={() =>
+              void addToWishlist({
+                boardId,
+                title: newPlace.name,
+                place: newPlace.address,
+                location: newPlace.location,
+                googlePlaceId: newPlace.id,
+              })
+            }
+          />
+        ) : (
+          selected && (
+            <PlacePreview
+              googlePlaceId={selected.googlePlaceId}
+              name={selected.name}
+              address={selected.address}
+              isWishlisted={
+                !!selected.googlePlaceId && wishlistPlaceIds?.includes(selected.googlePlaceId)
+              }
+              onClose={() => dispatchSelection({ type: 'clear' })}
+              onOpen={() => {
+                dispatchSelection({ type: 'clear' });
+                changeFullscreen(false);
+                onOpen(selected);
+              }}
+              onMaps={() => openMaps(selected)}
+              onAdd={() => add(selected)}
+              onWishlist={() =>
+                void addToWishlist({
+                  boardId,
+                  title: selected.name,
+                  place: selected.address,
+                  location: selected.location,
+                  googlePlaceId: selected.googlePlaceId,
+                })
+              }
+            />
+          )
+        )}
+      </>
       {showList && !fullscreen && (
         <>
           {savedWithDistance.length > 0 && (
@@ -833,7 +761,7 @@ export function BoardPlaces({
     </View>
   );
   return fullscreen ? (
-    <Modal visible animationType="slide" onRequestClose={() => setFullscreen(false)}>
+    <Modal visible animationType="slide" onRequestClose={() => changeFullscreen(false)}>
       <PaperProvider theme={theme}>
         <SafeAreaView style={placeStyles.fullscreenPage}>{content}</SafeAreaView>
       </PaperProvider>
@@ -932,29 +860,6 @@ const placeStyles = StyleSheet.create({
     justifyContent: 'center',
     gap: 12,
   },
-  pin: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: colors.paper,
-    borderWidth: 1,
-    borderColor: colors.coralBorder,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  selectedPin: { backgroundColor: colors.rust },
-  cluster: {
-    minWidth: 36,
-    height: 36,
-    paddingHorizontal: 8,
-    borderRadius: 18,
-    backgroundColor: colors.rust,
-    borderWidth: 2.5,
-    borderColor: colors.paper,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  clusterCount: { fontFamily: 'JakartaSemiBold', color: colors.paper, fontSize: 13 },
   locateButton: {
     position: 'absolute',
     top: 12,

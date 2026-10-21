@@ -1,5 +1,16 @@
 import { GoogleAttribution } from './GoogleAttribution';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useMemo, useState } from 'react';
+import {
+  Animated,
+  Modal,
+  PanResponder,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Icon } from 'react-native-paper';
 import { colors, styles } from './ui';
 
@@ -28,84 +39,138 @@ export function PlacePreview({
   onAdd: () => void;
   onWishlist?: () => void;
 }) {
+  const [translateY] = useState(() => new Animated.Value(0));
+  const drag = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: (_, gesture) =>
+          gesture.dy > 6 && Math.abs(gesture.dy) > Math.abs(gesture.dx),
+        onPanResponderMove: (_, gesture) => translateY.setValue(Math.max(0, gesture.dy)),
+        onPanResponderRelease: (_, gesture) => {
+          if (gesture.dy > 80 || (gesture.dy > 15 && gesture.vy > 0.7)) onClose();
+          else Animated.spring(translateY, { toValue: 0, useNativeDriver: true }).start();
+        },
+        onPanResponderTerminate: () => {
+          Animated.spring(translateY, { toValue: 0, useNativeDriver: true }).start();
+        },
+      }),
+    [onClose, translateY],
+  );
   return (
-    <View style={preview.card}>
-      <View style={preview.header}>
-        <View style={{ flex: 1, gap: 4 }}>
-          {isNew && <Text style={preview.newLabel}>NEW PLACE</Text>}
-          <Text accessibilityRole="header" style={preview.title} numberOfLines={2}>
-            {name}
-          </Text>
-          {!!address && (
-            <Text numberOfLines={2} style={preview.address}>
-              {address}
-            </Text>
-          )}
-        </View>
+    <Modal transparent visible animationType="slide" onRequestClose={onClose}>
+      <View style={preview.overlay}>
         <Pressable
+          style={preview.backdrop}
           accessibilityRole="button"
-          accessibilityLabel="Close selected place"
+          accessibilityLabel="Dismiss place details"
           onPress={onClose}
-          style={preview.close}
+        />
+        <Animated.View
+          style={[preview.drawer, { transform: [{ translateY }] }]}
+          accessibilityViewIsModal
+          onAccessibilityEscape={onClose}
         >
-          <Icon source="close" size={20} color={colors.muted} />
-        </Pressable>
+          <SafeAreaView edges={['bottom', 'left', 'right']} style={{ flexShrink: 1 }}>
+            <View style={preview.dragArea} {...drag.panHandlers}>
+              <View style={preview.handle} />
+            </View>
+            <ScrollView bounces={false} contentContainerStyle={preview.card}>
+              <View style={preview.header}>
+                <View style={{ flex: 1, gap: 4 }}>
+                  {isNew && <Text style={preview.newLabel}>NEW PLACE</Text>}
+                  <Text accessibilityRole="header" style={preview.title} numberOfLines={2}>
+                    {name}
+                  </Text>
+                  {!!address && (
+                    <Text numberOfLines={2} style={preview.address}>
+                      {address}
+                    </Text>
+                  )}
+                </View>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Close selected place"
+                  onPress={onClose}
+                  style={preview.close}
+                >
+                  <Icon source="close" size={20} color={colors.muted} />
+                </Pressable>
+              </View>
+              {(googlePlaceId || isNew) && (
+                <GoogleAttribution placeId={googlePlaceId} attributions={attributions} />
+              )}
+              <View style={preview.actions}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Open ${name} in Google Maps`}
+                  onPress={onMaps}
+                  style={preview.maps}
+                >
+                  <Icon source="navigation-variant-outline" size={16} color={colors.rust} />
+                  <Text style={preview.link}>Maps</Text>
+                </Pressable>
+                <View style={preview.actionGroup}>
+                  {onWishlist && (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={isWishlisted ? 'Saved to wishlist' : 'Save to wishlist'}
+                      onPress={onWishlist}
+                      style={[
+                        preview.iconButton,
+                        isWishlisted && {
+                          backgroundColor: colors.peachLight,
+                          borderColor: colors.peachBorder,
+                        },
+                      ]}
+                    >
+                      <Icon
+                        source={isWishlisted ? 'bookmark' : 'bookmark-outline'}
+                        size={18}
+                        color={colors.rust}
+                      />
+                    </Pressable>
+                  )}
+                  {onOpen && (
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={onOpen}
+                      style={preview.secondary}
+                    >
+                      <Text style={preview.link}>View place</Text>
+                    </Pressable>
+                  )}
+                  <Pressable accessibilityRole="button" onPress={onAdd} style={preview.primary}>
+                    <Icon source="plus" size={16} color={colors.paper} />
+                    <Text style={preview.primaryText}>Add visit</Text>
+                  </Pressable>
+                </View>
+              </View>
+            </ScrollView>
+          </SafeAreaView>
+        </Animated.View>
       </View>
-      {(googlePlaceId || isNew) && (
-        <GoogleAttribution placeId={googlePlaceId} attributions={attributions} />
-      )}
-      <View style={preview.actions}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Open ${name} in Google Maps`}
-          onPress={onMaps}
-          style={preview.maps}
-        >
-          <Icon source="navigation-variant-outline" size={16} color={colors.rust} />
-          <Text style={preview.link}>Maps</Text>
-        </Pressable>
-        <View style={preview.actionGroup}>
-          {onWishlist && (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={isWishlisted ? 'Saved to wishlist' : 'Save to wishlist'}
-              onPress={onWishlist}
-              style={[
-                preview.iconButton,
-                isWishlisted && {
-                  backgroundColor: colors.peachLight,
-                  borderColor: colors.peachBorder,
-                },
-              ]}
-            >
-              <Icon
-                source={isWishlisted ? 'bookmark' : 'bookmark-outline'}
-                size={18}
-                color={colors.rust}
-              />
-            </Pressable>
-          )}
-          {onOpen && (
-            <Pressable accessibilityRole="button" onPress={onOpen} style={preview.secondary}>
-              <Text style={preview.link}>View place</Text>
-            </Pressable>
-          )}
-          <Pressable accessibilityRole="button" onPress={onAdd} style={preview.primary}>
-            <Icon source="plus" size={16} color={colors.paper} />
-            <Text style={preview.primaryText}>Add visit</Text>
-          </Pressable>
-        </View>
-      </View>
-    </View>
+    </Modal>
   );
 }
 const preview = StyleSheet.create({
+  overlay: { flex: 1, justifyContent: 'flex-end' },
+  backdrop: { ...StyleSheet.absoluteFill, backgroundColor: '#00000020' },
+  drawer: {
+    maxHeight: '75%',
+    backgroundColor: colors.paper,
+    borderTopLeftRadius: 26,
+    borderTopRightRadius: 26,
+    overflow: 'hidden',
+    elevation: 12,
+  },
+  dragArea: { height: 28, alignItems: 'center', justifyContent: 'center' },
+  handle: { width: 40, height: 4, borderRadius: 2, backgroundColor: colors.border },
   card: {
-    padding: 14,
-    gap: 8,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: colors.border,
+    paddingHorizontal: 22,
+    paddingTop: 4,
+    paddingBottom: 24,
+    gap: 14,
     backgroundColor: colors.paper,
   },
   header: { flexDirection: 'row', alignItems: 'flex-start', gap: 6 },
