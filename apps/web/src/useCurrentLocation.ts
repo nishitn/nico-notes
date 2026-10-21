@@ -56,7 +56,10 @@ export function useCurrentLocation(automatic: boolean) {
   }, []);
   useEffect(() => {
     mounted.current = true;
-    if (automatic) void request();
+    if (automatic)
+      void Promise.resolve().then(() => {
+        if (mounted.current) return request();
+      });
     return () => {
       mounted.current = false;
     };

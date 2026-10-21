@@ -7,8 +7,6 @@ import { connect } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const backend = join(root, 'packages/backend');
-const localPhotos = process.argv.includes('--local-photos');
 const tunnelConfig = process.env.CLOUDFLARED_CONFIG || join(homedir(), '.cloudflared/config.yml');
 const children = new Set();
 let stopping = false;
@@ -78,16 +76,6 @@ function portBusy(port) {
     socket.once('timeout', () => finish(false));
   });
 }
-async function photoReady() {
-  try {
-    const response = await fetch('http://127.0.0.1:8788/health', {
-      signal: AbortSignal.timeout(1000),
-    });
-    return response.ok && (await response.json()).ready === true;
-  } catch {
-    return false;
-  }
-}
 async function waitFor(name, ready) {
   for (let attempt = 0; attempt < 30 && !stopping; attempt++) {
     if (await ready()) return;
@@ -102,11 +90,7 @@ try {
     if (check.error || check.status !== 0)
       throw new Error(`Install ${binary} and make sure it is on your PATH.`);
   }
-  for (const file of [
-    tunnelConfig,
-    join(backend, '.env.local'),
-    ...(localPhotos ? [join(backend, '.env.photos.local')] : []),
-  ]) {
+  for (const file of [tunnelConfig]) {
     await access(file).catch(() => {
       throw new Error(`Missing configuration: ${file}`);
     });
@@ -115,25 +99,12 @@ try {
     throw new Error(
       'Port 8080 is already in use. Stop the separately started Caddy, then run pnpm start again.',
     );
-  const reusePhotos = localPhotos && (await photoReady());
-  if (localPhotos && !reusePhotos && (await portBusy(8788)))
-    throw new Error('Port 8788 is already in use by another service.');
   const build = start('web build', 'pnpm', ['build:web'], root, false);
   const built = await new Promise((resolve) => {
     build.once('error', () => resolve(false));
     build.once('exit', (code) => resolve(code === 0));
   });
   if (!built) throw new Error('Web build failed.');
-  if (reusePhotos) console.log('\nUsing the photo service already running on port 8788.');
-  else if (localPhotos) {
-    start(
-      'photo service',
-      process.execPath,
-      ['--env-file=.env.local', '--env-file=.env.photos.local', 'scripts/local-photos.mjs'],
-      backend,
-    );
-    await waitFor('Photo service', photoReady);
-  }
   start('Caddy', 'caddy', ['run', '--config', join(root, 'Caddyfile'), '--adapter', 'caddyfile']);
   await waitFor('Caddy', () => portBusy(8080));
   start('Cloudflare tunnel', 'cloudflared', ['tunnel', '--config', tunnelConfig, 'run']);

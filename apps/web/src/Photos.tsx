@@ -1,17 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAuthToken } from '@convex-dev/auth/react';
-import { useConvex, useMutation, useQuery } from 'convex/react';
+import { useConvex, useMutation, useQuery } from './convexLive';
 import { PhotoPicker, type PhotoSelection } from './PhotoPicker';
 import { Link } from 'react-router-dom';
 import { Camera, ChevronLeft, ChevronRight, ImagePlus, LoaderCircle, Trash2 } from 'lucide-react';
 import { api } from '@nico-notes/backend/api';
 import type { Doc, Id } from '@nico-notes/backend/dataModel';
 import { MAX_PHOTOS, MAX_PHOTO_BYTES, PHOTO_TYPES } from '@nico-notes/backend/shared';
-const localPhotoApi = import.meta.env.VITE_PHOTO_API_URL || '';
 const convexPhotoApi = import.meta.env.VITE_CONVEX_SITE_URL;
 
 function photoApi(provider: 'convex' | 'local') {
-  if (provider === 'local') return localPhotoApi.replace(/\/$/, '');
+  if (provider !== 'convex')
+    throw new Error('This legacy photo needs migration to Convex. Contact support.');
   if (!convexPhotoApi) throw new Error('Convex photo storage is not configured.');
   return convexPhotoApi.replace(/\/$/, '');
 }

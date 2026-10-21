@@ -1,7 +1,10 @@
+import { logChange } from './activity';
 import { paginationOptsValidator } from 'convex/server';
 import { ConvexError, v } from 'convex/values';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
+import { liveInternalMutation as internalMutation } from './softDeletion';
+import { checkJoinBlocks } from './safety';
 import { internal } from './_generated/api';
 import schema, { accent, memberRole } from './schema';
 import {
@@ -143,7 +146,7 @@ export const summaries = authedQuery({
       description: v.string(),
       accent,
       memberCount: v.number(),
-      visitCount: v.number(),
+      visitCount: v.union(v.number(), v.null()),
       members: v.array(
         v.object({
           _id: v.id('users'),
@@ -173,17 +176,13 @@ export const summaries = authedQuery({
             return { _id: bm.userId, name: p.name, image: p.image };
           }),
         );
-        const visits = await ctx.db
-          .query('visits')
-          .withIndex('by_boardId_and_date', (q) => q.eq('boardId', board._id))
-          .collect();
         return {
           _id: board._id,
           name: board.name,
           description: board.description,
           accent: board.accent,
           memberCount: boardMemberships.length,
-          visitCount: visits.length,
+          visitCount: board.visitCount ?? null,
           members,
         };
       }),
@@ -232,6 +231,8 @@ export const create = authedMutation({
       description: args.description.trim().slice(0, 500),
       ownerId: ctx.userId,
       deleting: false,
+      visitCount: 0,
+      countRevision: 0,
       inviteCode,
     });
     await ctx.db.insert('memberships', { boardId, userId: ctx.userId, role: 'admin' });
@@ -254,12 +255,18 @@ export const update = authedMutation({
   args: { boardId: v.id('boards'), name: v.string(), description: v.string(), accent },
   returns: v.null(),
   handler: async (ctx, { boardId, ...fields }) => {
-    await admin(ctx, boardId);
+    const { board } = await admin(ctx, boardId);
     await ctx.db.patch(boardId, {
       ...fields,
       name: textValue(fields.name, 'Board name', 80),
       description: fields.description.trim().slice(0, 500),
     });
+    if (
+      board.name !== fields.name.trim() ||
+      board.description !== fields.description.trim().slice(0, 500) ||
+      board.accent !== fields.accent
+    )
+      await logChange(ctx, boardId, ctx.userId, 'updated the board details');
     return null;
   },
 });
@@ -308,6 +315,8 @@ export const setMemberRole = authedMutation({
     if (!membership) throw new ConvexError('This person is no longer a board member.');
     if (args.role === 'member') await keepAdmin(ctx, board, membership);
     await ctx.db.patch(membership._id, { role: args.role });
+    if (membershipRole(board, membership) !== args.role)
+      await logChange(ctx, args.boardId, ctx.userId, `changed a member’s role to ${args.role}`);
     return null;
   },
 });
@@ -324,6 +333,7 @@ export const leave = authedMutation({
     if (membership) {
       await keepAdmin(ctx, board, membership);
       await ctx.db.delete(membership._id);
+      await logChange(ctx, boardId, ctx.userId, 'left the board');
     }
     return null;
   },
@@ -343,6 +353,7 @@ export const removeMember = authedMutation({
     if (m) {
       await keepAdmin(ctx, board, m);
       await ctx.db.delete(m._id);
+      await logChange(ctx, args.boardId, ctx.userId, 'removed a member from the board');
     }
     return null;
   },
@@ -444,6 +455,7 @@ async function requestBoardAccess(
   ctx: MutationCtx & { userId: Id<'users'> },
   board: Doc<'boards'>,
 ) {
+  await checkJoinBlocks(ctx, board._id, ctx.userId);
   const membership = await ctx.db
     .query('memberships')
     .withIndex('by_boardId_and_userId', (q) => q.eq('boardId', board._id).eq('userId', ctx.userId))
@@ -531,7 +543,7 @@ export const pendingRequests = authedQuery({
     const requests = await ctx.db
       .query('joinRequests')
       .withIndex('by_boardId_and_status', (q) => q.eq('boardId', boardId).eq('status', 'pending'))
-      .collect();
+      .take(100);
 
     return Promise.all(
       requests.map(async (r) => {
@@ -557,6 +569,7 @@ export const acceptRequest = authedMutation({
     await admin(ctx, request.boardId);
 
     if (request.status === 'accepted') return null;
+    await checkJoinBlocks(ctx, request.boardId, request.userId);
 
     const memberships = await ctx.db
       .query('memberships')
@@ -578,6 +591,7 @@ export const acceptRequest = authedMutation({
         userId: request.userId,
         role: 'member',
       });
+      await logChange(ctx, request.boardId, request.userId, 'joined the board');
     }
 
     await ctx.db.patch(requestId, {
@@ -620,12 +634,22 @@ export const myOutgoingRequests = authedQuery({
   handler: async (ctx) => {
     const requests = await ctx.db
       .query('joinRequests')
-      .withIndex('by_userId_and_status', (q) => q.eq('userId', ctx.userId).eq('status', 'pending'))
-      .collect();
+      .withIndex('by_userId', (q) => q.eq('userId', ctx.userId))
+      .order('desc')
+      .take(100);
 
     const results = [];
     for (const r of requests) {
       const b = await ctx.db.get(r.boardId);
+      if (r.status === 'accepted') {
+        const membership = await ctx.db
+          .query('memberships')
+          .withIndex('by_boardId_and_userId', (q) =>
+            q.eq('boardId', r.boardId).eq('userId', ctx.userId),
+          )
+          .unique();
+        if (!membership) continue;
+      }
       if (b && !b.deleting) {
         results.push({
           _id: r._id,
@@ -644,8 +668,84 @@ export const remove = authedMutation({
   returns: v.null(),
   handler: async (ctx, { boardId }) => {
     await admin(ctx, boardId);
-    await ctx.db.patch(boardId, { deleting: true });
-    await ctx.scheduler.runAfter(0, internal.cleanup.board, { boardId });
+    await ctx.db.delete(boardId);
+    return null;
+  },
+});
+
+export const ensureCounts = authedMutation({
+  args: { boardId: v.id('boards') },
+  returns: v.null(),
+  handler: async (ctx, { boardId }) => {
+    const { board } = await member(ctx, boardId);
+    if (board.visitCount === undefined && !board.counting) {
+      await ctx.db.patch(boardId, { counting: true });
+      await ctx.scheduler.runAfter(0, internal.boards.countVisits, {
+        boardId,
+        cursor: null,
+        count: 0,
+        revision: board.countRevision ?? 0,
+      });
+    }
+    return null;
+  },
+});
+export const countVisits = internalMutation({
+  args: {
+    boardId: v.id('boards'),
+    cursor: v.union(v.string(), v.null()),
+    count: v.number(),
+    revision: v.number(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const board = await ctx.db.get(args.boardId);
+    if (!board || board.deleting) return null;
+    if ((board.countRevision ?? 0) !== args.revision) {
+      await ctx.scheduler.runAfter(0, internal.boards.countVisits, {
+        boardId: args.boardId,
+        cursor: null,
+        count: 0,
+        revision: board.countRevision ?? 0,
+      });
+      return null;
+    }
+    const page = await ctx.db
+      .query('visits')
+      .withIndex('by_boardId_and_status_and_date', (q) =>
+        q.eq('boardId', args.boardId).eq('status', undefined),
+      )
+      .paginate({ cursor: args.cursor, numItems: 100 });
+    const count = args.count + page.page.length;
+    if (page.isDone) await ctx.db.patch(args.boardId, { visitCount: count, counting: false });
+    else
+      await ctx.scheduler.runAfter(0, internal.boards.countVisits, {
+        ...args,
+        cursor: page.continueCursor,
+        count,
+      });
+    return null;
+  },
+});
+export const backfillCounts = internalMutation({
+  args: { cursor: v.union(v.string(), v.null()) },
+  returns: v.null(),
+  handler: async (ctx, { cursor }) => {
+    const page = await ctx.db.query('boards').paginate({ cursor, numItems: 20 });
+    for (const board of page.page)
+      if (!board.deleting && board.visitCount === undefined && !board.counting) {
+        await ctx.db.patch(board._id, { counting: true });
+        await ctx.scheduler.runAfter(0, internal.boards.countVisits, {
+          boardId: board._id,
+          cursor: null,
+          count: 0,
+          revision: board.countRevision ?? 0,
+        });
+      }
+    if (!page.isDone)
+      await ctx.scheduler.runAfter(0, internal.boards.backfillCounts, {
+        cursor: page.continueCursor,
+      });
     return null;
   },
 });

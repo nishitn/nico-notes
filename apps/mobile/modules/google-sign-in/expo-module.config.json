@@ -1,4 +1,8 @@
 {
-  "platforms": ["android"],
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["NicoGoogleSignInModule"],
+    "appDelegateSubscribers": ["NicoGoogleSignInAppDelegateSubscriber"]
+  },
   "android": { "modules": ["expo.modules.nicogooglesignin.NicoGoogleSignInModule"] }
 }

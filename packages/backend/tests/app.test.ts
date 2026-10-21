@@ -1,3 +1,4 @@
+import { POLICY_VERSION } from '../legal';
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 import { convexTest } from 'convex-test';
 import schema from '../convex/schema';
@@ -10,9 +11,9 @@ const png = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0]);
 async function setup() {
   const t = convexTest(schema, modules);
   const ids = await t.run(async (ctx) => ({
-    alice: await ctx.db.insert('users', { name: 'Alice' }),
-    bob: await ctx.db.insert('users', { name: 'Bob' }),
-    outsider: await ctx.db.insert('users', { name: 'Outsider' }),
+    alice: await ctx.db.insert('users', { termsVersion: POLICY_VERSION, name: 'Alice' }),
+    bob: await ctx.db.insert('users', { termsVersion: POLICY_VERSION, name: 'Bob' }),
+    outsider: await ctx.db.insert('users', { termsVersion: POLICY_VERSION, name: 'Outsider' }),
   }));
   const alice = t.withIdentity({ subject: `${ids.alice}|session-alice` });
   const bob = t.withIdentity({ subject: `${ids.bob}|session-bob` });
@@ -214,8 +215,8 @@ describe('Private boards and invitations', () => {
     const updatedBoard = await alice.query(api.boards.get, { boardId });
     expect(updatedBoard.members).toHaveLength(3);
 
-    // Outgoing requests are cleared
-    expect((await outsider.query(api.boards.myOutgoingRequests, {})).length).toBe(0);
+    // Reviewed outcomes remain visible to the requester.
+    expect((await outsider.query(api.boards.myOutgoingRequests, {}))[0].status).toBe('accepted');
 
     // Once accepted, request returns already_member
     const afterAccept = await outsider.mutation(api.boards.requestToJoin, { code: inviteCode });
@@ -505,7 +506,7 @@ describe('Private photos and cleanup', () => {
     await t.mutation(internal.cleanup.expiredUploads, {});
     expect(await t.run((ctx) => ctx.db.get(tickets[1]))).toBeNull();
   });
-  it('removes stored files and ratings when a visit is deleted', async () => {
+  it('retains stored files and ratings but denies access when a visit is soft-deleted', async () => {
     const { t, alice, bob, visitId, dishId } = await setup();
     await expect(bob.mutation(api.visits.remove, { visitId })).rejects.toThrow(
       /creator or board admin/,
@@ -527,8 +528,9 @@ describe('Private photos and cleanup', () => {
       note: '',
     });
     await alice.mutation(api.visits.remove, { visitId });
-    expect(await t.run((ctx) => ctx.db.get(visitId))).toBeNull();
-    expect(await t.run((ctx) => ctx.storage.get(storageId))).toBeNull();
+    expect((await t.run((ctx) => ctx.db.get(visitId)))?.deletedAt).toBeDefined();
+    expect(await t.run((ctx) => ctx.db.system.get(storageId))).not.toBeNull();
+    await expect(alice.query(api.visits.get, { visitId })).rejects.toThrow(/available/);
     expect(
       await t.run((ctx) =>
         ctx.db
@@ -536,16 +538,16 @@ describe('Private photos and cleanup', () => {
           .withIndex('by_visitId', (q) => q.eq('visitId', visitId))
           .take(10),
       ),
-    ).toEqual([]);
+    ).toHaveLength(1);
   });
-  it('deletes whole boards in scheduled batches and immediately blocks access', async () => {
+  it('retains whole boards while immediately blocking normal access', async () => {
     vi.useFakeTimers();
     const { t, alice, bob, boardId, visitId } = await setup();
     await alice.mutation(api.boards.remove, { boardId });
-    await expect(bob.query(api.visits.get, { visitId })).rejects.toThrow(/access/);
+    await expect(bob.query(api.visits.get, { visitId })).rejects.toThrow(/available/);
     await t.finishAllScheduledFunctions(vi.runAllTimers);
-    expect(await t.run((ctx) => ctx.db.get(boardId))).toBeNull();
-    expect(await t.run((ctx) => ctx.db.get(visitId))).toBeNull();
+    expect((await t.run((ctx) => ctx.db.get(boardId)))?.deletedAt).toBeDefined();
+    expect(await t.run((ctx) => ctx.db.get(visitId))).not.toBeNull();
   });
 });
 
@@ -825,41 +827,31 @@ describe('Ratings during visit creation', () => {
   });
 });
 
-describe('Photo storage selection', () => {
+describe('Convex-only photo storage', () => {
   afterEach(() => vi.unstubAllEnvs());
 
-  it('defaults existing boards to Convex and restricts storage changes to admins', async () => {
-    vi.stubEnv('LOCAL_PHOTO_SECRET', '');
+  it('ignores legacy board preferences and disallows local storage even when old environment flags exist', async () => {
+    vi.stubEnv('LOCAL_PHOTO_ENABLED', 'true');
+    vi.stubEnv('LOCAL_PHOTO_SECRET', 'test-local-secret');
     const { t, alice, bob, outsider, boardId, visitId } = await setup();
+    await t.run((ctx) => ctx.db.patch(boardId, { photoStorage: 'local' }));
+    expect((await alice.query(api.photos.configuration, {})).localStorageReady).toBe(false);
+    await expect(
+      alice.mutation(api.photos.setStorage, { boardId, provider: 'local' }),
+    ).rejects.toThrow(/no longer available/);
     const uploadId = await alice.mutation(api.photos.reserve, { visitId, caption: '' });
     expect(await alice.query(api.photos.uploadProvider, { uploadId })).toBe('convex');
     await expect(bob.query(api.photos.uploadProvider, { uploadId })).rejects.toThrow(
       /another person/,
     );
     await expect(outsider.query(api.photos.uploadProvider, { uploadId })).rejects.toThrow(/access/);
-    await expect(t.mutation(api.photos.setStorage, { boardId, provider: 'local' })).rejects.toThrow(
-      /sign in/,
-    );
-    await expect(
-      bob.mutation(api.photos.setStorage, { boardId, provider: 'local' }),
-    ).rejects.toThrow(/admin/);
-    await expect(
-      outsider.mutation(api.photos.setStorage, { boardId, provider: 'local' }),
-    ).rejects.toThrow(/access/);
-    await expect(
-      alice.mutation(api.photos.setStorage, { boardId, provider: 'local' }),
-    ).rejects.toThrow(/Set up/);
-    await expect(alice.query(api.photos.localUpload, { uploadId })).rejects.toThrow(/Use Convex/);
-    vi.stubEnv('LOCAL_PHOTO_SECRET', 'test-local-secret');
     await expect(
       alice.mutation(api.photos.finishLocalUpload, {
         uploadId,
         contentType: 'image/png',
         secret: 'test-local-secret',
       }),
-    ).rejects.toThrow(/Use Convex/);
-    await alice.mutation(api.photos.setStorage, { boardId, provider: 'local' });
-    expect(await alice.query(api.photos.uploadProvider, { uploadId })).toBe('convex');
+    ).rejects.toThrow(/Local uploads are no longer available/);
     const response = await alice.fetch(`/photos/upload?ticket=${uploadId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'image/png' },
@@ -870,33 +862,7 @@ describe('Photo storage selection', () => {
     expect(await bob.query(api.photos.fileProvider, { photoId })).toBe('convex');
     await expect(outsider.query(api.photos.fileProvider, { photoId })).rejects.toThrow(/access/);
     expect((await bob.fetch(`/photos/file?id=${photoId}`)).status).toBe(200);
-  });
-
-  it('preserves local reservations and existing local photos when switching back to Convex', async () => {
-    vi.stubEnv('LOCAL_PHOTO_SECRET', 'test-local-secret');
-    const { alice, bob, boardId, visitId } = await setup();
-    await alice.mutation(api.photos.setStorage, { boardId, provider: 'local' });
-    const uploadId = await alice.mutation(api.photos.reserve, { visitId, caption: '' });
     await alice.mutation(api.photos.setStorage, { boardId, provider: 'convex' });
-    expect(await alice.query(api.photos.uploadProvider, { uploadId })).toBe('local');
-    const wrongDestination = await alice.fetch(`/photos/upload?ticket=${uploadId}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'image/png' },
-      body: png,
-    });
-    expect(wrongDestination.status).toBe(403);
-    const photoId = await alice.mutation(api.photos.finishLocalUpload, {
-      uploadId,
-      contentType: 'image/png',
-      secret: 'test-local-secret',
-    });
-    expect(await bob.query(api.photos.fileProvider, { photoId })).toBe('local');
-    expect(await bob.query(api.photos.localFile, { photoId })).toEqual({
-      key: uploadId,
-      contentType: 'image/png',
-    });
-    const next = await alice.mutation(api.photos.reserve, { visitId, caption: '' });
-    expect(await alice.query(api.photos.uploadProvider, { uploadId: next })).toBe('convex');
   });
 
   it('allows hosted and development photo requests while rejecting unrelated origins', async () => {
@@ -918,60 +884,34 @@ describe('Photo storage selection', () => {
   });
 });
 
-describe('Mac mini photo metadata', () => {
+describe('Legacy local photo cleanup', () => {
   afterEach(() => vi.unstubAllEnvs());
-  it('requires both the uploader and local service, supports retries, and hides disk keys from visit data', async () => {
+  it('retains historical local files on deletion without allowing new local uploads', async () => {
     vi.stubEnv('LOCAL_PHOTO_SECRET', 'test-local-secret');
-    const { alice, bob, outsider, boardId, visitId } = await setup();
-    await alice.mutation(api.photos.setStorage, { boardId, provider: 'local' });
-    const uploadId = await alice.mutation(api.photos.reserve, { visitId, caption: 'Our table' });
-    await expect(bob.query(api.photos.localUpload, { uploadId })).rejects.toThrow(/another person/);
-    await expect(outsider.query(api.photos.localUpload, { uploadId })).rejects.toThrow(/access/);
-    expect(await alice.query(api.photos.localUpload, { uploadId })).toBeNull();
-    const args = { uploadId, contentType: 'image/png' as const, secret: 'test-local-secret' };
-    await expect(
-      alice.mutation(api.photos.finishLocalUpload, { ...args, secret: 'wrong' }),
-    ).rejects.toThrow(/not authorized/);
-    await expect(bob.mutation(api.photos.finishLocalUpload, args)).rejects.toThrow(
-      /another person/,
-    );
-    const photoId = await alice.mutation(api.photos.finishLocalUpload, args);
-    expect(await alice.mutation(api.photos.finishLocalUpload, args)).toBe(photoId);
-    expect(await alice.query(api.photos.localUpload, { uploadId })).toBe(photoId);
-    const data = await bob.query(api.visits.get, { visitId });
-    expect(data.photos).toHaveLength(1);
-    expect(data.photos[0]).not.toHaveProperty('localKey');
-    expect((await bob.query(api.photos.localFile, { photoId }))?.key).toBe(uploadId);
+    const { t, alice, bob, outsider, visitId } = await setup();
+    const photoId = await t.run(async (ctx) => {
+      const user = await ctx.db
+        .query('users')
+        .withIndex('email', (q) => q.eq('email', 'alice@example.com'))
+        .first();
+      const visit = await ctx.db.get(visitId);
+      return ctx.db.insert('photos', {
+        visitId,
+        uploaderId: user?._id ?? visit!.creatorId!,
+        localKey: 'legacy-file',
+        caption: '',
+        contentType: 'image/png',
+      });
+    });
+    expect(await bob.query(api.photos.fileProvider, { photoId })).toBe('local');
+    expect(await bob.query(api.photos.localFile, { photoId })).toEqual({
+      key: 'legacy-file',
+      contentType: 'image/png',
+    });
     await expect(outsider.query(api.photos.localFile, { photoId })).rejects.toThrow(/access/);
     await alice.mutation(api.photos.remove, { photoId });
-    await expect(alice.query(api.photos.localDeletions, { secret: 'wrong' })).rejects.toThrow(
-      /not authorized/,
-    );
     const jobs = await alice.query(api.photos.localDeletions, { secret: 'test-local-secret' });
-    expect(jobs.map((job) => job.key)).toEqual([uploadId]);
-    await alice.mutation(api.photos.finishLocalDeletions, {
-      secret: 'test-local-secret',
-      ids: jobs.map((job) => job._id),
-    });
-    expect(await alice.query(api.photos.localDeletions, { secret: 'test-local-secret' })).toEqual(
-      [],
-    );
-  });
-  it('queues local files for removal when their visit is deleted', async () => {
-    vi.stubEnv('LOCAL_PHOTO_SECRET', 'test-local-secret');
-    const { alice, boardId, visitId } = await setup();
-    await alice.mutation(api.photos.setStorage, { boardId, provider: 'local' });
-    const uploadId = await alice.mutation(api.photos.reserve, { visitId, caption: '' });
-    await alice.mutation(api.photos.finishLocalUpload, {
-      uploadId,
-      contentType: 'image/jpeg',
-      secret: 'test-local-secret',
-    });
-    await alice.mutation(api.visits.remove, { visitId });
-    expect(
-      (await alice.query(api.photos.localDeletions, { secret: 'test-local-secret' })).map(
-        (job) => job.key,
-      ),
-    ).toEqual([uploadId]);
+    expect(jobs).toEqual([]);
+    expect((await t.run((ctx) => ctx.db.get(photoId)))?.deletedAt).toBeDefined();
   });
 });

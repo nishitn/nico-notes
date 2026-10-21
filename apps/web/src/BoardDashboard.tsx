@@ -1,9 +1,12 @@
+import { GoogleAttribution, GoogleSearchInfo } from './GoogleAttribution';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { usePaginatedQuery, useQuery } from 'convex/react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { usePaginatedQuery, useQuery } from './convexLive';
+import { Link, NavLink, useSearchParams } from 'react-router-dom';
 import {
+  Bell,
   ArrowRight,
   Compass,
+  Funnel,
   Heart,
   List,
   MapPin,
@@ -21,7 +24,8 @@ import type { FunctionReturnType } from 'convex/server';
 import { Initials, Modal, Spinner, formatDate } from './ui';
 import { Invitations } from './Settings';
 import { PhotoCarousel } from './Photos';
-import { PlacesMap, mapsLink, type MapLocation } from './PlacesMap';
+import { PlacesMap, mapsLink, type MapLocation, type MapPlace } from './PlacesMap';
+import { usePlaceLinking } from './usePlaceLinking';
 import { googleMapsConfigured, placeSearchErrorMessage, searchNearbyPlaces } from './googleMaps';
 
 type Detail = FunctionReturnType<typeof api.boards.get>;
@@ -29,6 +33,7 @@ type VisitSummary = FunctionReturnType<typeof api.visits.list>['page'][number];
 export type DesignVariant = 'modern' | 'editorial' | 'compact';
 
 type NewPlace = {
+  attributions?: string[];
   id: string;
   title: string;
   place: string;
@@ -100,7 +105,7 @@ export function VisitCard({
 }) {
   const hasPhotos = visit.photoIds.length > 0;
   const showDishRatings = members.length <= 3;
-  const displayRating = visit.overall ?? visit.dishAverage;
+  const displayRating = visit.overall;
   return (
     <article
       className={`memory-card memory-card-${variant} ${isRow ? 'memory-row' : ''} ${
@@ -119,7 +124,7 @@ export function VisitCard({
         </Link>
         <div className="memory-title-meta">
           {displayRating !== null && (
-            <span className="memory-score" title="Visit rating">
+            <span className="memory-score" title="Overall visit rating">
               <Heart size={14} fill="currentColor" />
               {formatRatingScore(displayRating)}
               <small>/10</small>
@@ -132,6 +137,7 @@ export function VisitCard({
           )}
         </div>
       </div>
+      {visit.googlePlaceId && <GoogleAttribution placeId={visit.googlePlaceId} />}
       <div className="memory-place-row">
         <p className="memory-location">
           <MapPin size={14} />
@@ -215,26 +221,30 @@ export function VisitCard({
 
 export function BoardDashboard({
   detail,
-  forcedDesign,
+  forcedDesign: _forcedDesign,
 }: {
   detail: Detail;
   forcedDesign?: DesignVariant;
 }) {
   const id = detail.board._id;
-  const navigate = useNavigate();
+  usePlaceLinking(id);
   const [params] = useSearchParams();
   const selectParam = params.get('select') || params.get('selected');
 
   const [query, setQuery] = useState('');
+  const [placeFilter, setPlaceFilter] = useState<'visited' | 'wishlist' | 'all'>('all');
   const [selectedKey, setSelectedKey] = useState<string | null>(selectParam);
   const isAdmin = detail.isAdmin;
   const pendingRequests =
     useQuery(api.boards.pendingRequests, isAdmin ? { boardId: id } : 'skip') ?? [];
 
   // New place search states
-  const [newPlaces, setNewPlaces] = useState<NewPlace[]>([]);
-  const [isSearchingNew, setIsSearchingNew] = useState(false);
-  const [searchError, setSearchError] = useState('');
+  const [placeSearch, setPlaceSearch] = useState<{
+    key: string;
+    places: NewPlace[];
+    error: string;
+    loading: boolean;
+  }>();
   const [searchAttempt, setSearchAttempt] = useState(0);
   const [currentLocation, setCurrentLocation] = useState<MapLocation | null>(null);
   const [searchDropdownOpen, setSearchDropdownOpen] = useState(false);
@@ -242,10 +252,18 @@ export function BoardDashboard({
   const searchContainerRef = useRef<HTMLDivElement>(null);
 
   const {
-    results: visits,
+    results: places,
     status: placesStatus,
     loadMore: loadPlaces,
-  } = usePaginatedQuery(api.visits.places, { boardId: id }, { initialNumItems: 100 });
+  } = usePaginatedQuery(api.places.list, { boardId: id }, { initialNumItems: 100 });
+  const {
+    results: wishlist,
+    status: wishlistStatus,
+    loadMore: loadWishlist,
+  } = usePaginatedQuery(api.wishlist.list, { boardId: id }, { initialNumItems: 100 });
+  useEffect(() => {
+    if (placeFilter !== 'visited' && wishlistStatus === 'CanLoadMore') loadWishlist(100);
+  }, [placeFilter, wishlistStatus, loadWishlist]);
   const {
     results: recent,
     status,
@@ -253,8 +271,19 @@ export function BoardDashboard({
   } = usePaginatedQuery(api.visits.list, { boardId: id }, { initialNumItems: 6 });
 
   useEffect(() => {
-    if (placesStatus === 'CanLoadMore') loadPlaces(100);
-  }, [placesStatus, loadPlaces]);
+    if (
+      (query.trim() ||
+        (selectParam &&
+          !places.some(
+            (place) =>
+              place._id === selectParam ||
+              `${place.name.trim().toLowerCase()}|${place.address.trim().toLowerCase()}` ===
+                selectParam,
+          ))) &&
+      placesStatus === 'CanLoadMore'
+    )
+      loadPlaces(100);
+  }, [query, selectParam, places, placesStatus, loadPlaces]);
 
   // Infinite scroll observer to automatically load more visits
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
@@ -293,18 +322,18 @@ export function BoardDashboard({
 
   const searchLatitude = currentLocation?.latitude;
   const searchLongitude = currentLocation?.longitude;
+  const searchKey = `${query.trim()}|${searchLatitude}|${searchLongitude}|${searchAttempt}`;
+  const activeSearch = placeSearch?.key === searchKey ? placeSearch : undefined;
+  const newPlaces = activeSearch?.places ?? [];
+  const searchError = activeSearch?.error ?? '';
+  const isSearchingNew = query.trim().length >= 2 && (activeSearch?.loading ?? true);
   // Ignore stale responses when the query or the nearby search area changes.
   useEffect(() => {
     const trimmed = query.trim();
-    setNewPlaces([]);
-    setSearchError('');
-    if (trimmed.length < 2) {
-      setIsSearchingNew(false);
-      return;
-    }
+    if (trimmed.length < 2) return;
     let cancelled = false;
-    setIsSearchingNew(true);
     const timer = setTimeout(async () => {
+      setPlaceSearch({ key: searchKey, places: [], error: '', loading: true });
       try {
         const results = await searchNearbyPlaces(
           trimmed,
@@ -312,7 +341,8 @@ export function BoardDashboard({
             ? { latitude: searchLatitude, longitude: searchLongitude }
             : undefined,
         );
-        if (!cancelled) setNewPlaces(results);
+        if (!cancelled)
+          setPlaceSearch({ key: searchKey, places: results, error: '', loading: false });
       } catch (error) {
         if (import.meta.env.DEV) {
           console.warn(
@@ -322,42 +352,67 @@ export function BoardDashboard({
               .replace(/key=[^&\s]+/g, 'key=[redacted]'),
           );
         }
-        if (!cancelled) setSearchError(placeSearchErrorMessage(error));
-      } finally {
-        if (!cancelled) setIsSearchingNew(false);
+        if (!cancelled)
+          setPlaceSearch({
+            key: searchKey,
+            places: [],
+            error: placeSearchErrorMessage(error),
+            loading: false,
+          });
       }
     }, 400);
     return () => {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [query, searchLatitude, searchLongitude, searchAttempt]);
+  }, [query, searchLatitude, searchLongitude, searchAttempt, searchKey]);
 
-  const groups = useMemo(() => {
-    const map = new globalThis.Map<string, Doc<'visits'>[]>();
-    for (const visit of visits) {
-      const key = placeKey(visit);
-      map.set(key, [...(map.get(key) ?? []), visit]);
-    }
-    return [...map.entries()].map(([key, entries]) => ({
-      key,
-      entries,
-      visit: entries.find((v) => v.location) ?? entries[0],
-    }));
-  }, [visits]);
+  const groups = useMemo(
+    () =>
+      places.map((place) => ({
+        key: place._id,
+        count: place.visitCount,
+        visit: {
+          title: place.name,
+          place: place.address,
+          placeId: place._id,
+          googlePlaceId: place.googlePlaceId,
+          location: place.location,
+        },
+      })),
+    [places],
+  );
 
   const matching = useMemo(() => {
+    const visited = groups.map((group) => ({ ...group, wishlist: false }));
+    const wishes = wishlist.map((item) => ({
+      key: item._id as string,
+      count: 0,
+      wishlist: true,
+      visit: {
+        title: item.title,
+        place: item.place ?? '',
+        placeId: undefined,
+        googlePlaceId: item.googlePlaceId,
+        location: item.location,
+      },
+    }));
+    const candidates =
+      placeFilter === 'visited'
+        ? visited
+        : placeFilter === 'wishlist'
+          ? wishes
+          : [...visited, ...wishes];
     const trimmed = query.trim().toLowerCase();
-    if (!trimmed) return groups;
-    return groups.filter(({ entries }) =>
-      entries.some((v) => `${v.title} ${v.place} ${v.notes}`.toLowerCase().includes(trimmed)),
+    return candidates.filter(({ visit }) =>
+      `${visit.title} ${visit.place}`.toLowerCase().includes(trimmed),
     );
-  }, [groups, query]);
+  }, [groups, wishlist, placeFilter, query]);
 
   const pins = useMemo(() => {
-    const list = matching.flatMap(({ key, entries, visit }) =>
+    const list: MapPlace[] = matching.flatMap(({ key, count, visit, wishlist }) =>
       visit.location
-        ? [{ id: key, title: visit.title, location: visit.location, count: entries.length }]
+        ? [{ id: key, title: visit.title, location: visit.location, count: count ?? 1, wishlist }]
         : [],
     );
     if (searchedPlace) {
@@ -371,25 +426,142 @@ export function BoardDashboard({
     return list;
   }, [matching, searchedPlace]);
 
-  // Both visit queries use the same newest-first order. Wait for all lightweight
-  // metadata so numbers stay consistent as more cards are loaded.
-  const visitNumbers = useMemo(
-    () =>
-      new Map(
-        placesStatus === 'Exhausted'
-          ? visits.map((visit, index) => [visit._id, visits.length - index])
-          : [],
-      ),
-    [visits, placesStatus],
+  const selected = matching.find(
+    (p) =>
+      p.key === selectedKey ||
+      `${p.visit.title.trim().toLowerCase()}|${p.visit.place.trim().toLowerCase()}` === selectedKey,
   );
-
-  const selected = matching.find((p) => p.key === selectedKey);
-  const selectedPlaceUrl = selected
-    ? `/boards/${id}/place?title=${encodeURIComponent(
-        selected.visit.title,
-      )}&place=${encodeURIComponent(selected.visit.place || '')}&placeId=${selected.visit.placeId ?? ''}&from=map`
-    : undefined;
+  const selectedPlaceUrl = selected?.wishlist
+    ? `/boards/${id}/wishlist`
+    : selected
+      ? `/boards/${id}/place?title=${encodeURIComponent(
+          selected.visit.title,
+        )}&place=${encodeURIComponent(selected.visit.place || '')}&placeId=${selected.visit.placeId ?? ''}&from=map`
+      : undefined;
   const unpinned = useMemo(() => groups.filter((p) => !p.visit.location).length, [groups]);
+
+  const mapFilters = (
+    <label
+      className="place-map-filter"
+      title={`Filter places: ${placeFilter === 'visited' ? 'Visited' : placeFilter === 'wishlist' ? 'Wishlist' : 'All'}`}
+    >
+      <Funnel size={21} aria-hidden="true" />
+      <select
+        aria-label="Filter places on map"
+        value={placeFilter}
+        onChange={(event) => {
+          setPlaceFilter(event.target.value as 'visited' | 'wishlist' | 'all');
+          setSelectedKey(null);
+          setSearchedPlace(null);
+        }}
+      >
+        <option value="visited">Visited</option>
+        <option value="wishlist">Wishlist</option>
+        <option value="all">All</option>
+      </select>
+    </label>
+  );
+  const placePreview = (
+    <>
+      {selectedKey === 'searched-place' && searchedPlace ? (
+        <div className="map-place-card searched-place-card">
+          <button
+            className="icon-button close-place"
+            aria-label="Close selected place"
+            onClick={() => {
+              setSelectedKey(null);
+              setSearchedPlace(null);
+            }}
+          >
+            <X size={17} />
+          </button>
+          <span className="type-pill sage">New place to visit</span>
+          <h3>{searchedPlace.title}</h3>
+          <GoogleAttribution attributions={searchedPlace.attributions} />
+          <p>
+            <MapPin size={14} />
+            {searchedPlace.place}
+          </p>
+          <div className="map-place-actions">
+            <a href={mapsLink(searchedPlace)} target="_blank" rel="noreferrer">
+              <Navigation size={16} />
+              Google Maps
+            </a>
+            <Link
+              className="button primary"
+              to={`/boards/${id}/visits/new?googlePlaceId=${encodeURIComponent(searchedPlace.id)}`}
+            >
+              <Plus size={16} /> Add visit
+            </Link>
+          </div>
+        </div>
+      ) : selected && selectedPlaceUrl ? (
+        /* Place Card: Existing Visited Place */
+        <div className="map-place-card">
+          <button
+            className="icon-button close-place"
+            aria-label="Close selected place"
+            onClick={(e) => {
+              e.stopPropagation();
+              setSelectedKey(null);
+            }}
+          >
+            <X size={17} />
+          </button>
+          <span className="type-pill sage">
+            {selected.wishlist
+              ? 'Wishlist'
+              : selected.count === undefined
+                ? 'Saved place'
+                : `${selected.count} ${selected.count === 1 ? 'visit' : 'visits'}`}
+          </span>
+          <h3>{selected.visit.title}</h3>
+          <p>
+            <MapPin size={14} />
+            {selected.visit.place}
+          </p>
+          <div className="map-place-actions">
+            <a
+              href={mapsLink(selected.visit)}
+              target="_blank"
+              rel="noreferrer"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <Navigation size={16} />
+              Google Maps
+            </a>
+            <div className="map-place-visit-actions">
+              <Link
+                className="button secondary"
+                to={selectedPlaceUrl}
+                onClick={(e) => e.stopPropagation()}
+              >
+                {selected.wishlist ? 'View wishlist' : 'View place'}
+                <ArrowRight size={17} />
+              </Link>
+              <Link
+                className="button primary"
+                to={
+                  selected.visit.googlePlaceId
+                    ? `/boards/${id}/visits/new?googlePlaceId=${encodeURIComponent(selected.visit.googlePlaceId)}${selected.wishlist ? `&wishlistId=${encodeURIComponent(selected.key)}` : ''}`
+                    : `/boards/${id}/visits/new?title=${encodeURIComponent(
+                        selected.visit.title,
+                      )}&place=${encodeURIComponent(selected.visit.place || '')}&placeId=${selected.visit.placeId ?? ''}${selected.wishlist ? `&wishlistId=${encodeURIComponent(selected.key)}` : ''}${selected.visit.googlePlaceId ? `&googlePlaceId=${encodeURIComponent(selected.visit.googlePlaceId)}` : ''}${
+                        selected.visit.location
+                          ? `&lat=${selected.visit.location.latitude}&lng=${selected.visit.location.longitude}`
+                          : ''
+                      }`
+                }
+                onClick={(e) => e.stopPropagation()}
+              >
+                <Plus size={16} /> Add visit
+              </Link>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </>
+  );
 
   return (
     <div className="page board-dashboard design-editorial">
@@ -415,11 +587,12 @@ export function BoardDashboard({
       )}
 
       {/* Places Section */}
-      <section className="places-section" aria-label="Places visited">
+      <section className="places-section" aria-label="Your places">
         <div className="places-heading">
           <h2>Your Places</h2>
           <div className="places-explored-heading-right">
             <NoteCounter count={groups.length} />
+            {placesStatus !== 'Exhausted' && <span aria-label="More places available">+</span>}
             <span className="explored-word">explored</span>
           </div>
         </div>
@@ -444,6 +617,9 @@ export function BoardDashboard({
                   onFocus={() => {
                     if (query.trim()) setSearchDropdownOpen(true);
                   }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Escape') setSearchDropdownOpen(false);
+                  }}
                   onChange={(e) => {
                     setQuery(e.target.value);
                     setSelectedKey(null);
@@ -457,7 +633,7 @@ export function BoardDashboard({
                     aria-label="Clear search"
                     onClick={() => {
                       setQuery('');
-                      setNewPlaces([]);
+                      setPlaceSearch(undefined);
                       setSearchDropdownOpen(false);
                       setSearchedPlace(null);
                     }}
@@ -480,34 +656,44 @@ export function BoardDashboard({
                       <div className="dropdown-section-title">
                         <span>Saved places ({matching.length})</span>
                       </div>
-                      {matching.slice(0, 3).map(({ key, entries, visit }) => (
-                        <div
-                          key={key}
-                          className="search-result-item"
-                          onClick={() => {
-                            setSelectedKey(key);
-                            setSearchDropdownOpen(false);
-                          }}
-                        >
-                          <div className="result-icon">
-                            <MapPin size={16} />
-                          </div>
-                          <div className="result-body">
-                            <span className="result-title">{visit.title}</span>
-                            <span className="result-sub">
-                              {visit.place || 'Saved place'} · {entries.length}{' '}
-                              {entries.length === 1 ? 'visit' : 'visits'}
+                      {matching.slice(0, 3).map(({ key, count, visit }) => (
+                        <div key={key} className="search-result-item">
+                          <button
+                            type="button"
+                            className="search-result-preview"
+                            aria-label={`Preview ${visit.title}`}
+                            onClick={() => {
+                              setSelectedKey(key);
+                              setSearchDropdownOpen(false);
+                            }}
+                          >
+                            <span className="result-icon">
+                              <MapPin size={16} />
                             </span>
-                          </div>
+                            <span className="result-body">
+                              <span className="result-title">{visit.title}</span>
+                              <span className="result-sub">
+                                {visit.place || 'Saved place'}
+                                {count !== undefined &&
+                                  (count === 0
+                                    ? ' · Wishlist'
+                                    : ` · ${count} ${count === 1 ? 'visit' : 'visits'}`)}
+                              </span>
+                            </span>
+                          </button>
                           <Link
                             className="result-action-button"
-                            to={`/boards/${id}/visits/new?title=${encodeURIComponent(
-                              visit.title,
-                            )}&place=${encodeURIComponent(visit.place || '')}&placeId=${visit.placeId ?? ''}${
-                              visit.location
-                                ? `&lat=${visit.location.latitude}&lng=${visit.location.longitude}`
-                                : ''
-                            }`}
+                            to={
+                              visit.googlePlaceId
+                                ? `/boards/${id}/visits/new?googlePlaceId=${encodeURIComponent(visit.googlePlaceId)}`
+                                : `/boards/${id}/visits/new?title=${encodeURIComponent(
+                                    visit.title,
+                                  )}&place=${encodeURIComponent(visit.place || '')}&placeId=${visit.placeId ?? ''}${
+                                    visit.location
+                                      ? `&lat=${visit.location.latitude}&lng=${visit.location.longitude}`
+                                      : ''
+                                  }`
+                            }
                             onClick={(e) => e.stopPropagation()}
                           >
                             <Plus size={14} /> Add visit
@@ -525,31 +711,35 @@ export function BoardDashboard({
                       </span>
                       {isSearchingNew && <span className="searching-spinner">Searching…</span>}
                     </div>
+                    <>
+                      <GoogleAttribution />
+                      <GoogleSearchInfo />
+                    </>
                     {newPlaces.length > 0 ? (
                       newPlaces.map((place) => (
-                        <div
-                          key={place.id}
-                          className="search-result-item new-place-item"
-                          onClick={() => {
-                            setSearchedPlace(place);
-                            setSelectedKey('searched-place');
-                            setSearchDropdownOpen(false);
-                          }}
-                        >
-                          <div className="result-icon new-pin-icon">
-                            <Compass size={16} />
-                          </div>
-                          <div className="result-body">
-                            <span className="result-title">{place.title}</span>
-                            <span className="result-sub">{place.place}</span>
-                          </div>
+                        <div key={place.id} className="search-result-item new-place-item">
+                          <button
+                            type="button"
+                            className="search-result-preview"
+                            aria-label={`Preview ${place.title}`}
+                            onClick={() => {
+                              setSearchedPlace(place);
+                              setSelectedKey('searched-place');
+                              setSearchDropdownOpen(false);
+                            }}
+                          >
+                            <span className="result-icon new-pin-icon">
+                              <Compass size={16} />
+                            </span>
+                            <span className="result-body">
+                              <span className="result-title">{place.title}</span>
+                              <span className="result-sub">{place.place}</span>
+                              <GoogleAttribution attributions={place.attributions} />
+                            </span>
+                          </button>
                           <Link
                             className="result-action-button primary-pill"
-                            to={`/boards/${id}/visits/new?title=${encodeURIComponent(
-                              place.title,
-                            )}&place=${encodeURIComponent(place.place)}&lat=${
-                              place.location.latitude
-                            }&lng=${place.location.longitude}&googlePlaceId=${encodeURIComponent(place.id)}`}
+                            to={`/boards/${id}/visits/new?googlePlaceId=${encodeURIComponent(place.id)}`}
                             onClick={(e) => e.stopPropagation()}
                           >
                             <Plus size={14} /> Add visit
@@ -605,14 +795,25 @@ export function BoardDashboard({
 
           return (
             <>
-              {searchBarNode}
+              <div className="places-map-toolbar">
+                {searchBarNode}
+                {mapFilters}
+              </div>
+              {placeFilter !== 'visited' && wishlistStatus !== 'Exhausted' && (
+                <p role="status" className="small muted">
+                  Loading wishlist places…
+                </p>
+              )}
               <div className="map-shell">
                 <PlacesMap
                   places={pins}
-                  selectedId={selectedKey ?? undefined}
+                  selectedId={selected?.key ?? selectedKey ?? undefined}
                   onSelect={setSelectedKey}
-                  autoLocate
                   onLocationChange={setCurrentLocation}
+                  label="Map of your places"
+                  fullscreenHeader={mapFilters}
+                  fullscreenFooter={placePreview}
+                  fitKey={placeFilter}
                 />
                 {googleMapsConfigured && !selectedKey && pins.length > 0 && (
                   <div className="map-hint">
@@ -622,104 +823,21 @@ export function BoardDashboard({
                 )}
               </div>
 
-              {/* Place Card: Searched New Place */}
-              {selectedKey === 'searched-place' && searchedPlace ? (
-                <div className="map-place-card searched-place-card">
-                  <button
-                    className="icon-button close-place"
-                    aria-label="Close selected place"
-                    onClick={() => {
-                      setSelectedKey(null);
-                      setSearchedPlace(null);
-                    }}
-                  >
-                    <X size={17} />
-                  </button>
-                  <span className="type-pill sage">New place to visit</span>
-                  <h3>{searchedPlace.title}</h3>
-                  <p>
-                    <MapPin size={14} />
-                    {searchedPlace.place}
-                  </p>
-                  <div className="map-place-actions">
-                    <a href={mapsLink(searchedPlace)} target="_blank" rel="noreferrer">
-                      <Navigation size={16} />
-                      Google Maps
-                    </a>
-                    <Link
-                      className="button primary"
-                      to={`/boards/${id}/visits/new?title=${encodeURIComponent(
-                        searchedPlace.title,
-                      )}&place=${encodeURIComponent(searchedPlace.place)}&lat=${
-                        searchedPlace.location.latitude
-                      }&lng=${searchedPlace.location.longitude}&googlePlaceId=${encodeURIComponent(searchedPlace.id)}`}
-                    >
-                      <Plus size={16} /> Add visit
-                    </Link>
-                  </div>
-                </div>
-              ) : selected && selectedPlaceUrl ? (
-                /* Place Card: Existing Visited Place */
-                <div
-                  className="map-place-card map-place-card-clickable"
-                  onClick={() => navigate(selectedPlaceUrl)}
-                >
-                  <button
-                    className="icon-button close-place"
-                    aria-label="Close selected place"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setSelectedKey(null);
-                    }}
-                  >
-                    <X size={17} />
-                  </button>
-                  <span className="type-pill sage">
-                    {selected.visit.typeName} · {selected.entries.length}{' '}
-                    {selected.entries.length === 1 ? 'visit' : 'visits'}
-                  </span>
-                  <h3>{selected.visit.title}</h3>
-                  <p>
-                    <MapPin size={14} />
-                    {selected.visit.place}
-                  </p>
-                  <div className="map-place-actions">
-                    <a
-                      href={mapsLink(selected.visit)}
-                      target="_blank"
-                      rel="noreferrer"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <Navigation size={16} />
-                      Google Maps
-                    </a>
-                    <div className="map-place-visit-actions">
-                      <Link
-                        className="button secondary"
-                        to={selectedPlaceUrl}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        View place
-                        <ArrowRight size={17} />
-                      </Link>
-                      <Link
-                        className="button primary"
-                        to={`/boards/${id}/visits/new?title=${encodeURIComponent(
-                          selected.visit.title,
-                        )}&place=${encodeURIComponent(selected.visit.place || '')}&placeId=${selected.visit.placeId ?? ''}${
-                          selected.visit.location
-                            ? `&lat=${selected.visit.location.latitude}&lng=${selected.visit.location.longitude}`
-                            : ''
-                        }`}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <Plus size={16} /> Add visit
-                      </Link>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
+              {placePreview}
 
+              {placesStatus !== 'Exhausted' && (
+                <div className="list-pagination" role="status">
+                  <span className="small muted">{places.length} places loaded</span>
+                  <button
+                    type="button"
+                    className="button secondary small"
+                    disabled={placesStatus !== 'CanLoadMore'}
+                    onClick={() => loadPlaces(100)}
+                  >
+                    {placesStatus === 'LoadingMore' ? 'Loading places…' : 'Load more places'}
+                  </button>
+                </div>
+              )}
               <div className="map-summary">
                 <Link to={`/boards/${id}/places`} className="text-button">
                   <List size={16} /> View All Places <ArrowRight size={15} />
@@ -733,7 +851,9 @@ export function BoardDashboard({
 
               {matching.length === 0 && !searchedPlace && (
                 <p className="no-results">
-                  No matching saved places. Try searching for a new place above.
+                  {placeFilter === 'wishlist'
+                    ? 'No matching wishlist places. Save a place to your wishlist to see it here.'
+                    : 'No matching saved places. Try searching for a new place above.'}
                 </p>
               )}
             </>
@@ -745,8 +865,8 @@ export function BoardDashboard({
         <div className="recent-heading">
           <h2>Your Visits</h2>
           <div className="places-explored-heading-right">
-            <NoteCounter count={visits.length} />
-            <span className="explored-word">so far</span>
+            <NoteCounter count={recent.length} />
+            <span className="explored-word">{status === 'Exhausted' ? 'visits' : 'loaded'}</span>
           </div>
         </div>
 
@@ -758,7 +878,6 @@ export function BoardDashboard({
               <VisitCard
                 key={visit._id}
                 visit={visit}
-                visitNumber={visitNumbers.get(visit._id)}
                 variant="editorial"
                 members={detail.members}
                 isRow={false}
@@ -804,6 +923,7 @@ export function BoardDashboard({
 export function BoardHeader({ detail }: { detail: Detail }) {
   const id = detail.board._id;
   const [addingMember, setAddingMember] = useState(false);
+  const hasUnread = useQuery(api.notifications.hasUnread, { boardId: id });
   return (
     <>
       <header className="board-heading dashboard-heading heading-editorial">
@@ -840,6 +960,18 @@ export function BoardHeader({ detail }: { detail: Detail }) {
         </div>
         {detail.board.description && <p className="board-desc">{detail.board.description}</p>}
       </header>
+      <nav className="board-tabs" aria-label="Board tabs">
+        <NavLink to={`/boards/${id}`} end>
+          Board
+        </NavLink>
+        <NavLink to={`/boards/${id}/wishlist`}>Wishlist</NavLink>
+        <NavLink to={`/boards/${id}/notifications`}>
+          <Bell size={16} /> Notifications
+          {hasUnread && (
+            <span className="notification-dot" role="img" aria-label="Unread notifications" />
+          )}
+        </NavLink>
+      </nav>
       {addingMember && (
         <Modal title="Add member" onClose={() => setAddingMember(false)}>
           <Invitations

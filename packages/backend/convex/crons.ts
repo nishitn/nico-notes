@@ -13,4 +13,16 @@ crons.daily(
   internal.cleanup.orphanStorage,
   { cursor: null },
 );
+crons.interval(
+  'Resume account deletion cleanup',
+  { minutes: 30 },
+  internal.account.resumeDeletions,
+  {},
+);
+crons.interval(
+  'Resume blocked-account separation',
+  { minutes: 30 },
+  internal.safety.resumeBlocks,
+  {},
+);
 export default crons;

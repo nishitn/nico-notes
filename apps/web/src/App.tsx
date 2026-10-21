@@ -1,5 +1,6 @@
+import { NotificationsPage } from './Notifications';
 import { useState } from 'react';
-import { useConvexAuth, usePaginatedQuery, useQuery } from 'convex/react';
+import { useConvexAuth, usePaginatedQuery, useQuery } from './convexLive';
 import { useAuthActions } from '@convex-dev/auth/react';
 import { Link, NavLink, Route, Routes, useLocation } from 'react-router-dom';
 import {
@@ -37,17 +38,28 @@ import {
 import { VisitEditor, VisitPage } from './Visit';
 import { Settings } from './Settings';
 import { AccountPage } from './Account';
+import { POLICY_VERSION, type LegalPage } from '@nico-notes/backend/legal';
+import {
+  AccountUnavailable,
+  HelpPage,
+  LegalLinks,
+  ModerationPage,
+  PublicLegalPage,
+  SafetyPage,
+  TermsGate,
+} from './ReleasePages';
+import { WishlistPage } from './Wishlist';
 
 export function Setup() {
+  const page = useLocation().pathname.slice(1);
+  if (['privacy', 'terms', 'help', 'delete-account'].includes(page))
+    return <PublicLegalPage page={page as LegalPage} />;
   return (
     <div className="setup">
       <Brand />
-      <h1>Almost ready for your first visit.</h1>
-      <p>Connect your Convex deployment to start saving your memories.</p>
-      <p>
-        Set <code>VITE_CONVEX_URL</code> and <code>VITE_CONVEX_SITE_URL</code> in the frontend’s
-        local environment. The README has the setup steps.
-      </p>
+      <h1>The service is temporarily unavailable.</h1>
+      <p>Please try again later or contact support.</p>
+      <LegalLinks />
     </div>
   );
 }
@@ -116,8 +128,7 @@ function Login() {
               <div className="setup-note">
                 <LockKeyhole size={17} />
                 <span>
-                  Google sign-in needs its initial setup. Add your Google OAuth credentials in
-                  Convex to open your shared space.
+                  Sign-in is temporarily unavailable. Please try again later or contact support.
                 </span>
               </div>
             )}
@@ -138,7 +149,9 @@ function Login() {
           <span className="decorative-spark">✧</span>
         </section>
       </main>
-      <footer>nico notes</footer>
+      <footer>
+        <LegalLinks />
+      </footer>
     </div>
   );
 }
@@ -252,6 +265,11 @@ function Shell() {
               <Route path="/" element={<HomePage />} />
               <Route path="/boards" element={<BoardsPage />} />
               <Route path="/account" element={<AccountPage />} />
+              <Route path="/support" element={<HelpPage />} />
+              <Route path="/moderation" element={<ModerationPage />} />
+              <Route path="/boards/:boardId/safety" element={<SafetyPage />} />
+              <Route path="/boards/:boardId/notifications" element={<NotificationsPage />} />
+              <Route path="/boards/:boardId/wishlist" element={<WishlistPage />} />
               <Route path="/boards/:boardId" element={<BoardPage />} />
               <Route path="/boards/:boardId/places" element={<PlacesPage />} />
               <Route path="/boards/:boardId/place" element={<PlaceDetailPage />} />
@@ -280,7 +298,18 @@ function Shell() {
 }
 export function App() {
   const { isAuthenticated, isLoading } = useConvexAuth();
+  const location = useLocation();
+  const account = useQuery(api.account.status, isAuthenticated ? {} : 'skip');
+  const page = location.pathname.slice(1);
+  if (['privacy', 'terms', 'help', 'delete-account'].includes(page))
+    return <PublicLegalPage page={page as LegalPage} />;
   if (isLoading) return <Spinner label="Loading…" />;
+  if (isAuthenticated && !account) return <Spinner label="Loading account…" />;
+  if (account?.deleting || account?.suspended)
+    return <AccountUnavailable deleting={account.deleting} />;
+  const requiredTermsVersion = account?.requiredTermsVersion ?? POLICY_VERSION;
+  if (isAuthenticated && account?.termsVersion !== requiredTermsVersion)
+    return <TermsGate version={requiredTermsVersion} />;
   return (
     <>
       <a className="skip-link" href="#main-content">

@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Platform, Text } from 'react-native';
-import { ConvexReactClient, useConvexAuth, useConvexConnectionState, useQuery } from 'convex/react';
-import { ConvexAuthProvider, useAuthActions } from '@convex-dev/auth/react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Platform, Text, View } from 'react-native';
+import { ConvexReactClient, useConvexAuth, useConvexConnectionState, useQuery } from './convexLive';
+import { ConvexAuthProvider, useAuthActions, useAuthToken } from '@convex-dev/auth/react';
 import * as SecureStore from 'expo-secure-store';
 import * as WebBrowser from 'expo-web-browser';
 import * as Linking from 'expo-linking';
@@ -10,30 +10,25 @@ import { StatusBar } from 'expo-status-bar';
 import { MD3LightTheme, PaperProvider } from 'react-native-paper';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
-import {
-  NavigationContainer,
-  createNavigationContainerRef,
-  DefaultTheme,
-} from '@react-navigation/native';
-import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { router, useRootNavigationState } from 'expo-router';
 import { api } from '@nico-notes/backend/api';
-import type { Routes } from './navigation';
 import { AUTH_REDIRECT, authCode, inviteToken } from './links';
-import { colors, ErrorBoundary, Loading, Page, styles, Title, useTask } from './ui';
 import {
-  BoardsScreen,
-  BoardScreen,
-  BoardFormScreen,
-  JoinScreen,
-  AccountScreen,
-} from './screens/Boards';
-import { VisitScreen, VisitFormScreen } from './screens/Visits';
-import { SettingsScreen } from './screens/Settings';
-import { PlacesScreen, PlaceScreen } from './screens/Places';
-import { WishlistFormScreen } from './screens/WishlistForm';
-import { YourBoardsScreen } from './screens/YourBoards';
+  Button,
+  colors,
+  ErrorBoundary,
+  ErrorNote,
+  Loading,
+  Page,
+  styles,
+  Title,
+  useTask,
+} from './ui';
 import { WelcomeScreen } from './screens/Welcome';
 import { signInWithNativeGoogle } from '../modules/google-sign-in';
+import { POLICY_VERSION } from '@nico-notes/backend/legal';
+import { TermsGate, openLegal } from './ReleaseTools';
+import { JournalProvider } from './JournalContext';
 
 WebBrowser.maybeCompleteAuthSession();
 const url = process.env.EXPO_PUBLIC_CONVEX_URL;
@@ -43,8 +38,6 @@ const storage = {
   setItem: SecureStore.setItemAsync,
   removeItem: SecureStore.deleteItemAsync,
 };
-const Stack = createNativeStackNavigator<Routes>();
-const navigationRef = createNavigationContainerRef<Routes>();
 
 function ConnectionNotice() {
   const connection = useConvexConnectionState();
@@ -57,7 +50,7 @@ function ConnectionNotice() {
         {
           padding: 12,
           backgroundColor: colors.coralLight,
-          color: colors.primary,
+          color: colors.rust,
           textAlign: 'center',
         },
       ]}
@@ -69,6 +62,24 @@ function ConnectionNotice() {
   );
 }
 
+function AccountUnavailable({ deleting }: { deleting: boolean }) {
+  const { signOut } = useAuthActions();
+  const task = useTask();
+  return (
+    <Page>
+      <Title>{deleting ? 'Account deletion requested' : 'Account unavailable'}</Title>
+      <Text style={styles.body}>
+        {deleting
+          ? 'Your account is closed. Contact support within 30 days to request recovery or permanent erasure sooner. After 30 days, permanent cleanup starts.'
+          : 'Contact support to ask about your account or appeal a moderation decision.'}
+      </Text>
+      <Button secondary title="Contact support" onPress={() => void openLegal('help')} />
+      <Button title="Sign out" disabled={task.busy} onPress={() => void task.run(signOut)} />
+      <ErrorNote error={task.error} />
+    </Page>
+  );
+}
+
 function Login({
   finishSignIn,
   error,
@@ -76,7 +87,8 @@ function Login({
   finishSignIn: (link: string) => Promise<void>;
   error: string;
 }) {
-  const { signIn } = useAuthActions();
+  const { signIn, signOut } = useAuthActions();
+  const rejectedToken = useAuthToken();
   const config = useQuery(api.photos.configuration);
   const task = useTask();
   return (
@@ -88,9 +100,14 @@ function Login({
         void task.run(async () => {
           // Render the button's loading state before handing over to native Google UI.
           await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-          if (Platform.OS === 'android') {
+          if (Platform.OS === 'android' || Platform.OS === 'ios') {
             const credential = await signInWithNativeGoogle(config?.googleClientId);
-            if (credential) await signIn('google-native', credential);
+            if (credential) {
+              // This screen is shown only when Convex has not authenticated us.
+              // Clear any rejected session so a new token restarts authentication.
+              if (rejectedToken) await signOut();
+              await signIn('google-native', credential);
+            }
             return;
           }
           const { redirect } = await signIn('google', { redirectTo: AUTH_REDIRECT });
@@ -103,8 +120,10 @@ function Login({
   );
 }
 
-function AuthenticatedApp() {
+function AuthenticatedApp({ children }: { children: ReactNode }) {
+  const rootState = useRootNavigationState();
   const { isLoading, isAuthenticated } = useConvexAuth();
+  const account = useQuery(api.account.status, isAuthenticated ? {} : 'skip');
   const { signIn } = useAuthActions();
   const authTask = useTask();
   const { run: runAuth } = authTask;
@@ -125,7 +144,14 @@ function AuthenticatedApp() {
     [signIn],
   );
   const [pendingInvite, setPendingInvite] = useState<string>();
-  const [ready, setReady] = useState(false);
+  const ready = Boolean(rootState?.key);
+  const sessionReady = Boolean(
+    isAuthenticated &&
+    account &&
+    !account.deleting &&
+    !account.suspended &&
+    account.termsVersion === (account.requiredTermsVersion ?? POLICY_VERSION),
+  );
   const seen = useRef<string | null>(null);
   useEffect(() => {
     function receive(link: string | null) {
@@ -148,76 +174,30 @@ function AuthenticatedApp() {
     return () => listener.remove();
   }, [finishSignIn, runAuth]);
   useEffect(() => {
-    if (isAuthenticated && ready && pendingInvite && navigationRef.isReady()) {
-      navigationRef.navigate('Join', { token: pendingInvite });
+    if (sessionReady && ready && pendingInvite) {
+      router.navigate({ pathname: '/Join', params: { token: pendingInvite } });
       // This effect synchronizes an external navigation container with incoming links.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setPendingInvite(undefined);
     }
-  }, [isAuthenticated, ready, pendingInvite]);
-  if (isLoading) return <Loading />;
-  if (!isAuthenticated) return <Login finishSignIn={finishSignIn} error={authTask.error} />;
+  }, [sessionReady, ready, pendingInvite]);
+  if (sessionReady) return <JournalProvider>{children}</JournalProvider>;
   return (
-    <NavigationContainer
-      ref={navigationRef}
-      onReady={() => setReady(true)}
-      theme={{
-        ...DefaultTheme,
-        colors: {
-          ...DefaultTheme.colors,
-          background: colors.background,
-          card: colors.background,
-          text: colors.ink,
-          primary: colors.primary,
-          border: colors.border,
-        },
-      }}
-    >
-      <Stack.Navigator
-        screenOptions={{
-          headerShadowVisible: false,
-          headerTitleStyle: { fontWeight: '600' },
-          contentStyle: { backgroundColor: colors.background },
-        }}
-      >
-        <Stack.Screen name="Boards" component={BoardsScreen} options={{ headerShown: false }} />
-        <Stack.Screen name="Board" component={BoardScreen} options={{ headerShown: false }} />
-        <Stack.Screen
-          name="BoardForm"
-          component={BoardFormScreen}
-          options={{ title: 'Board details', presentation: 'modal' }}
-        />
-        <Stack.Screen
-          name="Join"
-          component={JoinScreen}
-          getId={({ params }) => params?.token ?? 'manual'}
-          options={{ title: 'Join a board', presentation: 'modal' }}
-        />
-        <Stack.Screen name="Account" component={AccountScreen} options={{ headerShown: false }} />
-        <Stack.Screen
-          name="YourBoards"
-          component={YourBoardsScreen}
-          options={{ headerShown: false }}
-        />
-        <Stack.Screen name="Settings" component={SettingsScreen} options={{ headerShown: false }} />
-        <Stack.Screen name="Visit" component={VisitScreen} options={{ headerShown: false }} />
-        <Stack.Screen
-          name="VisitForm"
-          component={VisitFormScreen}
-          options={{ headerShown: false }}
-        />
-        <Stack.Screen
-          name="WishlistForm"
-          component={WishlistFormScreen}
-          options={{ title: 'Add to wishlist', presentation: 'modal' }}
-        />
-        <Stack.Screen name="Places" component={PlacesScreen} options={{ headerShown: false }} />
-        <Stack.Screen name="Place" component={PlaceScreen} options={{ headerShown: false }} />
-      </Stack.Navigator>
-    </NavigationContainer>
+    <SafeAreaView edges={['top', 'bottom', 'left', 'right']} style={styles.page}>
+      {isLoading || (isAuthenticated && !account) ? (
+        <Loading />
+      ) : !isAuthenticated ? (
+        <Login finishSignIn={finishSignIn} error={authTask.error} />
+      ) : account?.deleting || account?.suspended ? (
+        <AccountUnavailable deleting={Boolean(account.deleting)} />
+      ) : (
+        <TermsGate version={account?.requiredTermsVersion ?? POLICY_VERSION} />
+      )}
+    </SafeAreaView>
   );
 }
-export default function App() {
+
+export default function App({ children }: { children: ReactNode }) {
   const [resetKey, setResetKey] = useState(0);
   const [fontsLoaded, fontError] = useFonts({
     Epilogue: require('../assets/fonts/Epilogue.ttf'),
@@ -233,12 +213,12 @@ export default function App() {
         ...MD3LightTheme,
         colors: {
           ...MD3LightTheme.colors,
-          primary: colors.primary,
+          primary: colors.rust,
           onPrimary: colors.paper,
           primaryContainer: colors.coralLight,
-          onPrimaryContainer: colors.coral,
+          onPrimaryContainer: colors.rust,
           secondaryContainer: colors.coralLight,
-          onSecondaryContainer: colors.coral,
+          onSecondaryContainer: colors.rust,
           background: colors.background,
           surface: colors.paper,
           surfaceVariant: colors.coralSubtle,
@@ -258,25 +238,23 @@ export default function App() {
       }}
     >
       <SafeAreaProvider>
-        <SafeAreaView edges={['top', 'bottom']} style={styles.page}>
+        <View style={styles.page}>
           <StatusBar style="dark" />
           <ErrorBoundary onReset={() => setResetKey((key) => key + 1)}>
             {client ? (
               <ConvexAuthProvider client={client} storage={storage} shouldHandleCode={false}>
                 <ConnectionNotice />
-                <AuthenticatedApp key={resetKey} />
+                <AuthenticatedApp key={resetKey}>{children}</AuthenticatedApp>
               </ConvexAuthProvider>
             ) : (
               <Page>
-                <Title>Almost ready for your first visit.</Title>
-                <Text style={styles.body}>
-                  Set EXPO_PUBLIC_CONVEX_URL and EXPO_PUBLIC_CONVEX_SITE_URL in
-                  apps/mobile/.env.local, then restart Expo.
-                </Text>
+                <Title>Service unavailable</Title>
+                <Text style={styles.body}>Please try again later or contact support.</Text>
+                <Button secondary title="Help and support" onPress={() => void openLegal('help')} />
               </Page>
             )}
           </ErrorBoundary>
-        </SafeAreaView>
+        </View>
       </SafeAreaProvider>
     </PaperProvider>
   );

@@ -1,9 +1,10 @@
+import { GoogleAttribution } from '../GoogleAttribution';
 import { FlatList, Linking, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
-import { usePaginatedQuery, useQuery } from 'convex/react';
+import { usePaginatedQuery, useQuery } from '../convexLive';
 import { Image } from 'expo-image';
 import { Icon } from 'react-native-paper';
 import Constants from 'expo-constants';
-import MapView, { Marker } from 'react-native-maps';
+import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import { api } from '@nico-notes/backend/api';
 import type { ScreenProps } from '../navigation';
 import { Button, colors, Loading, Page, SectionHeading, styles, Title } from '../ui';
@@ -98,6 +99,7 @@ export function PlacesScreen({ route, navigation }: ScreenProps<'Places'>) {
             navigation.navigate('VisitForm', {
               boardId,
               placeId: place?._id,
+              wishlistId: place?.wishlistId,
               googlePlaceId: place?.googlePlaceId,
               title: place?.name ?? title,
               place: place?.address,
@@ -119,7 +121,11 @@ export function PlaceScreen({ route, navigation }: ScreenProps<'Place'>) {
   const address = placeDoc?.address ?? visits.results[0]?.place ?? '';
   const location = placeDoc?.location ?? visits.results.find((v) => v.location)?.location;
   const googlePlaceId = placeDoc?.googlePlaceId ?? visits.results[0]?.googlePlaceId;
-  const hasMap = Platform.OS === 'ios' || Constants.expoConfig?.extra?.hasAndroidMapsKey;
+  const hasMap = Boolean(
+    Platform.OS === 'ios'
+      ? Constants.expoConfig?.extra?.hasIosMapsKey
+      : Constants.expoConfig?.extra?.hasAndroidMapsKey,
+  );
 
   const openGoogleMaps = () => {
     const query = location ? `${location.latitude},${location.longitude}` : `${name} ${address}`;
@@ -146,7 +152,8 @@ export function PlaceScreen({ route, navigation }: ScreenProps<'Place'>) {
         ListHeaderComponent={
           <View style={{ gap: 14 }}>
             <View style={placeScreenStyles.titleBlock}>
-              <Title style={placeScreenStyles.titleText}>{name}</Title>
+              <Title style={placeScreenStyles.titleText}>{placeDoc?.name ?? name}</Title>
+              {googlePlaceId && <GoogleAttribution placeId={googlePlaceId} />}
               <View style={placeScreenStyles.locationRow}>
                 <View style={placeScreenStyles.locationLeft}>
                   <Icon source="map-marker-outline" size={16} color={colors.rust} />
@@ -171,6 +178,7 @@ export function PlaceScreen({ route, navigation }: ScreenProps<'Place'>) {
             {location && hasMap ? (
               <View style={placeScreenStyles.mapContainer}>
                 <MapView
+                  provider={PROVIDER_GOOGLE}
                   style={placeScreenStyles.map}
                   initialRegion={{
                     latitude: location.latitude,

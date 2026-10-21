@@ -1,6 +1,7 @@
 import { v } from 'convex/values';
 import { internalMutation, type MutationCtx } from './_generated/server';
 import { internal } from './_generated/api';
+import { bumpVisitCount } from './lib';
 import type { Doc, Id } from './_generated/dataModel';
 
 export async function deletePhoto(ctx: MutationCtx, photo: Doc<'photos'>) {
@@ -10,6 +11,12 @@ export async function deletePhoto(ctx: MutationCtx, photo: Doc<'photos'>) {
       key: photo.localKey,
       contentType: photo.contentType,
     });
+  if (photo.uploadId && (await ctx.db.get(photo.uploadId))) await ctx.db.delete(photo.uploadId);
+  const reports = await ctx.db
+    .query('reports')
+    .withIndex('by_photoId', (q) => q.eq('photoId', photo._id))
+    .take(100);
+  for (const report of reports) await ctx.db.patch(report._id, { contentSummary: undefined });
   await ctx.db.delete(photo._id);
 }
 
@@ -20,6 +27,7 @@ export async function deleteVisit(ctx: MutationCtx, visitId: Id<'visits'>) {
       .withIndex('by_visitId', (q) => q.eq('visitId', visitId))
       .take(2000);
     for (const row of rows) await ctx.db.delete(row._id);
+    if (rows.length === 2000) return;
   }
   const photos = await ctx.db
     .query('photos')
@@ -28,7 +36,24 @@ export async function deleteVisit(ctx: MutationCtx, visitId: Id<'visits'>) {
   for (const photo of photos) {
     await deletePhoto(ctx, photo);
   }
-  if (await ctx.db.get(visitId)) await ctx.db.delete(visitId);
+  if (photos.length === 10) return;
+  const visit = await ctx.db.get(visitId);
+  if (visit) {
+    if (visit.wishlistId && (await ctx.db.get(visit.wishlistId)))
+      await ctx.db.delete(visit.wishlistId);
+    await ctx.db.delete(visitId);
+    if (visit.status !== 'planned') await bumpVisitCount(ctx, visit.boardId, -1);
+  }
+}
+// Used with the live mutation context, whose delete operation retains records.
+// Child rows and stored images remain attached to the same hidden visit ID.
+export async function softDeleteVisit(ctx: MutationCtx, visitId: Id<'visits'>) {
+  const visit = await ctx.db.get(visitId);
+  if (!visit) return;
+  if (visit.wishlistId && (await ctx.db.get(visit.wishlistId)))
+    await ctx.db.delete(visit.wishlistId);
+  await ctx.db.delete(visitId);
+  if (visit.status !== 'planned') await bumpVisitCount(ctx, visit.boardId, -1);
 }
 export const board = internalMutation({
   args: { boardId: v.id('boards') },
@@ -53,12 +78,24 @@ export const board = internalMutation({
         await ctx.scheduler.runAfter(0, internal.cleanup.board, { boardId });
         return null;
       }
-      for (const table of ['memberships', 'visitTypes', 'invitations', 'joinRequests'] as const) {
+      for (const table of [
+        'boardChanges',
+        'wishlist',
+        'memberships',
+        'visitTypes',
+        'invitations',
+        'joinRequests',
+        'reports',
+      ] as const) {
         const rows = await ctx.db
           .query(table)
           .withIndex('by_boardId', (q) => q.eq('boardId', boardId))
           .take(100);
         for (const row of rows) await ctx.db.delete(row._id);
+        if (rows.length) {
+          await ctx.scheduler.runAfter(0, internal.cleanup.board, { boardId });
+          return null;
+        }
       }
       await ctx.db.delete(boardId);
     }
@@ -100,7 +137,15 @@ export const orphanStorage = internalMutation({
         .query('photos')
         .withIndex('by_storageId', (q) => q.eq('storageId', file._id))
         .first();
-      if (!photo) await ctx.storage.delete(file._id);
+      const profile = await ctx.db
+        .query('users')
+        .withIndex('by_profilePhotoId', (q) => q.eq('profilePhotoId', file._id))
+        .first();
+      const retained = await ctx.db
+        .query('retainedFiles')
+        .withIndex('by_storageId', (q) => q.eq('storageId', file._id))
+        .first();
+      if (!photo && !profile && !retained) await ctx.storage.delete(file._id);
     }
     if (!result.isDone)
       await ctx.scheduler.runAfter(0, internal.cleanup.orphanStorage, {

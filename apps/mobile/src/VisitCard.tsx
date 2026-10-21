@@ -1,3 +1,4 @@
+import { GoogleAttribution } from './GoogleAttribution';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Image } from 'expo-image';
 import { Icon } from 'react-native-paper';
@@ -78,7 +79,7 @@ export function VisitCard({
   members?: Member[];
   number?: number;
 }) {
-  const score = visit.overall ?? visit.dishAverage;
+  const score = visit.overall;
   const photos = visit.photoIds ?? (visit.photoId ? [visit.photoId] : []);
 
   return (
@@ -111,6 +112,7 @@ export function VisitCard({
           )}
         </View>
 
+        {visit.googlePlaceId && <GoogleAttribution placeId={visit.googlePlaceId} />}
         <View style={card.locationRow}>
           <View style={card.locationContent}>
             <Icon source="map-marker-outline" size={14} color={colors.muted} />

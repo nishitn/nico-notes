@@ -1,3 +1,4 @@
+import { internal } from './_generated/api';
 import { safeRedirect } from '../redirect';
 import Google from '@auth/core/providers/google';
 import { convexAuth, createAccount } from '@convex-dev/auth/server';
@@ -31,6 +32,10 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
           account: { id: identity.subject },
           profile,
           shouldLinkViaEmail: false,
+        });
+        await ctx.runMutation(internal.account.verifiedGoogleEmail, {
+          userId: user._id,
+          email: identity.email,
         });
         return { userId: user._id };
       },

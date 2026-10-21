@@ -6,6 +6,8 @@ import { auth } from './auth';
 import { requireUser } from './lib';
 import { MAX_PHOTO_BYTES, PHOTO_TYPES } from '../shared';
 
+import { photoFailure } from '../photoErrors';
+
 const http = httpRouter();
 auth.addHttpRoutes(http);
 function headers(request: Request) {
@@ -47,7 +49,9 @@ http.route({
           status: 400,
           headers: headers(request),
         });
-      await ctx.runQuery(internal.photos.checkUpload, { uploadId });
+      const upload = await ctx.runQuery(internal.photos.checkUpload, { uploadId });
+      if (upload.photoId)
+        return Response.json({ photoId: upload.photoId }, { headers: headers(request) });
       const contentType = request.headers.get('Content-Type') ?? '';
       if (!PHOTO_TYPES.includes(contentType))
         return new Response('Use JPEG, PNG, or WebP.', { status: 415, headers: headers(request) });
@@ -86,12 +90,11 @@ http.route({
         contentType: contentType as 'image/jpeg' | 'image/png' | 'image/webp',
       });
       return Response.json({ photoId }, { headers: headers(request) });
-    } catch {
+    } catch (error) {
       if (storageId) await ctx.storage.delete(storageId);
-      return new Response('Upload unavailable. Check your access and retry.', {
-        status: 403,
-        headers: headers(request),
-      });
+      const failure = photoFailure(error);
+      if (failure.status === 503) console.error('photo_upload_failed', { code: failure.code });
+      return Response.json(failure, { status: failure.status, headers: headers(request) });
     }
   }),
 });
@@ -112,7 +115,73 @@ http.route({
     }
   }),
 });
-for (const path of ['/photos/upload', '/photos/file'])
+http.route({
+  path: '/profile/photo',
+  method: 'POST',
+  handler: httpAction(async (ctx, request) => {
+    let storageId: Id<'_storage'> | null = null;
+    try {
+      await ctx.runQuery(internal.profile.authorize, {});
+      const contentType = request.headers.get('Content-Type') ?? '';
+      if (!PHOTO_TYPES.includes(contentType))
+        return Response.json(
+          { message: 'Choose a JPEG, PNG or WebP photo.' },
+          { status: 415, headers: headers(request) },
+        );
+      if (Number(request.headers.get('Content-Length')) > MAX_PHOTO_BYTES)
+        return Response.json(
+          { message: 'Choose a photo up to 10 MB.' },
+          { status: 413, headers: headers(request) },
+        );
+      const reader = request.body?.getReader();
+      if (!reader)
+        return Response.json(
+          { message: 'Choose a photo to upload.' },
+          { status: 400, headers: headers(request) },
+        );
+      const chunks: Uint8Array<ArrayBuffer>[] = [];
+      let size = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > MAX_PHOTO_BYTES) {
+          await reader.cancel();
+          return Response.json(
+            { message: 'Choose a photo up to 10 MB.' },
+            { status: 413, headers: headers(request) },
+          );
+        }
+        chunks.push(new Uint8Array(value));
+      }
+      const image = new Blob(chunks, { type: contentType });
+      if (!imageMatches(new Uint8Array(await image.slice(0, 12).arrayBuffer()), contentType))
+        return Response.json(
+          { message: 'This file is not a valid photo.' },
+          { status: 415, headers: headers(request) },
+        );
+      storageId = await ctx.storage.store(image);
+      await ctx.runMutation(internal.profile.setPhoto, {
+        storageId,
+        contentType: contentType as 'image/jpeg' | 'image/png' | 'image/webp',
+      });
+      return Response.json({ saved: true }, { headers: headers(request) });
+    } catch (error) {
+      if (storageId) await ctx.storage.delete(storageId);
+      const failure = photoFailure(error);
+      return Response.json(
+        {
+          message:
+            failure.status === 401
+              ? 'Sign in again to change your photo.'
+              : 'Unable to save your profile photo. Please try again.',
+        },
+        { status: failure.status, headers: headers(request) },
+      );
+    }
+  }),
+});
+for (const path of ['/photos/upload', '/photos/file', '/profile/photo'])
   http.route({
     path,
     method: 'OPTIONS',

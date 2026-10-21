@@ -1,3 +1,4 @@
+import { bumpVisitCount } from './lib';
 import { ConvexError, v } from 'convex/values';
 import { internalMutation, type MutationCtx } from './_generated/server';
 import type { Id } from './_generated/dataModel';
@@ -39,6 +40,7 @@ async function importBangalore(ctx: MutationCtx, boardId: Id<'boards'>, mansiUse
       skipped++;
       continue;
     }
+    await bumpVisitCount(ctx, boardId, 1);
     const visitId = await ctx.db.insert('visits', {
       boardId,
       creatorId: board.ownerId,

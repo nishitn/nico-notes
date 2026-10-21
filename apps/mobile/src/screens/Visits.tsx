@@ -1,3 +1,5 @@
+import { useLivePlace } from '../convexLive';
+import { GoogleAttribution } from '../GoogleAttribution';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -14,8 +16,15 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { Icon, Searchbar } from 'react-native-paper';
-import MapView, { Marker } from 'react-native-maps';
+import {
+  Button as MaterialButton,
+  Dialog,
+  Icon,
+  Menu,
+  Portal,
+  Searchbar,
+} from 'react-native-paper';
+import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import Constants from 'expo-constants';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
@@ -25,17 +34,16 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useKeyboard } from '../useKeyboard';
 import { fetch } from 'expo/fetch';
 import { useAuthToken } from '@convex-dev/auth/react';
-import { useConvex, useMutation, usePaginatedQuery, useQuery } from 'convex/react';
+import { useConvex, useMutation, usePaginatedQuery, useQuery } from '../convexLive';
 import { api } from '@nico-notes/backend/api';
 import type { Doc, Id } from '@nico-notes/backend/dataModel';
-import { MAX_PHOTOS, MAX_PHOTO_BYTES, validDate, validScore } from '@nico-notes/backend/shared';
+import { MAX_PHOTOS, MAX_PHOTO_BYTES, validDate } from '@nico-notes/backend/shared';
 import type { FunctionReturnType } from 'convex/server';
 import type { ScreenProps } from '../navigation';
 import {
   Avatar,
   Button,
   colors,
-  Card,
   confirm,
   ErrorNote,
   Field,
@@ -57,6 +65,10 @@ import { distanceBetween, matchingPlaces } from '../placeSearch';
 import type { SavedPlace } from '../BoardPlaces';
 import type { GooglePlace } from '../../modules/google-places';
 import { ScorePicker } from '../ScorePicker';
+import { markRatingSaved, mergeRatingDrafts, type RatingDrafts } from '../ratingDrafts';
+import { confirmDiscard, useUnsavedChanges } from '../useUnsavedChanges';
+import { saveVisitWithPhotos, type VisitSaveSession } from '../visitSave';
+import { resolveUpload, uploadError } from '../photoUpload';
 
 function formatDisplayDate(dateStr: string): string {
   if (!dateStr) return 'No date';
@@ -105,6 +117,12 @@ export function VisitScreen({ route, navigation }: ScreenProps<'Visit'>) {
   const boards = usePaginatedQuery(api.boards.list, {}, { initialNumItems: 24 });
   const me = useQuery(api.boards.me);
   const remove = useMutation(api.visits.remove);
+  const markVisited = useMutation(api.visits.markVisited);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [completionOpen, setCompletionOpen] = useState(false);
+  const [completedDate, setCompletedDate] = useState(localDate());
+  const [completionDateOpen, setCompletionDateOpen] = useState(false);
+  const [optionsAnchor, setOptionsAnchor] = useState({ x: 0, y: 0 });
   const task = useTask();
 
   const [optionsMenuOpen, setOptionsMenuOpen] = useState(false);
@@ -125,19 +143,9 @@ export function VisitScreen({ route, navigation }: ScreenProps<'Visit'>) {
 
   if (!data) return <Loading />;
   const { visit } = data;
+  const planned = visit.status === 'planned';
 
-  const overallRatings = data.ratings.filter(
-    (r) => r.kind === 'overall' && r.targetId === visitId,
-  );
-  const overallScore = overallRatings.length
-    ? overallRatings.reduce((sum, r) => sum + r.score, 0) / overallRatings.length
-    : null;
-
-  const dishRatings = data.ratings.filter((r) => r.kind === 'dish');
-  const dishAvgScore = dishRatings.length
-    ? dishRatings.reduce((sum, r) => sum + r.score, 0) / dishRatings.length
-    : null;
-
+  const overallRatings = data.ratings.filter((r) => r.kind === 'overall' && r.targetId === visitId);
   const canEdit = !!me?._id;
 
   const openInMaps = () => {
@@ -167,9 +175,10 @@ export function VisitScreen({ route, navigation }: ScreenProps<'Visit'>) {
           <View style={summaryStyles.headerTopRow}>
             <View style={summaryStyles.titleWrapper}>
               <Title style={summaryStyles.heroTitle}>{visit.title}</Title>
+              {visit.googlePlaceId && <GoogleAttribution placeId={visit.googlePlaceId} />}
               {!!visit.typeName && (
                 <View style={summaryStyles.typePill}>
-                  <Text style={summaryStyles.typeText}>{visit.typeName}</Text>
+                  <Text style={summaryStyles.typeText}>{planned ? 'Planned' : visit.typeName}</Text>
                 </View>
               )}
             </View>
@@ -179,7 +188,10 @@ export function VisitScreen({ route, navigation }: ScreenProps<'Visit'>) {
               accessibilityRole="button"
               accessibilityLabel="Visit options"
               hitSlop={12}
-              onPress={() => setOptionsMenuOpen(true)}
+              onPress={(event) => {
+                setOptionsAnchor({ x: event.nativeEvent.pageX, y: event.nativeEvent.pageY });
+                setOptionsMenuOpen(true);
+              }}
               style={({ pressed }) => [
                 summaryStyles.menuTriggerBtn,
                 pressed && { opacity: 0.7, backgroundColor: colors.peachLight },
@@ -191,21 +203,18 @@ export function VisitScreen({ route, navigation }: ScreenProps<'Visit'>) {
 
           {/* Meta Info: Date and Location with prominent Map Icon */}
           <View style={summaryStyles.metaBlock}>
-            <View style={summaryStyles.metaItem}>
-              <Icon source="calendar-blank-outline" size={16} color={colors.rust} />
-              <Text style={summaryStyles.metaText}>
-                {visit.date ? formatDisplayDate(visit.date) : 'Undated'}
-              </Text>
-            </View>
+            {!!visit.date && (
+              <View style={summaryStyles.metaItem}>
+                <Icon source="calendar-blank-outline" size={16} color={colors.rust} />
+                <Text style={summaryStyles.metaText}>{formatDisplayDate(visit.date)}</Text>
+              </View>
+            )}
             {!!visit.place && (
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Open in Maps"
                 onPress={openInMaps}
-                style={({ pressed }) => [
-                  summaryStyles.locationRow,
-                  pressed && { opacity: 0.75 },
-                ]}
+                style={({ pressed }) => [summaryStyles.locationRow, pressed && { opacity: 0.75 }]}
               >
                 <View style={summaryStyles.locationIconCircle}>
                   <Icon source="map-marker" size={15} color={colors.rust} />
@@ -227,46 +236,63 @@ export function VisitScreen({ route, navigation }: ScreenProps<'Visit'>) {
           )}
 
           {/* Experience & Atmosphere: part of the main header */}
-          <View style={summaryStyles.headerExperienceBlock}>
-            <View style={summaryStyles.experienceBlockHeader}>
-              <Text style={summaryStyles.experienceBlockTitle}>EXPERIENCE</Text>
-              <Text style={summaryStyles.experienceBlockHint}>Tap to rate in popup</Text>
-            </View>
-
-            {/* Overall Experience */}
-            <RatingSummaryRow
-              label="Overall"
-              ratings={overallRatings}
-              people={data.people}
-              canEdit={canEdit}
-              onPress={() =>
-                setSingleRating({
-                  kind: 'overall',
-                  targetId: visitId,
-                  label: 'Overall Experience',
-                })
-              }
-            />
-
-            {/* Categories */}
-            {data.categories.map((cat) => (
+          {!planned && (
+            <View style={summaryStyles.headerExperienceBlock}>
+              {/* Overall Experience */}
               <RatingSummaryRow
-                key={cat._id}
-                label={cat.name}
-                ratings={data.ratings.filter((r) => r.kind === 'category' && r.targetId === cat._id)}
+                label="Overall"
+                ratings={overallRatings}
                 people={data.people}
                 canEdit={canEdit}
                 onPress={() =>
                   setSingleRating({
-                    kind: 'category',
-                    targetId: cat._id,
-                    label: cat.name,
+                    kind: 'overall',
+                    targetId: visitId,
+                    label: 'Overall Experience',
                   })
                 }
               />
-            ))}
-          </View>
+
+              {/* Categories */}
+              {data.categories.map((cat) => (
+                <RatingSummaryRow
+                  key={cat._id}
+                  label={cat.name}
+                  ratings={data.ratings.filter(
+                    (r) => r.kind === 'category' && r.targetId === cat._id,
+                  )}
+                  people={data.people}
+                  canEdit={canEdit}
+                  onPress={() =>
+                    setSingleRating({
+                      kind: 'category',
+                      targetId: cat._id,
+                      label: cat.name,
+                    })
+                  }
+                />
+              ))}
+            </View>
+          )}
         </View>
+
+        {planned && (
+          <Button
+            title="Mark as visited"
+            disabled={task.busy}
+            onPress={() => setCompletionOpen(true)}
+          />
+        )}
+        {!!visit.savedLink && /^https?:\/\//i.test(visit.savedLink) && (
+          <MaterialButton
+            icon="link-variant"
+            textColor={colors.rust}
+            style={{ alignSelf: 'flex-start' }}
+            onPress={() => void task.run(() => Linking.openURL(visit.savedLink!))}
+          >
+            Open saved link
+          </MaterialButton>
+        )}
 
         {/* Dishes Section */}
         {visit.showDishes && (
@@ -279,38 +305,14 @@ export function VisitScreen({ route, navigation }: ScreenProps<'Visit'>) {
                     <Text style={summaryStyles.countBadgeText}>{data.dishes.length}</Text>
                   </View>
                 )}
-                {dishAvgScore !== null && (
-                  <View style={summaryStyles.dishAvgBadge}>
-                    <Text style={summaryStyles.dishAvgText}>
-                      Avg {dishAvgScore.toFixed(1)}/10
-                    </Text>
-                  </View>
-                )}
               </View>
 
               <View style={summaryStyles.dishesActionsGroup}>
-                {data.dishes.length > 0 && (
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel="Edit dishes ratings"
-                    onPress={() => setFoodWizardOpen(true)}
-                    style={({ pressed }) => [
-                      summaryStyles.editDishesBtn,
-                      pressed && { opacity: 0.75 },
-                    ]}
-                  >
-                    <Icon source="pencil-outline" size={14} color={colors.rust} />
-                    <Text style={summaryStyles.editDishesBtnText}>Edit</Text>
-                  </Pressable>
-                )}
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="Add new dish"
                   onPress={() => setAddItemModal({ visible: true, type: 'dish' })}
-                  style={({ pressed }) => [
-                    summaryStyles.addDishBtn,
-                    pressed && { opacity: 0.8 },
-                  ]}
+                  style={({ pressed }) => [summaryStyles.addDishBtn, pressed && { opacity: 0.8 }]}
                 >
                   <Icon source="plus" size={15} color={colors.paper} />
                   <Text style={summaryStyles.addDishBtnText}>Add</Text>
@@ -320,45 +322,48 @@ export function VisitScreen({ route, navigation }: ScreenProps<'Visit'>) {
 
             {data.dishes.length === 0 ? (
               <View style={summaryStyles.emptyDishesBox}>
-                <Text style={styles.muted}>No dishes added yet.</Text>
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={() => setAddItemModal({ visible: true, type: 'dish' })}
-                  style={summaryStyles.addFirstDishBtn}
-                >
-                  <Icon source="plus" size={16} color={colors.paper} />
-                  <Text style={summaryStyles.addFirstDishBtnText}>Add what you ordered</Text>
-                </Pressable>
+                <Text style={styles.muted}>
+                  {planned
+                    ? 'Add a dish you’d like to try.'
+                    : 'Add a dish to remember what you tried.'}
+                </Text>
               </View>
             ) : (
               <View style={summaryStyles.dishesList}>
-                {data.dishes.map((dish) => (
-                  <DishSummaryRow
-                    key={dish._id}
-                    dish={dish}
-                    ratings={data.ratings.filter(
-                      (r) => r.kind === 'dish' && r.targetId === dish._id,
-                    )}
-                    people={data.people}
-                    isAdmin={data.isAdmin}
-                    canEdit={canEdit}
-                    onPress={() =>
-                      setSingleRating({
-                        kind: 'dish',
-                        targetId: dish._id,
-                        label: dish.name,
-                        description: dish.description,
-                      })
-                    }
-                    onEdit={() =>
-                      setAddItemModal({
-                        visible: true,
-                        type: 'dish',
-                        editItem: dish,
-                      })
-                    }
-                  />
-                ))}
+                {data.dishes.map((dish) =>
+                  planned ? (
+                    <Pressable
+                      key={dish._id}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Edit ${dish.name}`}
+                      style={summaryStyles.itemRow}
+                      onPress={() =>
+                        setAddItemModal({ visible: true, type: 'dish', editItem: dish })
+                      }
+                    >
+                      <Text style={summaryStyles.itemRowTitle}>{dish.name}</Text>
+                      <Icon source="pencil-outline" size={18} color={colors.muted} />
+                    </Pressable>
+                  ) : (
+                    <DishSummaryRow
+                      key={dish._id}
+                      dish={dish}
+                      ratings={data.ratings.filter(
+                        (r) => r.kind === 'dish' && r.targetId === dish._id,
+                      )}
+                      people={data.people}
+                      canEdit={canEdit}
+                      onPress={() =>
+                        setSingleRating({
+                          kind: 'dish',
+                          targetId: dish._id,
+                          label: dish.name,
+                          description: dish.description,
+                        })
+                      }
+                    />
+                  ),
+                )}
               </View>
             )}
           </View>
@@ -375,6 +380,86 @@ export function VisitScreen({ route, navigation }: ScreenProps<'Visit'>) {
         <ErrorNote error={task.error} />
       </Page>
 
+      <Portal>
+        <Dialog
+          visible={deleteOpen}
+          dismissable={!task.busy}
+          onDismiss={() => !task.busy && setDeleteOpen(false)}
+          style={{ backgroundColor: colors.paper }}
+        >
+          <Dialog.Title>{planned ? 'Remove planned visit?' : 'Delete visit?'}</Dialog.Title>
+          <Dialog.Content>
+            <Text style={styles.body}>
+              This removes its notes, dishes and photos for everyone on the board.
+            </Text>
+            <ErrorNote error={task.error} />
+          </Dialog.Content>
+          <Dialog.Actions>
+            <MaterialButton disabled={task.busy} onPress={() => setDeleteOpen(false)}>
+              Cancel
+            </MaterialButton>
+            <MaterialButton
+              loading={task.busy}
+              disabled={task.busy}
+              textColor={colors.rust}
+              onPress={() =>
+                void task.run(async () => {
+                  await remove({ visitId });
+                  setDeleteOpen(false);
+                  navigation.popTo('Board', { boardId: visit.boardId });
+                })
+              }
+            >
+              {planned ? 'Remove' : 'Delete'}
+            </MaterialButton>
+          </Dialog.Actions>
+        </Dialog>
+        <Dialog
+          visible={completionOpen}
+          dismissable={!task.busy}
+          onDismiss={() => !task.busy && setCompletionOpen(false)}
+          style={{ backgroundColor: colors.paper }}
+        >
+          <Dialog.Title>Mark as visited</Dialog.Title>
+          <Dialog.Content>
+            <MaterialButton
+              icon="calendar-blank-outline"
+              textColor={colors.rust}
+              onPress={() => setCompletionDateOpen(true)}
+            >
+              {formatDisplayDate(completedDate) || 'Choose date'}
+            </MaterialButton>
+            <ErrorNote error={task.error} />
+          </Dialog.Content>
+          <Dialog.Actions>
+            <MaterialButton disabled={task.busy} onPress={() => setCompletionOpen(false)}>
+              Cancel
+            </MaterialButton>
+            <MaterialButton
+              disabled={task.busy || !completedDate}
+              loading={task.busy}
+              onPress={() =>
+                void task.run(async () => {
+                  await markVisited({
+                    visitId,
+                    date: completedDate,
+                    expectedRevision: visit.revision ?? 0,
+                  });
+                  setCompletionOpen(false);
+                })
+              }
+            >
+              Mark as visited
+            </MaterialButton>
+          </Dialog.Actions>
+        </Dialog>
+      </Portal>
+      <DatePickerModal
+        visible={completionDateOpen}
+        value={completedDate}
+        onChange={setCompletedDate}
+        onClose={() => setCompletionDateOpen(false)}
+      />
       {/* POPUPS & MODALS */}
 
       {/* 3-Dot Options Menu Modal */}
@@ -382,13 +467,12 @@ export function VisitScreen({ route, navigation }: ScreenProps<'Visit'>) {
         <VisitOptionsMenuModal
           visible={optionsMenuOpen}
           onClose={() => setOptionsMenuOpen(false)}
-          visitTitle={visit.title}
+          anchor={optionsAnchor}
+          planned={planned}
           hasPlaceId={!!visit.placeId}
           isAdmin={data.isAdmin}
           isCreator={visit.creatorId === me?._id}
-          onEditVisit={() =>
-            navigation.navigate('VisitForm', { visitId, boardId: visit.boardId })
-          }
+          onEditVisit={() => navigation.navigate('VisitForm', { visitId, boardId: visit.boardId })}
           onOpenInMaps={openInMaps}
           onAllVisits={
             visit.placeId
@@ -400,27 +484,21 @@ export function VisitScreen({ route, navigation }: ScreenProps<'Visit'>) {
                   })
               : undefined
           }
+          onReport={() => navigation.navigate('Safety', { boardId: visit.boardId, visitId })}
+          onRateAll={() => setFoodWizardOpen(true)}
           onAddCategory={
-            data.isAdmin
+            data.isAdmin && !planned
               ? () => setAddItemModal({ visible: true, type: 'category' })
               : undefined
           }
           onDeleteVisit={
-            data.isAdmin || visit.creatorId === me?._id
-              ? () =>
-                  confirm('Delete this visit and its ratings and photos?', () =>
-                    void task.run(async () => {
-                      await remove({ visitId });
-                      navigation.popTo('Board', { boardId: visit.boardId });
-                    }),
-                  )
-              : undefined
+            data.isAdmin || visit.creatorId === me?._id ? () => setDeleteOpen(true) : undefined
           }
         />
       )}
 
       {/* 1. Food-by-Food Rating Wizard */}
-      {foodWizardOpen && (
+      {foodWizardOpen && !planned && (
         <FoodByFoodModal
           visible={foodWizardOpen}
           onClose={() => setFoodWizardOpen(false)}
@@ -433,13 +511,24 @@ export function VisitScreen({ route, navigation }: ScreenProps<'Visit'>) {
       )}
 
       {/* 2. Single Item Rating Modal */}
-      {singleRating && (
+      {singleRating && !planned && (
         <SingleRatingModal
           visible={!!singleRating}
           onClose={() => setSingleRating(null)}
           data={data}
           userId={me?._id}
           item={singleRating}
+          onEditItem={
+            singleRating.kind === 'dish'
+              ? () => {
+                  const dish = data.dishes.find((entry) => entry._id === singleRating.targetId);
+                  if (dish) {
+                    setSingleRating(null);
+                    setAddItemModal({ visible: true, type: 'dish', editItem: dish });
+                  }
+                }
+              : undefined
+          }
         />
       )}
 
@@ -456,7 +545,7 @@ export function VisitScreen({ route, navigation }: ScreenProps<'Visit'>) {
       )}
 
       {/* 4. Post-Creation Rating Prompt Modal */}
-      {promptOpen && (
+      {promptOpen && !planned && (
         <PromptRatingModal
           visible={promptOpen}
           placeName={visit.title}
@@ -474,7 +563,8 @@ export function VisitScreen({ route, navigation }: ScreenProps<'Visit'>) {
 function VisitOptionsMenuModal({
   visible,
   onClose,
-  visitTitle,
+  anchor,
+  planned,
   hasPlaceId,
   isAdmin,
   isCreator,
@@ -482,11 +572,14 @@ function VisitOptionsMenuModal({
   onOpenInMaps,
   onAllVisits,
   onAddCategory,
+  onRateAll,
+  onReport,
   onDeleteVisit,
 }: {
   visible: boolean;
   onClose: () => void;
-  visitTitle: string;
+  anchor: { x: number; y: number };
+  planned: boolean;
   hasPlaceId: boolean;
   isAdmin: boolean;
   isCreator: boolean;
@@ -494,201 +587,62 @@ function VisitOptionsMenuModal({
   onOpenInMaps: () => void;
   onAllVisits?: () => void;
   onAddCategory?: () => void;
+  onRateAll: () => void;
+  onReport: () => void;
   onDeleteVisit?: () => void;
 }) {
+  const choose = (action: () => void) => {
+    onClose();
+    action();
+  };
   return (
-    <Modal
+    <Menu
       visible={visible}
-      transparent
-      animationType="fade"
-      onRequestClose={onClose}
+      onDismiss={onClose}
+      anchor={anchor}
+      statusBarHeight={0}
+      contentStyle={{ backgroundColor: colors.paper, borderRadius: 16 }}
     >
-      <Pressable style={optionsMenuStyles.overlay} onPress={onClose}>
-        <Pressable style={optionsMenuStyles.sheet} onPress={(e) => e.stopPropagation?.()}>
-          <View style={optionsMenuStyles.sheetHeader}>
-            <View style={{ flex: 1, marginRight: 12 }}>
-              <Text style={optionsMenuStyles.sheetTitle} numberOfLines={1}>
-                {visitTitle}
-              </Text>
-              <Text style={optionsMenuStyles.sheetSubtitle}>Visit options</Text>
-            </View>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Close"
-              hitSlop={12}
-              onPress={onClose}
-              style={optionsMenuStyles.closeBtn}
-            >
-              <Icon source="close" size={20} color={colors.ink} />
-            </Pressable>
-          </View>
-
-          <View style={optionsMenuStyles.menuItems}>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => {
-                onClose();
-                onEditVisit();
-              }}
-              style={({ pressed }) => [
-                optionsMenuStyles.menuItem,
-                pressed && { backgroundColor: colors.peachLight },
-              ]}
-            >
-              <View style={optionsMenuStyles.iconCircle}>
-                <Icon source="pencil-outline" size={20} color={colors.rust} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={optionsMenuStyles.menuItemText}>Edit visit details</Text>
-                <Text style={optionsMenuStyles.menuItemSub}>Title, date, address, type</Text>
-              </View>
-              <Icon source="chevron-right" size={18} color={colors.muted} />
-            </Pressable>
-
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => {
-                onClose();
-                onOpenInMaps();
-              }}
-              style={({ pressed }) => [
-                optionsMenuStyles.menuItem,
-                pressed && { backgroundColor: colors.peachLight },
-              ]}
-            >
-              <View style={optionsMenuStyles.iconCircle}>
-                <Icon source="navigation-variant-outline" size={20} color={colors.rust} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={optionsMenuStyles.menuItemText}>Open in Maps</Text>
-                <Text style={optionsMenuStyles.menuItemSub}>Navigate to this location</Text>
-              </View>
-              <Icon source="chevron-right" size={18} color={colors.muted} />
-            </Pressable>
-
-            {hasPlaceId && onAllVisits && (
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => {
-                  onClose();
-                  onAllVisits();
-                }}
-                style={({ pressed }) => [
-                  optionsMenuStyles.menuItem,
-                  pressed && { backgroundColor: colors.peachLight },
-                ]}
-              >
-                <View style={optionsMenuStyles.iconCircle}>
-                  <Icon source="history" size={20} color={colors.rust} />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={optionsMenuStyles.menuItemText}>All visits to this place</Text>
-                  <Text style={optionsMenuStyles.menuItemSub}>View history and stats</Text>
-                </View>
-                <Icon source="chevron-right" size={18} color={colors.muted} />
-              </Pressable>
-            )}
-
-            {isAdmin && onAddCategory && (
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => {
-                  onClose();
-                  onAddCategory();
-                }}
-                style={({ pressed }) => [
-                  optionsMenuStyles.menuItem,
-                  pressed && { backgroundColor: colors.peachLight },
-                ]}
-              >
-                <View style={optionsMenuStyles.iconCircle}>
-                  <Icon source="plus-circle-outline" size={20} color={colors.rust} />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={optionsMenuStyles.menuItemText}>Add rating category</Text>
-                  <Text style={optionsMenuStyles.menuItemSub}>e.g. Service, Ambiance</Text>
-                </View>
-                <Icon source="chevron-right" size={18} color={colors.muted} />
-              </Pressable>
-            )}
-
-            {(isAdmin || isCreator) && onDeleteVisit && (
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => {
-                  onClose();
-                  onDeleteVisit();
-                }}
-                style={({ pressed }) => [
-                  optionsMenuStyles.menuItem,
-                  pressed && { backgroundColor: '#fee2e2' },
-                ]}
-              >
-                <View style={[optionsMenuStyles.iconCircle, { backgroundColor: '#fee2e2' }]}>
-                  <Icon source="trash-can-outline" size={20} color={colors.error} />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={[optionsMenuStyles.menuItemText, { color: colors.error }]}>
-                    Delete visit
-                  </Text>
-                  <Text style={optionsMenuStyles.menuItemSub}>Remove this visit and its ratings</Text>
-                </View>
-                <Icon source="chevron-right" size={18} color={colors.error} />
-              </Pressable>
-            )}
-          </View>
-        </Pressable>
-      </Pressable>
-    </Modal>
+      <Menu.Item
+        leadingIcon="pencil-outline"
+        title={planned ? 'Edit planned visit' : 'Edit visit'}
+        onPress={() => choose(onEditVisit)}
+      />
+      <Menu.Item
+        leadingIcon="navigation-variant-outline"
+        title="Directions"
+        onPress={() => choose(onOpenInMaps)}
+      />
+      {!planned && (
+        <Menu.Item leadingIcon="star-outline" title="Rate all" onPress={() => choose(onRateAll)} />
+      )}
+      {hasPlaceId && onAllVisits && (
+        <Menu.Item
+          leadingIcon="history"
+          title="All visits to this place"
+          onPress={() => choose(onAllVisits)}
+        />
+      )}
+      {isAdmin && onAddCategory && (
+        <Menu.Item
+          leadingIcon="plus-circle-outline"
+          title="Add rating category"
+          onPress={() => choose(onAddCategory)}
+        />
+      )}
+      <Menu.Item leadingIcon="flag-outline" title="Report visit" onPress={() => choose(onReport)} />
+      {(isAdmin || isCreator) && onDeleteVisit && (
+        <Menu.Item
+          leadingIcon="trash-can-outline"
+          title={planned ? 'Remove planned visit' : 'Delete visit'}
+          onPress={() => choose(onDeleteVisit)}
+        />
+      )}
+    </Menu>
   );
 }
 
-function RatingPill({
-  name,
-  image,
-  score,
-  canEdit,
-  onPress,
-}: {
-  name?: string;
-  image?: string;
-  score?: number | null;
-  canEdit?: boolean;
-  onPress: () => void;
-}) {
-  if (score === undefined || score === null) {
-    return (
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`Rate for ${name || 'member'}`}
-        disabled={!canEdit}
-        onPress={onPress}
-        style={({ pressed }) => [
-          summaryStyles.unratedPill,
-          pressed && { opacity: 0.7 },
-        ]}
-      >
-        <Avatar name={name} image={image} size={22} />
-        <Text style={summaryStyles.unratedPillText}>+ Rate</Text>
-      </Pressable>
-    );
-  }
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`${name || 'Member'}: ${score.toFixed(1)} out of 10`}
-      disabled={!canEdit}
-      onPress={onPress}
-      style={({ pressed }) => [
-        summaryStyles.ratedPill,
-        pressed && { opacity: 0.7 },
-      ]}
-    >
-      <Avatar name={name} image={image} size={22} />
-      <Text style={summaryStyles.ratedPillScore}>{score.toFixed(1)}</Text>
-    </Pressable>
-  );
-}
+type RatingPerson = VisitData['people'][number];
 
 function RatingSummaryRow({
   label,
@@ -699,56 +653,45 @@ function RatingSummaryRow({
 }: {
   label: string;
   ratings: Doc<'ratings'>[];
-  people: any[];
+  people: RatingPerson[];
   canEdit: boolean;
   onPress: () => void;
 }) {
-  const avgScore =
-    ratings.length > 0
-      ? ratings.reduce((sum, r) => sum + r.score, 0) / ratings.length
-      : null;
-
+  const scoreDescription = ratings
+    .map((rating) => {
+      const person = people.find((entry) => entry._id === rating.userId);
+      return `${person?.name ?? rating.importedName ?? 'Member'} ${rating.score.toFixed(1)} out of 10`;
+    })
+    .join(', ');
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${label} ratings`}
+      accessibilityLabel={`${label}. ${scoreDescription || 'Not rated'}`}
+      accessibilityHint="View and edit ratings"
+      disabled={!canEdit}
       onPress={onPress}
       style={({ pressed }) => [
         summaryStyles.itemRow,
         pressed && { backgroundColor: colors.peachLight },
       ]}
     >
-      <View style={{ flex: 1, gap: 2 }}>
-        <Text style={summaryStyles.itemRowTitle}>{label}</Text>
-        {avgScore !== null && ratings.length > 1 && (
-          <Text style={summaryStyles.itemRowSub}>
-            Avg {avgScore.toFixed(1)}/10 · {ratings.length} ratings
-          </Text>
-        )}
-      </View>
-
+      <Text style={[summaryStyles.itemRowTitle, { flex: 1 }]}>{label}</Text>
       <View style={summaryStyles.pillsRow}>
-        {ratings.map((r) => {
-          const person = people.find((p) => p._id === r.userId);
-          const name = person?.name ?? r.importedName ?? 'Member';
+        {ratings.slice(0, 2).map((rating) => {
+          const person = people.find((entry) => entry._id === rating.userId);
           return (
-            <RatingPill
-              key={r._id}
-              name={name}
-              image={person?.image}
-              score={r.score}
-              canEdit={canEdit}
-              onPress={onPress}
-            />
+            <View key={rating._id} style={summaryStyles.ratedPill}>
+              <Avatar
+                name={person?.name ?? rating.importedName ?? 'Member'}
+                image={person?.image}
+                size={22}
+              />
+              <Text style={summaryStyles.ratedPillScore}>{rating.score.toFixed(1)}</Text>
+            </View>
           );
         })}
-        {ratings.length === 0 && (
-          <RatingPill
-            score={null}
-            canEdit={canEdit}
-            onPress={onPress}
-          />
-        )}
+        {ratings.length > 2 && <Text style={styles.muted}>+{ratings.length - 2}</Text>}
+        {!ratings.length && <Text style={styles.link}>Rate</Text>}
         <Icon source="chevron-right" size={18} color={colors.muted} />
       </View>
     </Pressable>
@@ -759,87 +702,28 @@ function DishSummaryRow({
   dish,
   ratings,
   people,
-  isAdmin,
   canEdit,
   onPress,
-  onEdit,
 }: {
   dish: Doc<'dishes'>;
   ratings: Doc<'ratings'>[];
-  people: any[];
-  isAdmin: boolean;
+  people: RatingPerson[];
   canEdit: boolean;
   onPress: () => void;
-  onEdit: () => void;
 }) {
-  const avgScore =
-    ratings.length > 0
-      ? ratings.reduce((sum, r) => sum + r.score, 0) / ratings.length
-      : null;
-
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`Dish: ${dish.name}`}
-      onPress={onPress}
-      style={({ pressed }) => [
-        summaryStyles.itemRow,
-        pressed && { backgroundColor: colors.peachLight },
-      ]}
-    >
-      <View style={{ flex: 1, gap: 2 }}>
-        <Text style={summaryStyles.itemRowTitle}>{dish.name}</Text>
-        {!!dish.description && (
-          <Text style={summaryStyles.itemRowDesc} numberOfLines={2}>
-            {dish.description}
-          </Text>
-        )}
-        {avgScore !== null && ratings.length > 1 && (
-          <Text style={summaryStyles.itemRowSub}>
-            Avg {avgScore.toFixed(1)}/10
-          </Text>
-        )}
-      </View>
-
-      <View style={summaryStyles.pillsRow}>
-        {ratings.map((r) => {
-          const person = people.find((p) => p._id === r.userId);
-          const name = person?.name ?? r.importedName ?? 'Member';
-          return (
-            <RatingPill
-              key={r._id}
-              name={name}
-              image={person?.image}
-              score={r.score}
-              canEdit={canEdit}
-              onPress={onPress}
-            />
-          );
-        })}
-        {ratings.length === 0 && (
-          <RatingPill
-            score={null}
-            canEdit={canEdit}
-            onPress={onPress}
-          />
-        )}
-        {isAdmin && (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`Edit dish ${dish.name}`}
-            onPress={(e) => {
-              e.stopPropagation();
-              onEdit();
-            }}
-            hitSlop={8}
-            style={summaryStyles.editDishIconBtn}
-          >
-            <Icon source="pencil-outline" size={16} color={colors.muted} />
-          </Pressable>
-        )}
-        <Icon source="chevron-right" size={18} color={colors.muted} />
-      </View>
-    </Pressable>
+    <View>
+      <RatingSummaryRow
+        label={dish.name}
+        ratings={ratings}
+        people={people}
+        canEdit={canEdit}
+        onPress={onPress}
+      />
+      {!!dish.description && (
+        <Text style={[summaryStyles.itemRowDesc, { paddingBottom: 8 }]}>{dish.description}</Text>
+      )}
+    </View>
   );
 }
 
@@ -889,9 +773,8 @@ function FoodByFoodModal({
   const currentItem = items[currentIndex] || items[0];
 
   // Draft ratings for each member for current item
-  const [drafts, setDrafts] = useState<
-    Record<string, { score?: number; note: string; hasChanged: boolean }>
-  >({});
+  const [drafts, setDrafts] = useState<RatingDrafts>({});
+  const draftIdentity = useRef('');
 
   // When currentItem changes, populate drafts from existing ratings
   useEffect(() => {
@@ -910,8 +793,11 @@ function FoodByFoodModal({
         hasChanged: false,
       };
     }
-    setDrafts(initialDrafts);
-  }, [currentIndex, currentItem, rateableMembers, data.ratings]);
+    const identity = `${currentItem.kind}:${currentItem.targetId}`;
+    const reset = draftIdentity.current !== identity;
+    draftIdentity.current = identity;
+    setDrafts((previous) => (reset ? initialDrafts : mergeRatingDrafts(previous, initialDrafts)));
+  }, [currentItem, rateableMembers, data.ratings]);
 
   async function saveCurrentDrafts() {
     for (const member of rateableMembers) {
@@ -925,6 +811,7 @@ function FoodByFoodModal({
           note: draft.note || '',
           userId: member._id,
         });
+        setDrafts((previous) => markRatingSaved(previous, member._id, draft));
       }
     }
   }
@@ -949,9 +836,16 @@ function FoodByFoodModal({
     });
   }
 
+  const close = () =>
+    confirmDiscard(
+      Object.values(drafts).some((draft) => draft.hasChanged),
+      task.busy,
+      onClose,
+    );
+
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={modalStyles.overlay} onPress={onClose}>
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={close}>
+      <Pressable style={modalStyles.overlay} onPress={close}>
         <Pressable style={modalStyles.sheetContainer} onPress={(e) => e.stopPropagation()}>
           {/* Header */}
           <View style={modalStyles.sheetHeader}>
@@ -962,8 +856,8 @@ function FoodByFoodModal({
                     {currentItem.kind === 'dish'
                       ? 'DISH'
                       : currentItem.kind === 'category'
-                      ? 'CATEGORY'
-                      : 'OVERALL'}
+                        ? 'CATEGORY'
+                        : 'OVERALL'}
                   </Text>
                 </View>
                 <Text style={modalStyles.stepperProgressText}>
@@ -980,7 +874,7 @@ function FoodByFoodModal({
               accessibilityRole="button"
               accessibilityLabel="Close rating wizard"
               hitSlop={12}
-              onPress={onClose}
+              onPress={close}
               style={modalStyles.sheetCloseBtn}
             >
               <Icon source="close" size={22} color={colors.ink} />
@@ -1013,6 +907,7 @@ function FoodByFoodModal({
                   </View>
 
                   <ScorePicker
+                    disabled={task.busy}
                     value={draft.score}
                     onChange={(score) => {
                       setDrafts((prev) => ({
@@ -1027,6 +922,8 @@ function FoodByFoodModal({
                   />
 
                   <TextInput
+                    accessibilityLabel={`${member.name || 'Member'} rating note`}
+                    editable={!task.busy}
                     placeholder="Add an optional note…"
                     placeholderTextColor={colors.muted}
                     value={draft.note}
@@ -1086,8 +983,8 @@ function FoodByFoodModal({
                   {currentIndex === items.length - 1
                     ? 'Finish & Save 🎉'
                     : currentItem.kind === 'dish'
-                    ? 'Next Dish ➔'
-                    : 'Next ➔'}
+                      ? 'Next Dish ➔'
+                      : 'Next ➔'}
                 </Text>
               )}
             </Pressable>
@@ -1104,7 +1001,9 @@ function SingleRatingModal({
   data,
   userId,
   item,
+  onEditItem,
 }: {
+  onEditItem?: () => void;
   visible: boolean;
   onClose: () => void;
   data: VisitData;
@@ -1124,18 +1023,14 @@ function SingleRatingModal({
     return data.members.filter((m) => m._id === userId);
   }, [data.isAdmin, data.members, userId]);
 
-  const [drafts, setDrafts] = useState<
-    Record<string, { score?: number; note: string; hasChanged: boolean }>
-  >({});
+  const [drafts, setDrafts] = useState<RatingDrafts>({});
+  const draftIdentity = useRef('');
 
   useEffect(() => {
     const initialDrafts: Record<string, { score?: number; note: string; hasChanged: boolean }> = {};
     for (const member of rateableMembers) {
       const existing = data.ratings.find(
-        (r) =>
-          r.kind === item.kind &&
-          r.targetId === item.targetId &&
-          r.userId === member._id,
+        (r) => r.kind === item.kind && r.targetId === item.targetId && r.userId === member._id,
       );
       initialDrafts[member._id] = {
         score: existing?.score,
@@ -1143,7 +1038,10 @@ function SingleRatingModal({
         hasChanged: false,
       };
     }
-    setDrafts(initialDrafts);
+    const identity = `${item.kind}:${item.targetId}`;
+    const reset = draftIdentity.current !== identity;
+    draftIdentity.current = identity;
+    setDrafts((previous) => (reset ? initialDrafts : mergeRatingDrafts(previous, initialDrafts)));
   }, [item, rateableMembers, data.ratings]);
 
   function handleSave() {
@@ -1159,33 +1057,23 @@ function SingleRatingModal({
             note: draft.note || '',
             userId: member._id,
           });
+          setDrafts((previous) => markRatingSaved(previous, member._id, draft));
         }
       }
       onClose();
     });
   }
 
-  function handleClear() {
-    void task.run(async () => {
-      for (const member of rateableMembers) {
-        await saveRating({
-          visitId: data.visit._id,
-          kind: item.kind,
-          targetId: item.targetId,
-          score: null,
-          note: '',
-          userId: member._id,
-        });
-      }
-      onClose();
-    });
-  }
-
-  const hasAnyRating = Object.values(drafts).some((d) => d.score !== undefined);
+  const close = () =>
+    confirmDiscard(
+      Object.values(drafts).some((draft) => draft.hasChanged),
+      task.busy,
+      onClose,
+    );
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={modalStyles.overlay} onPress={onClose}>
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={close}>
+      <Pressable style={modalStyles.overlay} onPress={close}>
         <Pressable style={modalStyles.sheetContainer} onPress={(e) => e.stopPropagation()}>
           {/* Header */}
           <View style={modalStyles.sheetHeader}>
@@ -1195,8 +1083,8 @@ function SingleRatingModal({
                   {item.kind === 'dish'
                     ? 'DISH RATING'
                     : item.kind === 'category'
-                    ? 'CATEGORY RATING'
-                    : 'OVERALL RATING'}
+                      ? 'CATEGORY RATING'
+                      : 'OVERALL RATING'}
                 </Text>
               </View>
               <Text style={modalStyles.sheetTitle}>{item.label}</Text>
@@ -1209,7 +1097,7 @@ function SingleRatingModal({
               accessibilityRole="button"
               accessibilityLabel="Close rating"
               hitSlop={12}
-              onPress={onClose}
+              onPress={close}
               style={modalStyles.sheetCloseBtn}
             >
               <Icon source="close" size={22} color={colors.ink} />
@@ -1242,6 +1130,7 @@ function SingleRatingModal({
                   </View>
 
                   <ScorePicker
+                    disabled={task.busy}
                     value={draft.score}
                     onChange={(score) => {
                       setDrafts((prev) => ({
@@ -1256,6 +1145,8 @@ function SingleRatingModal({
                   />
 
                   <TextInput
+                    accessibilityLabel={`${member.name || 'Member'} rating note`}
+                    editable={!task.busy}
                     placeholder="Add an optional note…"
                     placeholderTextColor={colors.muted}
                     value={draft.note}
@@ -1279,28 +1170,30 @@ function SingleRatingModal({
 
           <ErrorNote error={task.error} />
 
+          {onEditItem && (
+            <Button
+              secondary
+              title="Edit dish"
+              disabled={task.busy}
+              onPress={() =>
+                confirmDiscard(
+                  Object.values(drafts).some((draft) => draft.hasChanged),
+                  task.busy,
+                  onEditItem,
+                )
+              }
+            />
+          )}
           {/* Footer buttons */}
           <View style={modalStyles.footerActions}>
             <Pressable
               accessibilityRole="button"
-              onPress={onClose}
+              onPress={close}
               disabled={task.busy}
               style={modalStyles.wizardNavBtn}
             >
               <Text style={modalStyles.wizardNavBtnText}>Cancel</Text>
             </Pressable>
-
-            {hasAnyRating && (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Clear rating"
-                disabled={task.busy}
-                onPress={handleClear}
-                style={[modalStyles.wizardNavBtn, { borderColor: colors.coralBorder }]}
-              >
-                <Text style={[modalStyles.wizardNavBtnText, { color: colors.rust }]}>Clear</Text>
-              </Pressable>
-            )}
 
             <Pressable
               accessibilityRole="button"
@@ -1384,9 +1277,16 @@ function AddItemModal({
     });
   }
 
+  const close = () =>
+    confirmDiscard(
+      name !== (editItem?.name ?? '') || description !== (editItem?.description ?? ''),
+      task.busy,
+      onClose,
+    );
+
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={modalStyles.centerModalOverlay} onPress={onClose}>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={close}>
+      <Pressable style={modalStyles.centerModalOverlay} onPress={close}>
         <Pressable style={modalStyles.centerModalDialog} onPress={(e) => e.stopPropagation()}>
           <View style={modalStyles.sheetHeader}>
             <Text style={modalStyles.sheetTitle}>
@@ -1394,7 +1294,7 @@ function AddItemModal({
                 ? `Edit ${itemType === 'dish' ? 'Dish' : 'Category'}`
                 : `Add ${itemType === 'dish' ? 'Dish' : 'Category'}`}
             </Text>
-            <Pressable accessibilityRole="button" onPress={onClose} style={modalStyles.sheetCloseBtn}>
+            <Pressable accessibilityRole="button" onPress={close} style={modalStyles.sheetCloseBtn}>
               <Icon source="close" size={20} color={colors.ink} />
             </Pressable>
           </View>
@@ -1439,6 +1339,7 @@ function AddItemModal({
           )}
 
           <Field
+            editable={!task.busy}
             label={itemType === 'dish' ? 'Dish name' : 'Category name'}
             placeholder={itemType === 'dish' ? 'e.g. Cacio e Pepe' : 'e.g. Service'}
             value={name}
@@ -1448,6 +1349,7 @@ function AddItemModal({
 
           {itemType === 'dish' && (
             <Field
+              editable={!task.busy}
               label="Description (optional)"
               placeholder="e.g. House-made tonnarelli, pecorino romano"
               value={description}
@@ -1465,12 +1367,7 @@ function AddItemModal({
               onPress={handleSave}
             />
             {editItem && isAdmin && (
-              <Button
-                title="Remove item"
-                secondary
-                disabled={task.busy}
-                onPress={handleDelete}
-              />
+              <Button title="Remove item" secondary disabled={task.busy} onPress={handleDelete} />
             )}
           </View>
         </Pressable>
@@ -1555,7 +1452,7 @@ export function VisitFormScreen({ route, navigation }: ScreenProps<'VisitForm'>)
       params={route.params}
       onDone={(id) => {
         if (visitId) navigation.goBack();
-        else navigation.replace('Visit', { visitId: id, promptRating: true });
+        else navigation.replace('Visit', { visitId: id, promptRating: !route.params.planned });
       }}
     />
   );
@@ -1584,6 +1481,8 @@ function DatePickerModal({
     () => new Date(initialDate.getFullYear(), initialDate.getMonth(), 1),
   );
 
+  const [jumpOpen, setJumpOpen] = useState(false);
+  const [jumpYear, setJumpYear] = useState(String(initialDate.getFullYear()));
   const year = currentMonth.getFullYear();
   const month = currentMonth.getMonth();
 
@@ -1642,9 +1541,19 @@ function DatePickerModal({
             >
               <Icon source="chevron-left" size={22} color={colors.ink} />
             </Pressable>
-            <Text style={datePickerStyles.monthTitle}>
-              {monthNames[month]} {year}
-            </Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Choose month and year"
+              onPress={() => {
+                setJumpYear(String(year));
+                setJumpOpen((open) => !open);
+              }}
+              style={{ minHeight: 48, justifyContent: 'center' }}
+            >
+              <Text style={datePickerStyles.monthTitle}>
+                {monthNames[month]} {year}
+              </Text>
+            </Pressable>
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Next month"
@@ -1656,6 +1565,44 @@ function DatePickerModal({
             </Pressable>
           </View>
 
+          {jumpOpen && (
+            <View style={{ gap: 8, paddingVertical: 12 }}>
+              <Field
+                label="Year"
+                value={jumpYear}
+                onChangeText={setJumpYear}
+                keyboardType="number-pad"
+                maxLength={4}
+              />
+              <View style={[styles.row, { gap: 4 }]}>
+                {monthNames.map((name, index) => (
+                  <Pressable
+                    key={name}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Jump to ${name} ${jumpYear}`}
+                    disabled={
+                      !/^\d{4}$/.test(jumpYear) ||
+                      Number(jumpYear) < 1900 ||
+                      Number(jumpYear) > 2100
+                    }
+                    onPress={() => {
+                      setCurrentMonth(new Date(Number(jumpYear), index, 1));
+                      setJumpOpen(false);
+                    }}
+                    style={{
+                      minWidth: '23%',
+                      minHeight: 48,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <Text style={styles.link}>{name.slice(0, 3)}</Text>
+                  </Pressable>
+                ))}
+              </View>
+              <Text style={styles.muted}>Choose a year from 1900 to 2100, then a month.</Text>
+            </View>
+          )}
           {/* Weekday Labels */}
           <View style={datePickerStyles.weekDaysRow}>
             {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((dayName, idx) => (
@@ -1708,6 +1655,16 @@ function DatePickerModal({
           <View style={datePickerStyles.footer}>
             <Pressable
               accessibilityRole="button"
+              onPress={() => {
+                onChange('');
+                onClose();
+              }}
+              style={{ minHeight: 48, justifyContent: 'center' }}
+            >
+              <Text style={styles.link}>No date</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
               accessibilityLabel="Set to today"
               onPress={pickToday}
               style={datePickerStyles.todayActionBtn}
@@ -1744,7 +1701,7 @@ function VisitForm({
   types: Doc<'visitTypes'>[];
   board: Doc<'boards'>;
   boards: {
-    results: any[];
+    results: Doc<'boards'>[];
     status: string;
     loadMore: (numItems: number) => void;
   };
@@ -1752,6 +1709,7 @@ function VisitForm({
   params: ScreenProps<'VisitForm'>['route']['params'];
   onDone: (id: Id<'visits'>) => void;
 }) {
+  const planned = initial?.status === 'planned' || !!params.planned;
   const [step, setStep] = useState<1 | 2>(initial || (params.title && params.placeId) ? 2 : 1);
 
   const token = useAuthToken();
@@ -1759,24 +1717,31 @@ function VisitForm({
   const reserve = useMutation(api.photos.reserve);
   const removePhoto = useMutation(api.photos.remove);
 
-  const [title, setTitle] = useState(initial?.title ?? params.title ?? '');
-  const [place, setPlace] = useState(initial?.place ?? params.place ?? '');
+  const [titleDraft, setTitle] = useState(initial?.title ?? params.title ?? '');
+  const [placeDraft, setPlace] = useState(initial?.place ?? params.place ?? '');
   const [placeId, setPlaceId] = useState<Id<'places'> | undefined>(
     initial?.placeId ?? params.placeId,
   );
   const [googlePlaceId, setGooglePlaceId] = useState<string | undefined>(
     initial?.googlePlaceId ?? params.googlePlaceId,
   );
-  const [location, setLocation] = useState<{ latitude: number; longitude: number } | null>(
+  const [locationDraft, setLocation] = useState<{ latitude: number; longitude: number } | null>(
     initial?.location ?? params.location ?? null,
   );
-  const [date, setDate] = useState(initial?.date ?? localDate());
+  const livePlace = useLivePlace(googlePlaceId);
+  const title =
+    livePlace && (!titleDraft || titleDraft === 'Saved Google place') ? livePlace.name : titleDraft;
+  const place = placeDraft || livePlace?.address || '';
+  const location = locationDraft ?? livePlace?.location ?? null;
+  const [date, setDate] = useState(initial?.date ?? (planned ? '' : localDate()));
   const [datePickerOpen, setDatePickerOpen] = useState(false);
   const [pickedPhotos, setPickedPhotos] = useState<{ uri: string }[]>([]);
+  const [keepWishlist, setKeepWishlist] = useState(params.keepWishlist ?? true);
   const [uploadProgress, setUploadProgress] = useState<string | null>(null);
 
   const [editingTitle, setEditingTitle] = useState(false);
-  const [notes, setNotes] = useState(initial?.notes ?? '');
+  const [notes, setNotes] = useState(initial?.notes ?? params.notes ?? '');
+  const [savedLink, setSavedLink] = useState(initial?.savedLink ?? params.savedLink ?? '');
   const [typeId, setTypeId] = useState<Id<'visitTypes'> | undefined>(
     initial
       ? (types.find((entry) => entry.name === initial.typeName)?._id ?? types[0]?._id)
@@ -1788,11 +1753,19 @@ function VisitForm({
   const [dishInput, setDishInput] = useState('');
 
   async function pickPhoto(camera: boolean) {
+    if (task.busy) return;
     try {
       if (camera) {
         const permission = await ImagePicker.requestCameraPermissionsAsync();
         if (!permission.granted) {
-          Alert.alert('Permission required', 'Allow camera access in settings to take a photo.');
+          Alert.alert(
+            'Camera access is off',
+            'Allow camera access in settings, or choose a photo from your library.',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              { text: 'Open settings', onPress: () => void Linking.openSettings() },
+            ],
+          );
           return;
         }
       }
@@ -1857,7 +1830,11 @@ function VisitForm({
   const insets = useSafeAreaInsets();
   const { keyboardHeight } = useKeyboard();
   const keyboardOverlap = Math.max(0, keyboardHeight - insets.bottom);
-  const hasMap = Platform.OS === 'ios' || Constants.expoConfig?.extra?.hasAndroidMapsKey;
+  const hasMap = Boolean(
+    Platform.OS === 'ios'
+      ? Constants.expoConfig?.extra?.hasIosMapsKey
+      : Constants.expoConfig?.extra?.hasAndroidMapsKey,
+  );
   const current = useCurrentLocation(!!hasMap);
   const [search, setSearch] = useState(params.title ?? '');
   const [searchOpen, setSearchOpen] = useState(false);
@@ -1934,8 +1911,8 @@ function VisitForm({
     setPlace(savedPlace.address);
     setPlaceId(savedPlace._id);
     setGooglePlaceId(undefined);
+    setLocation(savedPlace.location ?? null);
     if (savedPlace.location) {
-      setLocation(savedPlace.location);
       map.current?.animateToRegion(nearbyRegion(savedPlace.location, mapSize, 0.8), 350);
     }
     setSearchOpen(false);
@@ -1987,6 +1964,10 @@ function VisitForm({
     setSelectedSavedPlace(undefined);
     setSelectedGooglePlace(undefined);
     setTitle(name);
+    setPlaceId(undefined);
+    setGooglePlaceId(undefined);
+    setPlace('');
+    setLocation(null);
     setSearchOpen(false);
     Keyboard.dismiss();
     setStep(2);
@@ -2031,55 +2012,112 @@ function VisitForm({
   const create = useMutation(api.visits.create);
   const update = useMutation(api.visits.update);
   const task = useTask();
+  const fields = {
+    title: title.trim(),
+    place: place.trim(),
+    date,
+    notes,
+    savedLink,
+    showDishes,
+    location,
+  };
+  const fingerprint = JSON.stringify({
+    ...fields,
+    ...(googlePlaceId ? { title: undefined, place: undefined, location: undefined } : {}),
+    placeId,
+    googlePlaceId,
+    typeId,
+    dishes,
+  });
+  const [firstFingerprint] = useState(fingerprint);
+  const [lastSavedFingerprint, setLastSavedFingerprint] = useState(
+    initial ? fingerprint : undefined,
+  );
+  const [savedVisitId, setSavedVisitId] = useState(initial?._id);
+  const saveSession = useRef<VisitSaveSession<Id<'visits'>>>({
+    id: initial?._id,
+    revision: (initial as (Doc<'visits'> & { revision?: number }) | undefined)?.revision ?? 0,
+    fingerprint: initial ? fingerprint : undefined,
+    completedPhotos: new Set(),
+  });
+  const photoTickets = useRef(new Map<string, Id<'uploads'>>());
+  const allowExit = useUnsavedChanges(
+    pickedPhotos.length > 0 || fingerprint !== (lastSavedFingerprint ?? firstFingerprint),
+    task.busy,
+  );
+
+  function finish(id: Id<'visits'>) {
+    allowExit();
+    onDone(id);
+  }
 
   function save() {
     void task.run(async () => {
       if (date && !validDate(date)) throw new Error('Enter a valid date in YYYY-MM-DD format.');
-      const fields = {
-        title: title.trim(),
-        place: place.trim(),
-        date,
-        notes,
-        showDishes,
-        location,
-      };
-      let targetVisitId: Id<'visits'>;
-      if (initial) {
-        await update({ ...fields, visitId: initial._id, placeId, googlePlaceId });
-        targetVisitId = initial._id;
-      } else {
-        targetVisitId = await create({
-          ...fields,
-          boardId: params.boardId,
-          typeId,
-          placeId,
-          googlePlaceId,
-          dishes: dishes.map((d) => d.trim()).filter(Boolean),
+      try {
+        const id = await saveVisitWithPhotos({
+          session: saveSession.current,
+          fingerprint,
+          photos: pickedPhotos.map((photo) => photo.uri),
+          saveDetails: async (savedId, revision) => {
+            if (savedId) {
+              const changes = {
+                ...fields,
+                visitId: savedId,
+                placeId,
+                googlePlaceId,
+                expectedRevision: revision,
+                clearGooglePlace: !googlePlaceId,
+              };
+              await update(changes);
+              setLastSavedFingerprint(fingerprint);
+              return { id: savedId, revision: revision + 1 };
+            }
+            const newId = await create({
+              ...fields,
+              boardId: params.boardId,
+              planned,
+              typeId,
+              placeId,
+              googlePlaceId,
+              dishes: dishes.map((dish) => dish.trim()).filter(Boolean),
+              wishlistId: params.wishlistId,
+              keepWishlist,
+            });
+            setSavedVisitId(newId);
+            setLastSavedFingerprint(fingerprint);
+            return { id: newId, revision: 0 };
+          },
+          upload: async (targetVisitId, uri, index) => {
+            if (!token) throw new Error('Sign in to upload photos.');
+            setUploadProgress(`Uploading photo ${index + 1} of ${pickedPhotos.length}…`);
+            const { ticket, provider } = await resolveUpload(
+              photoTickets.current.get(uri),
+              async () => {
+                const next = await reserve({ visitId: targetVisitId, caption: '' });
+                photoTickets.current.set(uri, next);
+                return next;
+              },
+              (uploadId) => convex.query(api.photos.uploadProvider, { uploadId }),
+            );
+            const response = await fetch(
+              `${photoOrigin(provider)}/photos/upload?ticket=${ticket}`,
+              {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'image/jpeg' },
+                body: new File(uri),
+                signal: AbortSignal.timeout(120_000),
+              },
+            );
+            if (!response.ok) throw new Error(uploadError(response.status));
+          },
+          uploaded: (uri) =>
+            setPickedPhotos((photos) => photos.filter((photo) => photo.uri !== uri)),
         });
-      }
-
-      // Upload any newly picked photos
-      if (pickedPhotos.length > 0) {
-        if (!token) throw new Error('Sign in to upload photos.');
-        for (let i = 0; i < pickedPhotos.length; i++) {
-          const photo = pickedPhotos[i];
-          setUploadProgress(`Uploading photo ${i + 1} of ${pickedPhotos.length}…`);
-          const ticket = await reserve({ visitId: targetVisitId, caption: '' });
-          const provider = await convex.query(api.photos.uploadProvider, { uploadId: ticket });
-          const response = await fetch(`${photoOrigin(provider)}/photos/upload?ticket=${ticket}`, {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'image/jpeg' },
-            body: new File(photo.uri),
-            signal: AbortSignal.timeout(120_000),
-          });
-          if (!response.ok) {
-            throw new Error('Photo upload failed. Check connection and retry.');
-          }
-        }
+        finish(id);
+      } finally {
         setUploadProgress(null);
       }
-
-      onDone(targetVisitId);
     });
   }
 
@@ -2095,12 +2133,13 @@ function VisitForm({
         />
 
         <View style={formStyles.headerBlock}>
-          <Title>Add visit</Title>
+          <Title>{planned ? 'Plan a visit' : 'Add visit'}</Title>
         </View>
 
         <View style={formStyles.mapArea}>
           {hasMap ? (
             <MapView
+              provider={PROVIDER_GOOGLE}
               ref={map}
               style={StyleSheet.absoluteFill}
               initialRegion={region}
@@ -2312,10 +2351,19 @@ function VisitForm({
                     color={title.trim() ? colors.rust : colors.muted}
                   />
                   <TextInput
+                    editable={!task.busy}
                     placeholder="Enter visit or place title…"
                     placeholderTextColor={colors.muted}
                     value={title}
-                    onChangeText={setTitle}
+                    onChangeText={(value) => {
+                      setTitle(value);
+                      if (googlePlaceId) {
+                        setGooglePlaceId(undefined);
+                        setPlaceId(undefined);
+                        setPlace('');
+                        setLocation(null);
+                      }
+                    }}
                     onSubmitEditing={() => {
                       if (title.trim()) {
                         Keyboard.dismiss();
@@ -2352,7 +2400,7 @@ function VisitForm({
                 {/* Continue button */}
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel="Add visit"
+                  accessibilityLabel={planned ? 'Plan a visit' : 'Add visit'}
                   disabled={!title.trim()}
                   style={[
                     formStyles.primaryActionButton,
@@ -2365,7 +2413,11 @@ function VisitForm({
                 >
                   <Icon source="plus" size={18} color={colors.paper} />
                   <Text style={formStyles.primaryActionText}>
-                    {title.trim() ? 'Add visit' : 'Enter title to continue'}
+                    {title.trim()
+                      ? planned
+                        ? 'Continue'
+                        : 'Add visit'
+                      : 'Enter title to continue'}
                   </Text>
                 </Pressable>
               </View>
@@ -2390,9 +2442,25 @@ function VisitForm({
         }}
       />
       <Page>
+        <ErrorNote error={current.error} />
+        {current.settingsRequired && (
+          <Button
+            secondary
+            title="Open location settings"
+            onPress={() => void current.openSettings()}
+          />
+        )}
         {/* Header row: Title on left + pure date text with color in corner */}
         <View style={formStyles.step2HeaderRow}>
-          <Title>{initial ? 'Edit visit' : 'Add visit'}</Title>
+          <Title>
+            {planned
+              ? initial
+                ? 'Edit planned visit'
+                : 'Plan a visit'
+              : initial
+                ? 'Edit visit'
+                : 'Add visit'}
+          </Title>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={`Date: ${formatDisplayDate(date)}. Tap to choose date.`}
@@ -2411,11 +2479,12 @@ function VisitForm({
           onClose={() => setDatePickerOpen(false)}
         />
 
-        {/* Location snippet: Small map thumbnail and name beside it (logos & toolbar removed) */}
+        {/* Location snippet: Small map thumbnail and name beside it. */}
         <View style={formStyles.placeSnippet}>
           {location && hasMap ? (
             <View style={formStyles.snippetMapContainer} pointerEvents="none">
               <MapView
+                provider={PROVIDER_GOOGLE}
                 style={formStyles.snippetMap}
                 initialRegion={{
                   latitude: location.latitude,
@@ -2448,8 +2517,17 @@ function VisitForm({
             {editingTitle ? (
               <View style={formStyles.inlineTitleRow}>
                 <TextInput
+                  editable={!task.busy}
                   value={title}
-                  onChangeText={setTitle}
+                  onChangeText={(value) => {
+                    setTitle(value);
+                    if (googlePlaceId) {
+                      setGooglePlaceId(undefined);
+                      setPlaceId(undefined);
+                      setPlace('');
+                      setLocation(null);
+                    }
+                  }}
                   autoFocus
                   style={formStyles.inlineTitleInput}
                   placeholder="Place name"
@@ -2502,7 +2580,7 @@ function VisitForm({
         </View>
 
         {/* Visit Type: Sleek pill buttons directly on canvas */}
-        {types.length > 0 && (
+        {!initial && types.length > 0 && (
           <View style={formStyles.typeRow}>
             {types.map((entry) => {
               const active = typeId === entry._id;
@@ -2602,56 +2680,73 @@ function VisitForm({
           </ScrollView>
         </View>
 
-        {/* Dishes & Drinks: Fluid tag input and keepsake cloud */}
-        <View style={formStyles.sectionBlock}>
-          <View style={formStyles.sectionLabelRow}>
-            <Icon source="silverware-fork-knife" size={16} color={colors.rust} />
-            <Text style={formStyles.sectionLabel}>Dishes & drinks</Text>
-          </View>
+        {!initial && (
+          <>
+            {/* Dishes & Drinks: Fluid tag input and keepsake cloud */}
+            <View style={formStyles.sectionBlock}>
+              <View style={formStyles.sectionLabelRow}>
+                <Icon source="silverware-fork-knife" size={16} color={colors.rust} />
+                <Text style={formStyles.sectionLabel}>Dishes & drinks</Text>
+              </View>
 
-          <View style={formStyles.dishInputBar}>
-            <TextInput
-              placeholder="What did you order? (e.g. Filter Coffee)"
-              placeholderTextColor={colors.muted}
-              value={dishInput}
-              onChangeText={setDishInput}
-              onSubmitEditing={addDish}
-              returnKeyType="done"
-              style={formStyles.dishInputField}
-            />
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Add dish"
-              onPress={addDish}
-              disabled={!dishInput.trim()}
-              style={[formStyles.dishAddButton, !dishInput.trim() && { opacity: 0.35 }]}
-            >
-              <Icon source="plus" size={18} color={colors.paper} />
-            </Pressable>
-          </View>
+              <View style={formStyles.dishInputBar}>
+                <TextInput
+                  editable={!task.busy}
+                  placeholder="What did you order? (e.g. Filter Coffee)"
+                  placeholderTextColor={colors.muted}
+                  value={dishInput}
+                  onChangeText={setDishInput}
+                  onSubmitEditing={addDish}
+                  returnKeyType="done"
+                  style={formStyles.dishInputField}
+                />
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Add dish"
+                  onPress={addDish}
+                  disabled={!dishInput.trim()}
+                  style={[formStyles.dishAddButton, !dishInput.trim() && { opacity: 0.35 }]}
+                >
+                  <Icon source="plus" size={18} color={colors.paper} />
+                </Pressable>
+              </View>
 
-          {dishes.length > 0 && (
-            <View style={formStyles.dishChipsCloud}>
-              {dishes.map((dishName, index) => (
-                <View key={`${dishName}-${index}`} style={formStyles.dishTag}>
-                  <Text style={formStyles.dishTagText} numberOfLines={1}>
-                    {dishName}
-                  </Text>
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel={`Remove ${dishName}`}
-                    onPress={() => removeDish(index)}
-                    hitSlop={8}
-                    style={formStyles.dishTagRemove}
-                  >
-                    <Icon source="close" size={13} color={colors.muted} />
-                  </Pressable>
+              {dishes.length > 0 && (
+                <View style={formStyles.dishChipsCloud}>
+                  {dishes.map((dishName, index) => (
+                    <View key={`${dishName}-${index}`} style={formStyles.dishTag}>
+                      <Text style={formStyles.dishTagText} numberOfLines={1}>
+                        {dishName}
+                      </Text>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`Remove ${dishName}`}
+                        onPress={() => removeDish(index)}
+                        hitSlop={8}
+                        style={formStyles.dishTagRemove}
+                      >
+                        <Icon source="close" size={13} color={colors.muted} />
+                      </Pressable>
+                    </View>
+                  ))}
                 </View>
-              ))}
+              )}
             </View>
-          )}
-        </View>
+          </>
+        )}
 
+        {params.wishlistId && !savedVisitId && (
+          <View style={styles.row}>
+            <Switch
+              accessibilityLabel="Keep this place on the wishlist after logging"
+              value={keepWishlist}
+              onValueChange={setKeepWishlist}
+              disabled={task.busy}
+              trackColor={{ true: colors.rust }}
+            />
+            <Text style={[styles.body, { flex: 1 }]}>Keep on wishlist</Text>
+          </View>
+        )}
         {/* Notes & Memories: Journal notebook canvas */}
         <View style={formStyles.sectionBlock}>
           <View style={formStyles.sectionLabelRow}>
@@ -2660,6 +2755,7 @@ function VisitForm({
           </View>
           <View style={formStyles.journalCanvas}>
             <TextInput
+              editable={!task.busy}
               multiline
               value={notes}
               onChangeText={setNotes}
@@ -2672,13 +2768,44 @@ function VisitForm({
           </View>
         </View>
 
+        <Field
+          label="Saved link (optional)"
+          value={savedLink}
+          onChangeText={setSavedLink}
+          placeholder="https://…"
+          autoCapitalize="none"
+          keyboardType="url"
+          maxLength={500}
+        />
+
         {/* Save button */}
         <View style={formStyles.saveArea}>
+          {task.error && savedVisitId && !initial && (
+            <View style={{ gap: 8 }}>
+              <Text style={styles.muted}>
+                Your visit is saved. Retry the remaining photos or open the visit.
+              </Text>
+              <Button
+                secondary
+                title="Open saved visit"
+                disabled={task.busy}
+                onPress={() =>
+                  confirmDiscard(pickedPhotos.length > 0, task.busy, () => finish(savedVisitId!))
+                }
+              />
+            </View>
+          )}
           <ErrorNote error={task.error} />
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={
-              task.busy ? 'Saving visit' : initial ? 'Save changes' : 'Save visit'
+              task.busy
+                ? 'Saving visit'
+                : initial
+                  ? 'Save changes'
+                  : planned
+                    ? 'Save planned visit'
+                    : 'Save visit'
             }
             disabled={!title.trim() || task.busy}
             onPress={save}
@@ -2689,7 +2816,14 @@ function VisitForm({
           >
             <Icon source="check" size={18} color={colors.paper} />
             <Text style={formStyles.savePillText}>
-              {uploadProgress || (task.busy ? 'Saving…' : initial ? 'Save changes' : 'Save visit')}
+              {uploadProgress ||
+                (task.busy
+                  ? 'Saving…'
+                  : initial
+                    ? 'Save changes'
+                    : planned
+                      ? 'Save planned visit'
+                      : 'Save visit')}
             </Text>
           </Pressable>
         </View>
@@ -3338,14 +3472,7 @@ const datePickerStyles = StyleSheet.create({
 });
 
 const summaryStyles = StyleSheet.create({
-  headerSection: {
-    backgroundColor: colors.paper,
-    borderRadius: 20,
-    padding: 18,
-    gap: 14,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
+  headerSection: { gap: 16 },
   headerTopRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -3379,9 +3506,9 @@ const summaryStyles = StyleSheet.create({
     color: colors.green,
   },
   menuTriggerBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: colors.background,
@@ -3441,10 +3568,7 @@ const summaryStyles = StyleSheet.create({
   },
   headerExperienceBlock: {
     marginTop: 4,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-    gap: 8,
+    gap: 0,
   },
   experienceBlockHeader: {
     flexDirection: 'row',
@@ -3530,6 +3654,9 @@ const summaryStyles = StyleSheet.create({
     color: colors.rust,
   },
   addDishBtn: {
+    minHeight: 48,
+    minWidth: 48,
+    justifyContent: 'center',
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
@@ -3547,6 +3674,7 @@ const summaryStyles = StyleSheet.create({
     gap: 0,
   },
   itemRow: {
+    minHeight: 60,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -3573,6 +3701,9 @@ const summaryStyles = StyleSheet.create({
     marginTop: 2,
   },
   pillsRow: {
+    maxWidth: '58%',
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
@@ -3673,88 +3804,6 @@ const summaryStyles = StyleSheet.create({
   },
   typePillBtnTextSelected: {
     color: colors.paper,
-  },
-});
-
-const optionsMenuStyles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(27, 26, 23, 0.55)',
-    justifyContent: 'flex-end',
-    alignItems: 'center',
-  },
-  sheet: {
-    width: '100%',
-    maxWidth: 600,
-    backgroundColor: colors.paper,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingHorizontal: 20,
-    paddingTop: 18,
-    paddingBottom: 36,
-    gap: 16,
-    elevation: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.18,
-    shadowRadius: 14,
-  },
-  sheetHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingBottom: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  sheetTitle: {
-    fontFamily: 'EpilogueSemiBold',
-    fontSize: 18,
-    color: colors.ink,
-  },
-  sheetSubtitle: {
-    fontFamily: 'Jakarta',
-    fontSize: 12,
-    color: colors.muted,
-    marginTop: 2,
-  },
-  closeBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: colors.background,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  menuItems: {
-    gap: 6,
-  },
-  menuItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 14,
-  },
-  iconCircle: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: colors.peachLight,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  menuItemText: {
-    fontFamily: 'JakartaSemiBold',
-    fontSize: 15,
-    color: colors.ink,
-  },
-  menuItemSub: {
-    fontFamily: 'Jakarta',
-    fontSize: 12,
-    color: colors.muted,
-    marginTop: 1,
   },
 });
 
@@ -3926,4 +3975,3 @@ const modalStyles = StyleSheet.create({
     shadowRadius: 14,
   },
 });
-

@@ -1,3 +1,4 @@
+import { POLICY_VERSION } from '../legal';
 // Internal-only fixtures for the explicitly enabled development browser tests.
 // No token-minting or test sign-in endpoint is exposed to the frontend.
 import { v } from 'convex/values';
@@ -27,7 +28,11 @@ export const createUsers = internalMutation({
       'Taylor · browser test',
       'Jordan · browser test',
     ]) {
-      const userId = await ctx.db.insert('users', { name });
+      const userId = await ctx.db.insert('users', {
+        name,
+        termsVersion: POLICY_VERSION,
+        termsAcceptedAt: Date.now(),
+      });
       const sessionId = await ctx.db.insert('authSessions', {
         userId,
         expirationTime: Date.now() + 60 * 60 * 1000,

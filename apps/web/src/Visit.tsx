@@ -1,5 +1,8 @@
+import { useLivePlace } from './convexLive';
+import { GoogleAttribution } from './GoogleAttribution';
 import { useState } from 'react';
-import { useMutation, useQuery } from 'convex/react';
+import { useUnsavedChanges } from './useUnsavedChanges';
+import { useMutation, useQuery } from './convexLive';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   CalendarDays,
@@ -37,6 +40,7 @@ import { PhotoSection, usePhotoUpload } from './Photos';
 import { PhotoPicker, type PhotoSelection } from './PhotoPicker';
 import { LocationField } from './LocationField';
 import { mapsLink, type MapLocation } from './PlacesMap';
+import { safeExternalUrl } from './Wishlist';
 
 export function VisitEditor() {
   const { boardId, visitId } = useParams();
@@ -87,6 +91,9 @@ function Editor({
   const navigate = useNavigate();
   const notice = useNotice();
   const [searchParams] = useSearchParams();
+  const planned = existing?.status === 'planned' || searchParams.get('planned') === '1';
+  const wishlistId = searchParams.get('wishlistId') as Id<'wishlist'> | null;
+  const [keepWishlist, setKeepWishlist] = useState(true);
   const initialTitle = existing?.title ?? searchParams.get('title') ?? '';
   const initialPlace = existing?.place ?? searchParams.get('place') ?? '';
   const initialLat = searchParams.get('lat');
@@ -99,9 +106,9 @@ function Editor({
           longitude: parseFloat(initialLng),
         }
       : null);
-  const [title, setTitle] = useState(initialTitle);
-  const [date, setDate] = useState(existing?.date ?? today());
-  const [place, setPlace] = useState(initialPlace);
+  const [titleDraft, setTitle] = useState(initialTitle);
+  const [date, setDate] = useState(existing?.date ?? (planned ? '' : today()));
+  const [placeDraft, setPlace] = useState(initialPlace);
   const [placeId, setPlaceId] = useState<Id<'places'> | undefined>(
     existing?.placeId ?? ((searchParams.get('placeId') || undefined) as Id<'places'> | undefined),
   );
@@ -109,7 +116,14 @@ function Editor({
     existing?.googlePlaceId ?? searchParams.get('googlePlaceId') ?? undefined,
   );
   const [notes, setNotes] = useState(existing?.notes ?? '');
-  const [location, setLocation] = useState<MapLocation | null>(initialLocation);
+  const [savedLink, setSavedLink] = useState(existing?.savedLink ?? '');
+  const [locationDraft, setLocation] = useState<MapLocation | null>(initialLocation);
+  const livePlace = useLivePlace(googlePlaceId);
+  const title =
+    livePlace && (!titleDraft || titleDraft === 'Saved Google place') ? livePlace.name : titleDraft;
+  const place = placeDraft || livePlace?.address || '';
+  const location = locationDraft ?? livePlace?.location ?? null;
+
   const [typeId, setTypeId] = useState<string>(types[0]?._id ?? '');
   const [showDishes, setShowDishes] = useState(
     existing?.showDishes ?? types[0]?.showDishes ?? true,
@@ -119,6 +133,27 @@ function Editor({
   );
   const [dishes, setDishes] = useState<RatingDraft[]>([]);
   const [overallScore, setOverallScore] = useState('');
+  const snapshot = JSON.stringify({
+    title: googlePlaceId ? undefined : title,
+    date,
+    place: googlePlaceId ? undefined : place,
+    placeId,
+    googlePlaceId,
+    notes,
+    savedLink,
+    location: googlePlaceId ? undefined : location,
+    typeId,
+    showDishes,
+    categories,
+    dishes,
+    overallScore,
+    keepWishlist,
+  });
+  const [initialSnapshot] = useState(snapshot);
+  // Keep the version this editor opened with; reactive query updates must not
+  // silently promote a stale draft to the latest server revision.
+  const [revision] = useState(existing?.revision ?? 0);
+  const guard = useUnsavedChanges(snapshot !== initialSnapshot || photos.length > 0, task.busy);
   const toScore = (value: string | undefined) => {
     if (!value) return null;
     const score = Number(value);
@@ -133,6 +168,7 @@ function Editor({
         setPhotos((current) => current.filter((item) => item !== photo));
       }
     }
+    guard.allowNavigation();
     notice(existing ? 'Visit updated.' : 'Visit saved.');
     navigate(`/visits/${id}`, { replace: !existing });
   }
@@ -142,7 +178,15 @@ function Editor({
       <Back to={back}>{existing ? existing.title : boardName}</Back>
       <div className="page-heading visit-editor-heading">
         <div>
-          <h1>{existing ? 'Edit visit' : 'New visit'}</h1>
+          <h1>
+            {planned
+              ? existing
+                ? 'Edit planned visit'
+                : 'Plan a visit'
+              : existing
+                ? 'Edit visit'
+                : 'New visit'}
+          </h1>
         </div>
         <details className="visit-date-control">
           <summary aria-label={date ? `Change date, ${formatDate(date)}` : 'Add date'}>
@@ -182,10 +226,13 @@ function Editor({
             if (existing) {
               await update({
                 visitId: existing._id,
+                expectedRevision: revision,
+                clearGooglePlace: !googlePlaceId,
                 title,
                 date,
                 place,
                 notes,
+                savedLink,
                 showDishes,
                 location,
                 placeId,
@@ -195,6 +242,9 @@ function Editor({
             } else {
               const id = await create({
                 boardId,
+                planned,
+                savedLink,
+                ...(wishlistId ? { wishlistId, keepWishlist } : {}),
                 title,
                 date,
                 place,
@@ -206,18 +256,20 @@ function Editor({
                 ...(typeId ? { typeId: typeId as Id<'visitTypes'> } : {}),
                 categories: categories.map((category) => category.name.trim()),
                 dishes: dishes.map((dish) => dish.name.trim()),
-                initialScores: [
-                  {
-                    userId,
-                    overall: toScore(overallScore),
-                    categories: categories.map((category) => toScore(category.scores[userId])),
-                    dishes: dishes.map((dish) => toScore(dish.scores[userId])),
-                  },
-                ].filter((entry) =>
-                  [entry.overall, ...entry.categories, ...entry.dishes].some(
-                    (score) => score !== null,
-                  ),
-                ),
+                initialScores: planned
+                  ? []
+                  : [
+                      {
+                        userId,
+                        overall: toScore(overallScore),
+                        categories: categories.map((category) => toScore(category.scores[userId])),
+                        dishes: dishes.map((dish) => toScore(dish.scores[userId])),
+                      },
+                    ].filter((entry) =>
+                      [entry.overall, ...entry.categories, ...entry.dishes].some(
+                        (score) => score !== null,
+                      ),
+                    ),
               });
               await finishSave(id);
             }
@@ -246,6 +298,15 @@ function Editor({
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               placeholder="What made this one special?"
+            />
+          </Field>
+          <Field label="Saved link (optional)">
+            <input
+              type="url"
+              value={savedLink}
+              onChange={(event) => setSavedLink(event.target.value)}
+              maxLength={500}
+              placeholder="https://…"
             />
           </Field>
         </fieldset>
@@ -293,26 +354,28 @@ function Editor({
                   <ChevronDown size={18} aria-hidden="true" />
                 </div>
               </Field>
-              <fieldset className="visit-draft-ratings" disabled={task.busy}>
-                <VisitRatingRows
-                  kind="category"
-                  rows={categories}
-                  onChange={setCategories}
-                  userId={userId}
-                  memberName={userName}
-                  overall={{
-                    value: overallScore,
-                    onChange: setOverallScore,
-                  }}
-                />
-                <VisitRatingRows
-                  kind="dish"
-                  rows={dishes}
-                  onChange={setDishes}
-                  userId={userId}
-                  memberName={userName}
-                />
-              </fieldset>
+              {!planned && (
+                <fieldset className="visit-draft-ratings" disabled={task.busy}>
+                  <VisitRatingRows
+                    kind="category"
+                    rows={categories}
+                    onChange={setCategories}
+                    userId={userId}
+                    memberName={userName}
+                    overall={{
+                      value: overallScore,
+                      onChange: setOverallScore,
+                    }}
+                  />
+                  <VisitRatingRows
+                    kind="dish"
+                    rows={dishes}
+                    onChange={setDishes}
+                    userId={userId}
+                    memberName={userName}
+                  />
+                </fieldset>
+              )}
             </>
           )}
           {existing && <DishRatingsToggle checked={showDishes} onChange={setShowDishes} />}
@@ -321,6 +384,17 @@ function Editor({
           <p className="small muted">
             Your visit is saved. Retry the remaining picture uploads or open the visit.
           </p>
+        )}
+        {wishlistId && !existing && (
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={keepWishlist}
+              disabled={task.busy || !!savedVisitId}
+              onChange={(event) => setKeepWishlist(event.target.checked)}
+            />
+            Keep this place on the wishlist after logging the visit
+          </label>
         )}
         <ErrorNote text={task.error} />
         <div className="form-actions">
@@ -334,7 +408,9 @@ function Editor({
                 : 'Finish'
               : existing
                 ? 'Save changes'
-                : 'Create visit'}
+                : planned
+                  ? 'Save planned visit'
+                  : 'Create visit'}
           </Submit>
         </div>
       </Form>
@@ -490,6 +566,7 @@ function VisitRatingStep({
   );
 }
 function RatingCard({
+  planned = false,
   name,
   description,
   kind,
@@ -503,6 +580,7 @@ function RatingCard({
   onEdit,
   onRemove,
 }: {
+  planned?: boolean;
   name: string;
   description?: string;
   kind: 'dish' | 'category' | 'overall';
@@ -562,74 +640,76 @@ function RatingCard({
           )}
         </div>
       </div>
-      <div className="individual-ratings">
-        {members.map((person) => {
-          const rating = ratings.find((item) => item.userId === person._id);
-          const isMe = person._id === userId;
-          const canRate = isAdmin || isMe;
-          return (
-            <div className="person-rating" key={person._id}>
-              <Initials name={person.name} image={person.image} small />
-              <div>
-                <strong>{isMe ? 'You' : person.name}</strong>
-                {rating?.note && <p>{rating.note}</p>}
+      {!planned && (
+        <div className="individual-ratings">
+          {members.map((person) => {
+            const rating = ratings.find((item) => item.userId === person._id);
+            const isMe = person._id === userId;
+            const canRate = isAdmin || isMe;
+            return (
+              <div className="person-rating" key={person._id}>
+                <Initials name={person.name} image={person.image} small />
+                <div>
+                  <strong>{isMe ? 'You' : person.name}</strong>
+                  {rating?.note && <p>{rating.note}</p>}
+                </div>
+                <button
+                  className={`member-score ${rating ? 'has-rating' : ''}`}
+                  disabled={!canRate}
+                  aria-label={
+                    isMe
+                      ? rating
+                        ? 'Edit your rating'
+                        : 'Add my rating'
+                      : `${rating ? 'Edit' : 'Add'} ${person.name}’s rating for ${name}`
+                  }
+                  aria-expanded={kind !== 'dish' ? editing?._id === person._id : undefined}
+                  onClick={() => setEditing(person)}
+                >
+                  {rating ? (
+                    <span className="person-score">
+                      {rating.score.toFixed(1)}
+                      <small>/10</small>
+                    </span>
+                  ) : (
+                    <>
+                      <Plus size={14} /> Rate
+                    </>
+                  )}
+                  {rating && canRate && (
+                    <>
+                      <Pencil size={12} />
+                      {kind !== 'dish' && <span>Edit</span>}
+                    </>
+                  )}
+                </button>
               </div>
-              <button
-                className={`member-score ${rating ? 'has-rating' : ''}`}
-                disabled={!canRate}
-                aria-label={
-                  isMe
-                    ? rating
-                      ? 'Edit your rating'
-                      : 'Add my rating'
-                    : `${rating ? 'Edit' : 'Add'} ${person.name}’s rating for ${name}`
-                }
-                aria-expanded={kind !== 'dish' ? editing?._id === person._id : undefined}
-                onClick={() => setEditing(person)}
-              >
-                {rating ? (
+            );
+          })}
+          {ratings
+            .filter((rating) => !members.some((person) => person._id === rating.userId))
+            .map((rating) => {
+              const person = people.find((item) => item._id === rating.userId);
+              const name = person?.name ?? rating.importedName ?? 'Former member';
+              return (
+                <div className="person-rating" key={rating._id}>
+                  <Initials name={name} image={person?.image} small />
+                  <div>
+                    <strong>{name}</strong>
+                    {rating.importedName && (
+                      <small className="imported-rating-label">From your notes</small>
+                    )}
+                    {rating.note && <p>{rating.note}</p>}
+                  </div>
                   <span className="person-score">
                     {rating.score.toFixed(1)}
                     <small>/10</small>
                   </span>
-                ) : (
-                  <>
-                    <Plus size={14} /> Rate
-                  </>
-                )}
-                {rating && canRate && (
-                  <>
-                    <Pencil size={12} />
-                    {kind !== 'dish' && <span>Edit</span>}
-                  </>
-                )}
-              </button>
-            </div>
-          );
-        })}
-        {ratings
-          .filter((rating) => !members.some((person) => person._id === rating.userId))
-          .map((rating) => {
-            const person = people.find((item) => item._id === rating.userId);
-            const name = person?.name ?? rating.importedName ?? 'Former member';
-            return (
-              <div className="person-rating" key={rating._id}>
-                <Initials name={name} image={person?.image} small />
-                <div>
-                  <strong>{name}</strong>
-                  {rating.importedName && (
-                    <small className="imported-rating-label">From your notes</small>
-                  )}
-                  {rating.note && <p>{rating.note}</p>}
                 </div>
-                <span className="person-score">
-                  {rating.score.toFixed(1)}
-                  <small>/10</small>
-                </span>
-              </div>
-            );
-          })}
-      </div>
+              );
+            })}
+        </div>
+      )}
       {editing && (isAdmin || editing._id === userId) && (
         <RatingEditor
           key={editing._id}
@@ -821,6 +901,10 @@ export function VisitPage() {
   const data = useQuery(api.visits.get, { visitId: id });
   const me = useQuery(api.boards.me);
   const remove = useMutation(api.visits.remove);
+  const markVisited = useMutation(api.visits.markVisited);
+  const [completing, setCompleting] = useState(false);
+  const [completedDate, setCompletedDate] = useState(today());
+  const completionTask = useTask();
   const removeItem = useMutation(api.items.remove);
   const navigate = useNavigate();
   const [editor, setEditor] = useState<ItemEditorState | null>(null);
@@ -831,7 +915,8 @@ export function VisitPage() {
   const [deleteVisit, setDeleteVisit] = useState(false);
   if (!data || !me) return <Spinner />;
   const { visit, board, ratings, people } = data;
-  if (searchParams.get('rate') === '1') {
+  const planned = visit.status === 'planned';
+  if (!planned && searchParams.get('rate') === '1') {
     return (
       <VisitRatingStep
         key={id}
@@ -852,18 +937,23 @@ export function VisitPage() {
       <Back to={`/boards/${board._id}`}>{board.name}</Back>
       <div className="page-heading">
         <div>
-          <span className={`type-pill ${board.accent}`}>{visit.typeName}</span>
+          <span className={`type-pill ${board.accent}`}>
+            {planned ? 'Planned' : visit.typeName}
+          </span>
           <h1>
             {visit.title}
             {visit.visitNumber && visit.visitNumber > 1 && (
               <span className="visit-number">Visit {visit.visitNumber}</span>
             )}
           </h1>
+          {visit.googlePlaceId && <GoogleAttribution placeId={visit.googlePlaceId} />}
           <div className="visit-meta">
-            <span>
-              <CalendarDays size={16} />
-              {formatDate(visit.date)}
-            </span>
+            {(!planned || visit.date) && (
+              <span>
+                <CalendarDays size={16} />
+                {formatDate(visit.date)}
+              </span>
+            )}
             {visit.place && (
               <span>
                 <MapPin size={16} />
@@ -873,6 +963,17 @@ export function VisitPage() {
           </div>
         </div>
         <div className="actions">
+          {planned && (
+            <button type="button" className="button primary" onClick={() => setCompleting(true)}>
+              Mark as visited
+            </button>
+          )}
+          <Link
+            className="text-button small"
+            to={`/boards/${board._id}/safety?visitId=${visit._id}`}
+          >
+            Report visit
+          </Link>
           {visit.location && (
             <a className="button secondary" href={mapsLink(visit)} target="_blank" rel="noreferrer">
               <Navigation size={16} />
@@ -880,7 +981,7 @@ export function VisitPage() {
             </a>
           )}
           <Link className="button secondary" to={`/visits/${id}/edit`}>
-            <Pencil size={16} /> Edit visit
+            <Pencil size={16} /> {planned ? 'Edit planned visit' : 'Edit visit'}
           </Link>
           <button
             className="icon-button danger-text"
@@ -898,53 +999,65 @@ export function VisitPage() {
           <p>{visit.notes}</p>
         </div>
       )}
-      <div className="visit-content">
-        <aside className="visit-ratings">
-          <div className="section-heading">
-            <div>
-              <h2>Ratings</h2>
+      {safeExternalUrl(visit.savedLink) && (
+        <a
+          className="button secondary"
+          href={safeExternalUrl(visit.savedLink)}
+          target="_blank"
+          rel="noreferrer"
+        >
+          Open saved link
+        </a>
+      )}
+      <div className={`visit-content ${planned ? 'planned' : ''}`}>
+        {!planned && (
+          <aside className="visit-ratings">
+            <div className="section-heading">
+              <div>
+                <h2>Ratings</h2>
+              </div>
             </div>
-          </div>
-          <RatingCard
-            name="Overall"
-            kind="overall"
-            targetId={id}
-            visitId={id}
-            ratings={forTarget('overall', id)}
-            people={people}
-            members={data.members}
-            isAdmin={data.isAdmin}
-            userId={me._id}
-          />
-          <div className="ratings-stack">
-            {data.categories.map((category) => (
-              <RatingCard
-                key={category._id}
-                name={category.name}
-                kind="category"
-                targetId={category._id}
-                visitId={id}
-                ratings={forTarget('category', category._id)}
-                people={people}
-                members={data.members}
-                isAdmin={data.isAdmin}
-                userId={me._id}
-                onEdit={() => setEditor({ kind: 'category', item: category })}
-                onRemove={() => setDeleting({ id: category._id, name: category.name })}
-              />
-            ))}
-          </div>
-          <button
-            className="add-category"
-            disabled={data.categories.length >= 50}
-            onClick={() => setEditor({ kind: 'category' })}
-          >
-            <Plus size={17} /> Add a category
-          </button>
-          <p className="rating-help">
-            Scores out of 10 · Unrated members aren’t included in averages.
-          </p>
-        </aside>
+            <RatingCard
+              name="Overall"
+              kind="overall"
+              targetId={id}
+              visitId={id}
+              ratings={forTarget('overall', id)}
+              people={people}
+              members={data.members}
+              isAdmin={data.isAdmin}
+              userId={me._id}
+            />
+            <div className="ratings-stack">
+              {data.categories.map((category) => (
+                <RatingCard
+                  key={category._id}
+                  name={category.name}
+                  kind="category"
+                  targetId={category._id}
+                  visitId={id}
+                  ratings={forTarget('category', category._id)}
+                  people={people}
+                  members={data.members}
+                  isAdmin={data.isAdmin}
+                  userId={me._id}
+                  onEdit={() => setEditor({ kind: 'category', item: category })}
+                  onRemove={() => setDeleting({ id: category._id, name: category.name })}
+                />
+              ))}
+            </div>
+            <button
+              className="add-category"
+              disabled={data.categories.length >= 50}
+              onClick={() => setEditor({ kind: 'category' })}
+            >
+              <Plus size={17} /> Add a category
+            </button>
+            <p className="rating-help">
+              Scores out of 10 · Unrated members aren’t included in averages.
+            </p>
+          </aside>
+        )}
         <div className="visit-main">
           {(visit.showDishes || data.dishes.length > 0) && (
             <section>
@@ -974,6 +1087,7 @@ export function VisitPage() {
                 <div className="ratings-stack">
                   {data.dishes.map((dish) => (
                     <RatingCard
+                      planned={planned}
                       key={dish._id}
                       name={dish.name}
                       description={dish.description}
@@ -996,6 +1110,44 @@ export function VisitPage() {
           <PhotoSection visitId={id} photos={data.photos} userId={me._id} isAdmin={data.isAdmin} />
         </div>
       </div>
+      {completing && (
+        <Modal title="Mark as visited" onClose={() => !completionTask.busy && setCompleting(false)}>
+          <Form
+            onSubmit={() =>
+              completionTask.run(async () => {
+                await markVisited({
+                  visitId: id,
+                  date: completedDate,
+                  expectedRevision: visit.revision ?? 0,
+                });
+                setCompleting(false);
+              })
+            }
+          >
+            <Field label="Visit date">
+              <input
+                type="date"
+                required
+                value={completedDate}
+                onChange={(event) => setCompletedDate(event.target.value)}
+                disabled={completionTask.busy}
+              />
+            </Field>
+            <ErrorNote text={completionTask.error} />
+            <div className="form-actions">
+              <button
+                type="button"
+                className="button secondary"
+                disabled={completionTask.busy}
+                onClick={() => setCompleting(false)}
+              >
+                Cancel
+              </button>
+              <Submit busy={completionTask.busy}>Mark as visited</Submit>
+            </div>
+          </Form>
+        </Modal>
+      )}
       {editor && <ItemEditor state={editor} visitId={id} onClose={() => setEditor(null)} />}
       {deleting && (
         <Confirm
@@ -1003,7 +1155,8 @@ export function VisitPage() {
           onClose={() => setDeleting(null)}
           onConfirm={() => removeItem({ visitId: id, target: deleting.id, confirmed: true })}
         >
-          This also removes everyone’s ratings for this item. It cannot be undone.
+          This hides the item and everyone’s ratings. Contact support to request recovery after
+          verification; recovery is not guaranteed.
         </Confirm>
       )}
       {deleteVisit && (
@@ -1015,7 +1168,8 @@ export function VisitPage() {
             navigate(`/boards/${board._id}`);
           }}
         >
-          This permanently removes the visit, dishes, ratings, and photos for everyone on the board.
+          This hides the visit, dishes, ratings and photos for everyone on the board. Contact
+          support to request recovery after verification; recovery is not guaranteed.
         </Confirm>
       )}
     </div>

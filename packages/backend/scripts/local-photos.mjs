@@ -1,3 +1,4 @@
+import { photoFailure } from '../photoErrors.ts';
 import { createServer } from 'node:http';
 import { mkdir, readdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -151,12 +152,11 @@ export function createPhotoServer({
         return;
       }
       reply(response, 404, { error: 'Not found.' });
-    } catch {
+    } catch (error) {
+      const failure = photoFailure(error);
+      if (failure.status === 503) console.error('local_photo_failed', { code: failure.code });
       if (!response.headersSent)
-        reply(response, 503, {
-          error:
-            'Photo unavailable. Check your access and that the Mac mini photo service is configured.',
-        });
+        reply(response, failure.status, { ...failure, error: failure.message });
       else response.end();
     }
   });

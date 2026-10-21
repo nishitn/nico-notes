@@ -1,79 +1,78 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useSyncExternalStore } from 'react';
+import { Linking } from 'react-native';
 import * as Location from 'expo-location';
 import type { Coordinate } from './mapGeometry';
+import { currentPosition } from './currentPosition';
 
-async function locate(): Promise<Coordinate> {
-  const permission = await Location.requestForegroundPermissionsAsync();
-  if (!permission.granted)
-    throw new Error('Allow location access in your device settings to center the map around you.');
-  if (!(await Location.hasServicesEnabledAsync()))
-    throw new Error('Turn on your device’s location services, then try again.');
-  const recent = await Location.getLastKnownPositionAsync({
-    maxAge: 60_000,
-    requiredAccuracy: 1000,
-  });
-  if (recent) return recent.coords;
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  try {
-    const position = await Promise.race([
-      Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High }),
-      new Promise<never>((_, reject) => {
-        timeout = setTimeout(
-          () =>
-            reject(
-              new Error('Finding your location took too long. Tap the location button to retry.'),
-            ),
-          15_000,
-        );
-      }),
-    ]);
-    return position.coords;
-  } finally {
-    clearTimeout(timeout);
+type LocationState = {
+  location?: Coordinate;
+  locating: boolean;
+  error: string;
+  settingsRequired: boolean;
+};
+let state: LocationState = { locating: false, error: '', settingsRequired: false };
+let pending: Promise<Coordinate | undefined> | undefined;
+const listeners = new Set<() => void>();
+const subscribe = (listener: () => void) => {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+};
+function publish(next: Partial<LocationState>) {
+  state = { ...state, ...next };
+  for (const listener of listeners) listener();
+}
+
+async function locate(prompt: boolean): Promise<Coordinate | undefined> {
+  const permission = prompt
+    ? await Location.requestForegroundPermissionsAsync()
+    : await Location.getForegroundPermissionsAsync();
+  if (!permission.granted) {
+    if (prompt)
+      publish({
+        settingsRequired: !permission.canAskAgain,
+        error: permission.canAskAgain
+          ? 'Location wasn’t shared. You can still search or enter a place manually.'
+          : 'Location access is off. Open settings to allow it, or enter a place manually.',
+      });
+    return undefined;
   }
+  if (!(await Location.hasServicesEnabledAsync()))
+    throw new Error('Turn on location services, then tap the location button to retry.');
+  return currentPosition(prompt);
+}
+
+function requestLocation(prompt: boolean) {
+  if (pending) return pending;
+  publish({ locating: true, error: '', settingsRequired: false });
+  pending = locate(prompt)
+    .then((location) => {
+      if (location) publish({ location });
+      return location ?? state.location;
+    })
+    .catch((error: unknown) => {
+      publish({
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Location is unavailable. You can still enter a place manually.',
+      });
+      return state.location;
+    })
+    .finally(() => {
+      pending = undefined;
+      publish({ locating: false });
+    });
+  return pending;
 }
 
 export function useCurrentLocation(enabled: boolean) {
-  const [location, setLocation] = useState<Coordinate>();
-  const [locating, setLocating] = useState(enabled);
-  const [error, setError] = useState('');
-  const locationRef = useRef<Coordinate | undefined>(undefined);
-  const mounted = useRef(false);
-  const pending = useRef(false);
-
-  const request = useCallback(async (): Promise<Coordinate | undefined> => {
-    if (!mounted.current) return undefined;
-    if (pending.current) return locationRef.current;
-    pending.current = true;
-    setLocating(true);
-    setError('');
-    try {
-      const next = await locate();
-      const coord = { latitude: next.latitude, longitude: next.longitude };
-      locationRef.current = coord;
-      if (mounted.current) setLocation(coord);
-      return coord;
-    } catch (error) {
-      if (mounted.current)
-        setError(
-          error instanceof Error
-            ? error.message
-            : 'Your location is unavailable. You can still browse the map.',
-        );
-      return locationRef.current;
-    } finally {
-      pending.current = false;
-      if (mounted.current) setLocating(false);
-    }
-  }, []);
-
+  const snapshot = useSyncExternalStore(subscribe, () => state);
+  // Opening a screen may reuse an already granted location, never raise a new permission prompt.
   useEffect(() => {
-    mounted.current = true;
-    if (enabled) void Promise.resolve().then(request);
-    return () => {
-      mounted.current = false;
-    };
-  }, [enabled, request]);
-
-  return { location, locating, error, request };
+    if (enabled && !state.location) void requestLocation(false);
+  }, [enabled]);
+  const request = useCallback(() => requestLocation(true), []);
+  return { ...snapshot, request, openSettings: () => Linking.openSettings() };
 }

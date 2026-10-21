@@ -1,3 +1,4 @@
+import { POLICY_VERSION } from '../legal';
 import { describe, expect, it } from 'vite-plus/test';
 import { convexTest } from 'convex-test';
 import schema from '../convex/schema';
@@ -8,7 +9,11 @@ const modules = import.meta.glob('../convex/**/*.*s');
 async function setup() {
   const t = convexTest(schema, modules);
   const [adminId, memberId, outsiderId] = await t.run(async (ctx) =>
-    Promise.all(['Admin', 'Member', 'Outsider'].map((name) => ctx.db.insert('users', { name }))),
+    Promise.all(
+      ['Admin', 'Member', 'Outsider'].map((name) =>
+        ctx.db.insert('users', { termsVersion: POLICY_VERSION, name }),
+      ),
+    ),
   );
   const admin = t.withIdentity({ subject: `${adminId}|session` });
   const member = t.withIdentity({ subject: `${memberId}|session` });
@@ -23,6 +28,42 @@ async function setup() {
 }
 
 describe('board wishlist', () => {
+  it('loads a place for members, protects details, and handles removal', async () => {
+    const { t, member, outsider, boardId } = await setup();
+    const id = await member.mutation(api.wishlist.add, {
+      boardId,
+      title: 'Bakehouse Bistro',
+      notes: 'Cinnamon rolls and cold brew',
+    });
+    expect(await member.query(api.wishlist.get, { id })).toMatchObject({
+      title: 'Bakehouse Bistro',
+      notes: 'Cinnamon rolls and cold brew',
+      boardId,
+    });
+    await expect(outsider.query(api.wishlist.get, { id })).rejects.toThrow();
+    await expect(t.query(api.wishlist.get, { id })).rejects.toThrow();
+    await member.mutation(api.wishlist.remove, { id, confirmed: true });
+    expect(await member.query(api.wishlist.get, { id })).toBeNull();
+  });
+
+  it('keeps only the Google reference when editing and clearing optional fields', async () => {
+    const { member, boardId } = await setup();
+    const location = { latitude: 12.979, longitude: 77.64 };
+    const id = await member.mutation(api.wishlist.add, {
+      boardId,
+      title: 'Toit',
+      notes: 'Old note',
+      link: 'https://example.com',
+      location,
+      googlePlaceId: 'ChIJtoit',
+    });
+    await member.mutation(api.wishlist.update, { id, title: 'Toit Brewpub' });
+    const saved = await member.query(api.wishlist.get, { id });
+    expect(saved).toMatchObject({ title: 'Saved Google place', googlePlaceId: 'ChIJtoit' });
+    expect(saved?.notes).toBeUndefined();
+    expect(saved?.link).toBeUndefined();
+  });
+
   it('allows members to add and list wishlist places', async () => {
     const { member, boardId } = await setup();
     const id = await member.mutation(api.wishlist.add, {
@@ -40,7 +81,7 @@ describe('board wishlist', () => {
       paginationOpts: { numItems: 10, cursor: null },
     });
     expect(list.page).toHaveLength(1);
-    expect(list.page[0].title).toBe('Toit Brewpub');
+    expect(list.page[0].title).toBe('Saved Google place');
     expect(list.page[0].notes).toBe('Try the Basmati Blonde');
 
     const savedIds = await member.query(api.wishlist.savedPlaceIds, { boardId });

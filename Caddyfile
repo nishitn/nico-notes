@@ -1,7 +1,4 @@
 :8080 {
-	handle /photos/* {
-		reverse_proxy 127.0.0.1:8788
-	}
 
 	handle {
 		root * apps/web/dist

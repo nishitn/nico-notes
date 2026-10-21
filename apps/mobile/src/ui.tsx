@@ -24,7 +24,7 @@ export const colors = {
   paper: '#FFFDF9',
   ink: '#302B26',
   muted: '#786D64',
-  primary: '#E06D53',
+  primary: '#A33E27',
   primaryDark: '#C8533B',
   primaryLight: '#FDEEE9',
   coral: '#E06D53',
@@ -300,7 +300,12 @@ export function ErrorNote({ error }: { error: string }) {
 }
 export function message(error: unknown) {
   if (error instanceof ConvexError && typeof error.data === 'string') return error.data;
-  return error instanceof Error ? error.message : 'Something went wrong. Please try again.';
+  if (error instanceof Error) {
+    if (/\[CONVEX\b|\[Request ID:|^Server Error/.test(error.message))
+      return 'Something went wrong. Please try again.';
+    return error.message.split('\n')[0];
+  }
+  return 'Something went wrong. Please try again.';
 }
 export function useTask() {
   const [busy, setBusy] = useState(false);
@@ -322,8 +327,12 @@ export function useTask() {
   }, []);
   return { busy, error, run };
 }
-export function confirm(title: string, work: () => void) {
-  Alert.alert(title, 'This cannot be undone.', [
+export function confirm(
+  title: string,
+  work: () => void,
+  consequence = 'This change takes effect immediately. Contact support if you need help undoing it; recovery requires verification and is not guaranteed.',
+) {
+  Alert.alert(title, consequence, [
     { text: 'Cancel', style: 'cancel' },
     { text: 'Confirm', style: 'destructive', onPress: work },
   ]);

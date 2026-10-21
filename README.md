@@ -1,8 +1,10 @@
 # nico notes
 
-A private place for shared visits, visit photos, and each person's ratings. The primary Android client uses React Native + Expo in `apps/mobile`. The existing React + TypeScript + Vite+ web client remains in `apps/web`. Both share the Convex database, realtime functions and Google authentication. New photo files use Convex Storage by default. Board admins can opt into local storage on the Mac mini later.
+A private place for shared visits, visit photos, and each person's ratings. The primary Android client uses React Native + Expo in `apps/mobile`. The existing React + TypeScript + Vite+ web client remains in `apps/web`. Both share the Convex database, realtime functions and Google authentication. All profile and journal images use Convex Storage; journal photo reads require authentication. The website is hosted on Cloudflare Pages; the app uses Convex directly and does not require a running Mac server.
 
 App URL: [notes.nishitnagar.com](https://notes.nishitnagar.com).
+
+The Android/web release-hardening changes and outstanding store setup are tracked in [release fixes](plans/2026-10-20-release-fixes.md). Privacy, terms, help and external account-deletion instructions are available at `/privacy`, `/terms`, `/help` and `/delete-account` without signing in. Support contact: `nishit.nagar1@gmail.com`.
 
 ## Android app
 
@@ -16,6 +18,10 @@ pnpm android
 ```
 
 `pnpm dev:mobile` starts Metro for an installed development build. `pnpm dev` runs the backend and mobile server together. `pnpm build:android` validates the Android bundle; `pnpm build:web` builds the retained website. `pnpm build` builds both clients. Android uses the native Credential Manager account chooser. Its backend token-verification provider must be deployed, and Google Cloud must have an Android OAuth client for the package and signing certificate; see the Android guide.
+
+## iOS app
+
+See [the iOS setup guide](apps/mobile/README.md#start-on-ios). Create a Google OAuth client of type **iOS** for **`com.nishitnagar.notes`** in the same project as the Web client, set `GOOGLE_IOS_CLIENT_ID` in `apps/mobile/.env.local`, then run `pnpm --filter @nico-notes/mobile exec expo prebuild --platform ios` and `pnpm ios`. iOS uses Google's native sign-in SDK and the existing backend token verifier, so authentication no longer opens the Convex domain.
 
 ## Run locally
 
@@ -38,7 +44,7 @@ pnpm --filter @nico-notes/backend setup:auth
 pnpm dev:web
 ```
 
-Open [localhost:5173](http://localhost:5173). After initial configuration, run `pnpm dev:web` and `pnpm dev:backend` in separate terminals for web development. `pnpm dev` starts the backend and Android client. The frontend is local; its data lives in your Convex development deployment. Never put OAuth secrets or signing keys in a `VITE_` variable.
+Open [localhost:5173](http://localhost:5173). After initial configuration, run `pnpm dev:web` and `pnpm dev:backend` in separate terminals for web development. `pnpm dev` starts the backend and Android client. A client connects to the deployment in its own environment file. The hosted/release clients use production; select development URLs explicitly for development. Never put OAuth secrets or signing keys in a `VITE_` variable.
 
 This workspace has already been connected to the existing `opulent-partridge-532` development deployment. The frontend environment and development signing keys have been configured. **Google OAuth credentials still need to be supplied** before the two of you can sign in.
 
@@ -50,63 +56,41 @@ To use the existing backend and data, securely copy `apps/web/.env.local` and `p
 
 Run `pnpm dev:web` and open `http://localhost:5173` to use the existing deployed backend. To work on backend code too, run `pnpm dev:backend`, authenticate with the Convex account that has project access, and select the existing development deployment. This syncs backend code to that deployment. After setup, `pnpm dev` runs the backend and mobile server; use `pnpm dev:web` for the website. A new Convex deployment has separate data and needs its own authentication setup.
 
-To move the hosted app, also install Caddy and cloudflared, securely transfer `~/.cloudflared/config.yml` and its referenced tunnel credentials, and update machine-specific credential paths. Keep ingress pointed at `http://localhost:8080`. Stop the old host's tunnel before starting `pnpm start` on the new host. The startup script uses Unix process groups; use macOS, Linux, or WSL for this hosting workflow. If the public hostname changes, update the tunnel/DNS, Convex `SITE_URL`/`ALLOWED_ORIGINS`, Google OAuth origins, and Maps key referrers. The OAuth callback stays the same when the Convex deployment stays the same.
+The public website is deployed to the Cloudflare Pages project `nico-notes`, with `notes.nishitnagar.com` pointing to `nico-notes.pages.dev`. Convex hosts authentication, the backend and images. No always-on Mac, Caddy or Cloudflare Tunnel is needed for production. If the public hostname changes, update Convex `SITE_URL`/`ALLOWED_ORIGINS`, Google OAuth origins, Maps key referrers and mobile web links. The OAuth callback stays the same when the Convex deployment stays the same.
 
-If any photos use local storage, also copy the complete photo directory (normally `~/pics/notes`) and `packages/backend/.env.photos.local`. Update its `PHOTO_STORAGE_DIR` to the new absolute path while preserving `LOCAL_PHOTO_SECRET`, then run `pnpm start --local-photos`. Switching new uploads to Convex does not migrate older local files. Convex-hosted photos and database records need no copying when reusing the same deployment.
+## Deploy the website to Cloudflare Pages
 
-## Start everything on the Mac mini
+Use the production values in `apps/web/.env.local`, then run `pnpm deploy:web`. This builds `apps/web/dist` and uploads only that static output using the official Wrangler CLI. Authenticate Wrangler to the Cloudflare account containing `nishitnagar.com` first (`pnpm dlx wrangler@4.151.3 login`). OAuth secrets, JWT private keys and Convex deployment credentials remain in Convex and must never be added to frontend build variables.
 
-From this repository, run:
+This is a Direct Upload Pages project: repository pushes do not automatically deploy it. Alternatively, build with `pnpm build:web`, ZIP the contents of `apps/web/dist` with `index.html` at the archive root, and upload that ZIP as a production deployment in the Pages dashboard. Do not upload the repository, environment files, migration snapshots or test reports. Pages supplies the SPA fallback because this build has no top-level `404.html`; `public/_headers` adds static-response security headers.
 
-```sh
-pnpm start
-```
+The site uses static hosting only, with no Pages Functions or paid Workers bindings. Static asset requests are free and unlimited under [Cloudflare's current pricing](https://developers.cloudflare.com/pages/functions/pricing/); Free-plan file/build limits still apply. Convex, Google Maps/Places and domain registration have their own plans and charges. After each deployment, verify direct navigation to `/privacy`, `/terms`, `/help` and `/delete-account`, Google sign-in and private photo access on the custom domain.
 
-This builds the web app, starts Caddy, then runs the Cloudflare tunnel from `~/.cloudflared/config.yml`. Configure its ingress hostname as `notes.nishitnagar.com`, pointing to `http://localhost:8080`. Caddy serves the built app on port 8080 and forwards `/photos/*` to the photo service on port 8788. Its static root is relative to the repository, so run Caddy from the repository root.
+## Optional Mac hosting for rollback
 
-Keep this terminal open. Press **Ctrl+C** to stop the processes this command started. Convex photos do not require the local photo service. To also start it for existing local photos or boards using local storage, run `pnpm start --local-photos`; an already-running photo service is reused and stays running. Stop separately launched Caddy and Cloudflare processes before using this command; it reports occupied ports without killing existing processes. If one of the managed services fails, the others started here are stopped too. This command does not deploy or test the Convex backend.
-
-Set `CLOUDFLARED_CONFIG` if your tunnel configuration is in a different file.
+`pnpm start` remains available for an intentional rollback: it builds the website, starts Caddy on port 8080 and starts the configured Cloudflare Tunnel. Production DNS now targets Pages, so starting this command does not switch public hosting back. A rollback also needs the `notes` CNAME changed to the retained tunnel target. Keep the terminal running during Mac hosting; Ctrl+C stops its services. Set `CLOUDFLARED_CONFIG` if the tunnel configuration is not in `~/.cloudflared/config.yml`.
 
 ## Photo storage
 
-New uploads use Convex Storage, including on existing boards without a storage preference. Uploads and reads go directly to authenticated Convex HTTP actions at `VITE_CONVEX_SITE_URL`; each request checks current board membership. No public download URLs are exposed. Set `SITE_URL` to the hosted app origin and `ALLOWED_ORIGINS` to additional origins, such as local development; both are accepted for photo requests.
+All new uploads, including profile pictures, use Convex Storage. Photo reads and journal uploads go to the Convex HTTPS actions and check current access. There is no local-storage option or photo-service dependency in the website hosting path. The old local-file schema and cleanup endpoints remain for compatibility only; new local uploads are rejected. The production migration verifies that every existing image has a Convex storage ID before cutover.
 
-Admins can change **Board Settings → Photo storage → Store new photos in** for each board. Members cannot change this setting. The choice applies to new upload reservations; existing photos continue to read from their original storage and are not moved or deleted.
+## Production and development
 
-### Optional local storage on the Mac mini
+Production uses `striped-ant-274`; development uses `opulent-partridge-532`. The clients' ignored `.env.local` files point to production after cutover. Backend `.env.local` continues to identify the development deployment, so `convex dev` never silently edits production. Use explicit `--prod` for production CLI reads/migrations and `pnpm deploy:backend` for an authorized production code deploy. To work with development data in a client, explicitly override both client Convex URLs with the development deployment's URLs and rebuild/restart that client.
 
-After setup and selecting **Local storage (Mac mini)** in Board Settings, new pictures are stored in `~/pics/notes` as private JPEG, PNG, or WebP files with a `nico-notes-` prefix. Files saved under an earlier brand prefix remain readable and are included in authorized cleanup by their unique disk key. For these local files, Convex keeps their visit, uploader, caption, and disk key. Convex-hosted photos remain readable directly from Convex.
-
-One-time setup (configures the currently selected backend, never prints the service secret):
-
-```sh
-pnpm --filter @nico-notes/backend setup:photos --configure-backend
-```
-
-Keep the photo service running on the Mac mini alongside the app, then select local storage in Board Settings:
-
-```sh
-pnpm photos
-```
-
-The service listens on `127.0.0.1:8788`. Vite dev and preview proxy `/photos` to it, so phones accessing this app through the Mac mini use the same folder. Any other frontend host must also proxy `/photos` to this service securely. The Mac mini photo service must be online for local photo uploads and viewing. The service's credential and folder are stored in ignored `packages/backend/.env.photos.local`; never expose that credential through a `VITE_` variable.
-
-The New visit form includes an optional picture picker below notes. It previews the selected file, uploads after saving the visit, and lets failed uploads retry without creating another visit. Each request verifies current board access. Photo and visit deletion queue disk cleanup, processed every minute while the service runs. Incomplete uploads whose registration never succeeds may leave a file on disk; the service never scans or deletes unrelated files in this folder.
-
-Back up `~/pics/notes` with your Mac backups. Nothing migrates or deletes existing cloud photos automatically.
+See [the production cutover record](packages/backend/PRODUCTION.md) for migration verification, authentication, storage and rollback details. Production needs its own JWT signing keys; browser Google login needs its production callback registered in Google Cloud. Users must sign in to the production app again. Development is retained as a temporary rollback source and receives no production writes.
 
 ## Enable Google sign-in
 
 1. Create a Web application OAuth client in [Google Auth Platform](https://console.cloud.google.com/auth/overview). Configure its consent screen and add both of your Google accounts as test users while the OAuth app is in testing.
 2. Add `https://notes.nishitnagar.com` and `http://localhost:5173` as authorized JavaScript origins.
-3. Add your Convex HTTP actions callback URL as an authorized redirect URI. For the configured development deployment it is:
+3. Add your Convex HTTP actions callback URL as an authorized redirect URI. For production it is:
 
    ```text
-   https://opulent-partridge-532.convex.site/api/auth/callback/google
+   https://striped-ant-274.convex.site/api/auth/callback/google
    ```
 
-4. In the [development deployment's environment settings](https://dashboard.convex.dev/d/opulent-partridge-532/settings/environment-variables), set `AUTH_GOOGLE_ID` and `AUTH_GOOGLE_SECRET` to your OAuth client values. Set `SITE_URL=https://notes.nishitnagar.com` and `ALLOWED_ORIGINS=http://localhost:5173` to support both the hosted app and local development. The setup script configures `JWT_PRIVATE_KEY` and `JWKS` without printing them; it preserves existing keys.
+4. In the [production deployment's environment settings](https://dashboard.convex.dev/d/striped-ant-274/settings/environment-variables), set `AUTH_GOOGLE_ID` and `AUTH_GOOGLE_SECRET` to your OAuth client values. Set `SITE_URL=https://notes.nishitnagar.com` and `ALLOWED_ORIGINS=http://localhost:5173` to support both the hosted app and local development. The setup script configures `JWT_PRIVATE_KEY` and `JWKS` without printing them; it preserves existing keys.
 5. Reload the app. The Google button becomes available when the required settings exist. Sign in, create a board, and use **Board Settings → Create invitation link** to invite your partner. Members can share invites too. Invitees request to join after signing in, and a board admin approves or rejects each request.
 
 Google OAuth is implemented through [Convex Auth](https://labs.convex.dev/auth/config/oauth/google), which is currently beta. No Google password is handled by nico notes. There is no password, anonymous sign-in, or demo-account fallback in the application.
@@ -120,8 +104,10 @@ Browser sessions and the last-used board preference use the `nico-notes` namespa
 - Board-specific type presets, such as Food or Trek, copied into visits. Changing or deleting a preset does not change past visits.
 - Individual dish, category, and optional overall ratings from 1–10 in half-point increments. Each person can update or clear only their own rating. Averages exclude unrated people and never substitute for overall ratings.
 - Up to 50 dishes, 50 categories, 2,000 submitted ratings, and 10 photos per visit; up to 50 reusable types per board. JPEG, PNG, and WebP images up to 10 MB each. Export HEIC photos to JPEG before uploading.
-- Authenticated photo reads; no public storage URLs in the frontend API. Upload reservations belong to the signed-in user. MIME signatures and sizes are validated on the backend.
-- Scheduled cleanup for board deletion, expired upload reservations, and unreferenced files older than a day.
+- Authenticated journal photo reads; no public journal-photo storage URLs in the frontend API. Upload reservations belong to the signed-in user. MIME signatures and sizes are validated on the backend.
+- Internal soft deletion with owner-assisted recovery and no Trash UI. Account deletion has a disclosed 30-day recovery window before permanent cleanup. See [operator recovery instructions](packages/backend/PRODUCTION.md#internal-deletion-recovery).
+- Scheduled cleanup for expired upload reservations, orphan files and account erasure.
+- A board Notifications tab on Android and web with live change history, member names, timestamps, unread indicators, and per-member read state. History starts when this feature is deployed; earlier changes are not reconstructed.
 - Desktop and mobile layouts, keyboard-accessible dialogs, loading and error states, and input preservation after failed saves.
 
 Members can edit shared details, dishes, and types. Admins manage membership and boards, promote other members, and can enter ratings on behalf of any current member. Every board must retain at least one admin. The visit creator or admin can delete a visit; photo uploaders or admins can remove photos or edit captions. Removing someone preserves their historical contributions. Removed members must request access again and receive admin approval before rejoining.
@@ -135,7 +121,7 @@ Boards, visits, and gallery data update reactively. Already viewed/downloaded ph
 | `apps/web`         | React SPA, Vite+, interface and responsive styles | `pnpm dev:web`     | `pnpm build`          |
 | `packages/backend` | Convex functions, auth, database, storage         | `pnpm dev:backend` | `pnpm deploy:backend` |
 
-The backend package exports `@nico-notes/backend/api`, `@nico-notes/backend/dataModel`, and `@nico-notes/backend/shared`. Generated Convex bindings are included with source; regenerate them with `pnpm --filter @nico-notes/backend codegen` after backend changes. Frontend calls use typed queries and mutations, not a separate REST server. Convex HTTP actions handle cloud photo uploads and reads. The optional local photo service handles bytes only for local storage and authorizes requests with Convex.
+The backend package exports `@nico-notes/backend/api`, `@nico-notes/backend/dataModel`, and `@nico-notes/backend/shared`. Generated Convex bindings are included with source; regenerate them with `pnpm --filter @nico-notes/backend codegen` after backend changes. Frontend calls use typed queries and mutations, not a separate REST server. Convex HTTP actions handle cloud photo uploads and reads. The Mac does not handle journal image uploads or reads.
 
 Theme tokens and responsive styles are in `apps/web/src/styles.css`. Epilogue and Plus Jakarta Sans are bundled locally. The supplied palette is used throughout, with darker shades for text and buttons.
 
@@ -164,7 +150,7 @@ Screenshots and test reports stay in ignored `test-results/`. They may contain t
 1. Create/select the production Convex deployment. Configure its own Google OAuth client settings, `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET`, `SITE_URL`, `JWT_PRIVATE_KEY`, and `JWKS`. Development environment variables do not automatically carry into production. Generate a fresh signing-key pair for production using the official [Convex Auth setup](https://labs.convex.dev/auth/setup/manual).
 2. Add the production Convex callback URI to Google and set `SITE_URL=https://notes.nishitnagar.com`. If serving more than one trusted frontend origin, set the comma-separated `ALLOWED_ORIGINS` for redirects and photo requests accordingly.
 3. Run `pnpm deploy:backend`. Set the frontend build environment to the production `VITE_CONVEX_URL` and `VITE_CONVEX_SITE_URL`, then run `pnpm build`.
-4. Host `apps/web/dist` on a static host with HTTPS and an SPA fallback rewriting application routes to `/index.html`. Frontend hosting is intentionally not provisioned by this implementation.
+4. Run `pnpm deploy:web` to publish `apps/web/dist` to the existing Cloudflare Pages project. The custom domain stays `notes.nishitnagar.com`.
 5. Verify Google sign-in with both accounts, member invitations and admin approval, a shared rating, photo upload, and direct-link navigation on the final domain. Keep `NICO_NOTES_E2E_ENABLED` unset in production.
 
 Development data is separate from production data. There is no automatic data migration or public publishing step.
@@ -207,3 +193,9 @@ The backfill schedules bounded work and can be rerun. Run it only after deployme
 Deployments containing legacy place records with `key` instead of `matchKey` first need a lookup-key migration. Temporarily make `places.matchKey` optional, deploy, then run `migrations:placeMatchKeys` with `{"cursor":null}`. Pass each returned `nextCursor` into the next call until it is null. Restore the required validator and deploy again. The mutation only fills normalized lookup keys; it preserves every original ID, field and visit link. The optional legacy metadata fields remain accepted by the schema.
 
 Sign-in redirects accept root-relative paths or legacy absolute URLs with exactly the `SITE_URL` origin. `ALLOWED_ORIGINS` continues to control photo CORS; it does not expand sign-in redirect destinations.
+
+## Google Maps content
+
+Google place IDs are durable references. Google-supplied names, addresses, coordinates and attributions are fetched live by the Android Places SDK or Maps JavaScript Places library and projected into client views. The bounded in-memory cache expires after five minutes; it is never written to Convex, browser local storage or device files. Saved Google places show a neutral label if live details cannot load. Manually entered places and pins are journal data and stay saved. Lookup requests may incur Google Maps Platform usage charges.
+
+Google attribution and provider links accompany Places content. Public Terms and Privacy pages link Google's policies. The Android native Places module changed, so install a fresh native build; Metro/JavaScript reload alone cannot add the new lookup method. Recheck API key restrictions and SDK disclosures when changing Google dependencies.

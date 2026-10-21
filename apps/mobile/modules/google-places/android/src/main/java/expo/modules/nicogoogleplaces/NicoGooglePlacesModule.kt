@@ -6,6 +6,7 @@ import com.google.android.gms.maps.model.LatLng
 import com.google.android.libraries.places.api.Places
 import com.google.android.libraries.places.api.model.Place
 import com.google.android.libraries.places.api.model.RectangularBounds
+import com.google.android.libraries.places.api.net.FetchPlaceRequest
 import com.google.android.libraries.places.api.net.PlacesStatusCodes
 import com.google.android.libraries.places.api.net.SearchByTextRequest
 import expo.modules.kotlin.exception.CodedException
@@ -34,7 +35,7 @@ class NicoGooglePlacesModule : Module() {
           Place.Field.ID, Place.Field.DISPLAY_NAME, Place.Field.FORMATTED_ADDRESS, Place.Field.LOCATION
         )).setMaxResultCount(20)
         if (latitude != null && longitude != null) {
-          val dLat = 50000.0 / 111320.0
+          val dLat = 10000.0 / 111320.0
           val dLng = dLat / maxOf(0.01, cos(Math.toRadians(latitude)))
           fun wrap(value: Double) = ((value + 540.0) % 360.0) - 180.0
           request.setLocationBias(RectangularBounds.newInstance(
@@ -52,6 +53,7 @@ class NicoGooglePlacesModule : Module() {
                   "id" to id,
                   "name" to (place.displayName ?: "Place"),
                   "address" to (place.formattedAddress ?: ""),
+                  "attributions" to (place.attributions ?: emptyList<String>()),
                   "location" to mapOf("latitude" to point.latitude, "longitude" to point.longitude)
                 )
               }
@@ -61,6 +63,36 @@ class NicoGooglePlacesModule : Module() {
               // Never return SDK messages containing credentials or request URLs.
               val status = if (error is ApiException) PlacesStatusCodes.getStatusCodeString(error.statusCode) else "NETWORK_ERROR"
               if (continuation.isActive) continuation.resumeWithException(CodedException("Google place search: $status"))
+            }
+        }
+      }
+    }
+    AsyncFunction("fetchPlace") Coroutine { id: String ->
+      val context = appContext.reactContext ?: throw CodedException("Place details are unavailable.")
+      val info = context.packageManager.getApplicationInfo(context.packageName, PackageManager.GET_META_DATA)
+      val key = info.metaData?.getString("com.google.android.geo.API_KEY")?.trim()
+      if (key.isNullOrEmpty()) throw CodedException("Google place details are not configured.")
+      withContext(Dispatchers.Main) {
+        if (!Places.isInitialized()) Places.initializeWithNewPlacesApiEnabled(context, key)
+        val request = FetchPlaceRequest.newInstance(id, listOf(
+          Place.Field.ID, Place.Field.DISPLAY_NAME, Place.Field.FORMATTED_ADDRESS, Place.Field.LOCATION
+        ))
+        suspendCancellableCoroutine<Map<String, Any>> { continuation ->
+          Places.createClient(context).fetchPlace(request)
+            .addOnSuccessListener { response ->
+              val place = response.place
+              val value = mutableMapOf<String, Any>(
+                "id" to (place.id ?: id),
+                "name" to (place.displayName ?: "Saved Google place"),
+                "address" to (place.formattedAddress ?: ""),
+                "attributions" to (place.attributions ?: emptyList<String>())
+              )
+              place.location?.let { point -> value["location"] = mapOf("latitude" to point.latitude, "longitude" to point.longitude) }
+              if (continuation.isActive) continuation.resume(value)
+            }
+            .addOnFailureListener { error ->
+              val status = if (error is ApiException) PlacesStatusCodes.getStatusCodeString(error.statusCode) else "NETWORK_ERROR"
+              if (continuation.isActive) continuation.resumeWithException(CodedException("Google place details: $status"))
             }
         }
       }

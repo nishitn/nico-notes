@@ -8,6 +8,7 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "build": "expo export --platform android",
+    "eas-build-post-install": "node ../../scripts/check-release-config.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
@@ -15,8 +16,6 @@
     "@expo/ui": "~57.0.25",
     "@expo/vector-icons": "^15.1.1",
     "@nico-notes/backend": "workspace:*",
-    "@react-navigation/native": "^7.1.0",
-    "@react-navigation/native-stack": "^7.3.0",
     "convex": "1.46.0",
     "expo": "~57.0.29",
     "expo-constants": "~57.0.22",
@@ -28,7 +27,9 @@
     "expo-image-picker": "~57.0.20",
     "expo-linking": "~57.0.13",
     "expo-location": "~57.0.21",
+    "expo-router": "~57.0.28",
     "expo-secure-store": "~57.0.4",
+    "expo-splash-screen": "~57.0.10",
     "expo-status-bar": "~57.0.1",
     "expo-system-ui": "~57.0.4",
     "expo-web-browser": "~57.0.3",
@@ -37,8 +38,10 @@
     "react-native": "0.86.3",
     "react-native-maps": "1.27.2",
     "react-native-paper": "^5.15.3",
+    "react-native-reanimated": "4.5.1",
     "react-native-safe-area-context": "~5.7.0",
-    "react-native-screens": "~4.26.2"
+    "react-native-screens": "~4.26.2",
+    "react-native-worklets": "0.10.1"
   },
   "devDependencies": {
     "@types/react": "~19.2.2",

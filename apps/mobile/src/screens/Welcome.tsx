@@ -9,6 +9,7 @@ import {
 import { Image } from 'expo-image';
 import { colors, ErrorNote } from '../ui';
 import { GoogleSignInButton } from '../GoogleSignInButton';
+import { openLegal } from '../ReleaseTools';
 
 export function WelcomeScreen({
   onSignIn,
@@ -77,11 +78,27 @@ export function WelcomeScreen({
             </View>
           )}
           <ErrorNote error={error} />
+          <View
+            style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 20 }}
+          >
+            {(['privacy', 'terms', 'help'] as const).map((page) => (
+              <Text
+                key={page}
+                accessibilityRole="link"
+                onPress={() => void openLegal(page)}
+                style={[stylesForLinks, { textTransform: 'capitalize' }]}
+              >
+                {page}
+              </Text>
+            ))}
+          </View>
         </View>
       </View>
     </ScrollView>
   );
 }
+
+const stylesForLinks = { minHeight: 44, paddingVertical: 12, color: colors.rust, fontSize: 13 };
 
 const welcome = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },

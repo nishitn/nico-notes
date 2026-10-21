@@ -1,3 +1,4 @@
+import { GoogleAttribution } from './GoogleAttribution';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Icon } from 'react-native-paper';
 import { colors, styles } from './ui';
@@ -5,6 +6,8 @@ import { colors, styles } from './ui';
 export function PlacePreview({
   name,
   address,
+  googlePlaceId,
+  attributions,
   isNew,
   isWishlisted,
   onClose,
@@ -15,6 +18,8 @@ export function PlacePreview({
 }: {
   name: string;
   address: string;
+  googlePlaceId?: string;
+  attributions?: string[];
   isNew?: boolean;
   isWishlisted?: boolean;
   onClose: () => void;
@@ -46,6 +51,9 @@ export function PlacePreview({
           <Icon source="close" size={20} color={colors.muted} />
         </Pressable>
       </View>
+      {(googlePlaceId || isNew) && (
+        <GoogleAttribution placeId={googlePlaceId} attributions={attributions} />
+      )}
       <View style={preview.actions}>
         <Pressable
           accessibilityRole="button"

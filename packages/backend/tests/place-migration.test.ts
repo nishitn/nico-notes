@@ -1,3 +1,4 @@
+import { POLICY_VERSION } from '../legal';
 import { describe, expect, it } from 'vite-plus/test';
 import { convexTest } from 'convex-test';
 import { defineSchema, defineTable } from 'convex/server';
@@ -20,7 +21,10 @@ describe('legacy place lookup-key migration', () => {
   it('resumes in bounded batches, preserves original rows and links, and is idempotent', async () => {
     const t = convexTest(migrationSchema, modules);
     const before = await t.run(async (ctx) => {
-      const ownerId = await ctx.db.insert('users', { name: 'Member' });
+      const ownerId = await ctx.db.insert('users', {
+        termsVersion: POLICY_VERSION,
+        name: 'Member',
+      });
       const boardId = await ctx.db.insert('boards', {
         name: 'Visits',
         description: '',

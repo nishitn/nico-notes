@@ -1,3 +1,4 @@
+import { GoogleAttribution, GoogleSearchInfo } from './GoogleAttribution';
 import { useRef, useState } from 'react';
 import { MapPin, Navigation, Pencil, Search } from 'lucide-react';
 import { ErrorNote, Field, Modal } from './ui';
@@ -102,7 +103,13 @@ export function LocationField({
               maxLength={120}
               value={title}
               placeholder="Choose a place or enter a name"
-              onChange={(event) => onChange({ title: event.target.value, place, location: value })}
+              onChange={(event) =>
+                onChange({
+                  title: event.target.value,
+                  place: googlePlaceId ? '' : place,
+                  location: googlePlaceId ? null : value,
+                })
+              }
             />
           </Field>
           {(place || value) && (
@@ -170,6 +177,10 @@ export function LocationField({
             )}
             {results.length > 0 && (
               <div className="place-search-results" aria-label="Google Maps results">
+                <>
+                  <GoogleAttribution />
+                  <GoogleSearchInfo />
+                </>
                 {results.map((result) => (
                   <button
                     type="button"
@@ -186,6 +197,7 @@ export function LocationField({
                     <span>
                       <strong>{result.title}</strong>
                       <small>{result.place}</small>
+                      <GoogleAttribution attributions={result.attributions} />
                     </span>
                   </button>
                 ))}
@@ -194,7 +206,15 @@ export function LocationField({
             <PlacesMap
               places={pins(draft.location, draft.title)}
               selectedId={draft.location ? 'visit' : undefined}
-              onPick={(location) => setDraft((current) => ({ ...current, location }))}
+              onPick={(location) =>
+                setDraft((current) => ({
+                  ...current,
+                  title: current.googlePlaceId ? '' : current.title,
+                  place: current.googlePlaceId ? '' : current.place,
+                  googlePlaceId: undefined,
+                  location,
+                }))
+              }
               autoLocate={!value}
               label="Choose visit location"
             />
@@ -202,6 +222,7 @@ export function LocationField({
               <div className="place-selection" aria-live="polite">
                 <strong>{draft.title}</strong>
                 <p className="small muted">{draft.place}</p>
+                {draft.googlePlaceId && <GoogleAttribution placeId={draft.googlePlaceId} />}
               </div>
             )}
             <details className="place-manual-details">
@@ -212,7 +233,13 @@ export function LocationField({
                     maxLength={120}
                     value={draft.title}
                     onChange={(event) =>
-                      setDraft({ ...draft, title: event.target.value, googlePlaceId: undefined })
+                      setDraft({
+                        ...draft,
+                        title: event.target.value,
+                        place: draft.googlePlaceId ? '' : draft.place,
+                        location: draft.googlePlaceId ? null : draft.location,
+                        googlePlaceId: undefined,
+                      })
                     }
                   />
                 </Field>
@@ -220,7 +247,15 @@ export function LocationField({
                   <input
                     maxLength={250}
                     value={draft.place}
-                    onChange={(event) => setDraft({ ...draft, place: event.target.value })}
+                    onChange={(event) =>
+                      setDraft({
+                        ...draft,
+                        place: event.target.value,
+                        title: draft.googlePlaceId ? '' : draft.title,
+                        location: draft.googlePlaceId ? null : draft.location,
+                        googlePlaceId: undefined,
+                      })
+                    }
                   />
                 </Field>
                 <Field label="Coordinates or a Google Maps URL">
@@ -252,6 +287,9 @@ export function LocationField({
                       }
                       setDraft({
                         ...draft,
+                        title: draft.googlePlaceId ? '' : draft.title,
+                        place: draft.googlePlaceId ? '' : draft.place,
+                        googlePlaceId: undefined,
                         location: { latitude: Number(pair[1]), longitude: Number(pair[2]) },
                       });
                       setError('');
@@ -263,7 +301,15 @@ export function LocationField({
                     <button
                       type="button"
                       className="text-button"
-                      onClick={() => setDraft({ ...draft, location: null })}
+                      onClick={() =>
+                        setDraft({
+                          ...draft,
+                          title: draft.googlePlaceId ? '' : draft.title,
+                          place: draft.googlePlaceId ? '' : draft.place,
+                          googlePlaceId: undefined,
+                          location: null,
+                        })
+                      }
                     >
                       Remove pin
                     </button>

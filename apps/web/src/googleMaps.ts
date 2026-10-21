@@ -1,4 +1,5 @@
 /// <reference types="google.maps" />
+import type { LivePlace } from '@nico-notes/backend/livePlaces';
 import { importLibrary, setOptions } from '@googlemaps/js-api-loader';
 
 export type MapLocation = { latitude: number; longitude: number; source?: string };
@@ -71,7 +72,7 @@ export async function searchNearbyPlaces(query: string, center?: MapLocation) {
   const { Place } = await importLibrary('places');
   const { places } = await Place.searchByText({
     textQuery: query,
-    fields: ['id', 'displayName', 'formattedAddress', 'location'],
+    fields: ['id', 'displayName', 'formattedAddress', 'location', 'attributions'],
     // Without a device location, let Google use its default bias instead of
     // restricting searches to an unrelated saved visit.
     ...(center ? { locationRestriction: nearbyBounds(center) } : {}),
@@ -88,8 +89,37 @@ export async function searchNearbyPlaces(query: string, center?: MapLocation) {
           title: place.displayName || 'Place',
           place: place.formattedAddress || '',
           location,
+          attributions: (place.attributions ?? []).map(attributionHtml),
         },
       ];
     })
     .slice(0, 5);
+}
+
+function attributionHtml(attribution: google.maps.places.Attribution) {
+  const escape = (text: string) =>
+    text.replace(
+      /[&<>"']/g,
+      (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!,
+    );
+  return attribution.providerURI
+    ? `<a href="${escape(attribution.providerURI)}">${escape(attribution.provider ?? '')}</a>`
+    : escape(attribution.provider ?? '');
+}
+export async function fetchGooglePlace(id: string): Promise<LivePlace> {
+  await loadGoogleMaps();
+  const { Place } = await importLibrary('places');
+  const place = new Place({ id });
+  await place.fetchFields({
+    fields: ['id', 'displayName', 'formattedAddress', 'location', 'attributions'],
+  });
+  return {
+    id: place.id,
+    name: place.displayName || 'Saved Google place',
+    address: place.formattedAddress || '',
+    location: place.location
+      ? { latitude: place.location.lat(), longitude: place.location.lng() }
+      : undefined,
+    attributions: (place.attributions ?? []).map(attributionHtml),
+  };
 }

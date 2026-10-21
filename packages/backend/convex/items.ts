@@ -1,3 +1,4 @@
+import { logVisitChange } from './activity';
 import { ConvexError, v } from 'convex/values';
 import { authedMutation, visitAccess } from './lib';
 import { MAX_ITEMS, textValue } from '../shared';
@@ -22,6 +23,8 @@ export const saveDish = authedMutation({
       if (!dish || dish.visitId !== args.visitId)
         throw new ConvexError('This dish is not part of this visit.');
       await ctx.db.patch(id, fields);
+      if (dish.name !== fields.name || dish.description !== fields.description)
+        await logVisitChange(ctx, args.visitId, ctx.userId, 'updated a dish on');
       return id;
     }
     const dishes = await ctx.db
@@ -29,7 +32,9 @@ export const saveDish = authedMutation({
       .withIndex('by_visitId', (q) => q.eq('visitId', args.visitId))
       .take(MAX_ITEMS);
     if (dishes.length >= MAX_ITEMS) throw new ConvexError('A visit can have up to 50 dishes.');
-    return ctx.db.insert('dishes', fields);
+    const dishId = await ctx.db.insert('dishes', fields);
+    await logVisitChange(ctx, args.visitId, ctx.userId, 'added a dish to');
+    return dishId;
   },
 });
 export const saveCategory = authedMutation({
@@ -49,10 +54,13 @@ export const saveCategory = authedMutation({
       if (!category || category.visitId !== visitId)
         throw new ConvexError('This category is not part of this visit.');
       await ctx.db.patch(id, { name: clean });
+      if (category.name !== clean)
+        await logVisitChange(ctx, visitId, ctx.userId, 'updated a category on');
       return id;
     }
     if (categories.length >= MAX_ITEMS)
       throw new ConvexError('A visit can have up to 50 categories.');
+    await logVisitChange(ctx, visitId, ctx.userId, 'added a category to');
     return ctx.db.insert('categories', {
       visitId,
       name: clean,
@@ -83,6 +91,7 @@ export const remove = authedMutation({
       .take(2000);
     for (const rating of ratings) await ctx.db.delete(rating._id);
     await ctx.db.delete(target);
+    await logVisitChange(ctx, visitId, ctx.userId, `removed a ${kind} from`);
     return null;
   },
 });

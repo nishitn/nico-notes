@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
-import { useMutation, useQuery } from 'convex/react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useMutation, useQuery } from './convexLive';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   Check,
   Clock,
-  Cloud,
   Copy,
   Link2,
+  LogOut,
+  ShieldCheck,
   Pencil,
   Plus,
   RefreshCw,
@@ -33,48 +34,6 @@ import {
 } from './ui';
 
 import { DishRatingsToggle, RatingCategories } from './RatingCategories';
-
-function PhotoStorageSettings({ board }: { board: Doc<'boards'> }) {
-  const setStorage = useMutation(api.photos.setStorage);
-  const task = useTask();
-  const notice = useNotice();
-  return (
-    <section className="settings-section">
-      <h2>
-        <span className="settings-icon" aria-hidden="true">
-          <Cloud size={18} />
-        </span>
-        Photo storage
-      </h2>
-      <div className="settings-section-body">
-        <Field
-          label="Store new photos in"
-          hint="Applies to new uploads on this board. Existing photos stay where they are."
-        >
-          <select
-            value={board.photoStorage ?? 'convex'}
-            disabled={task.busy}
-            onChange={(event) => {
-              const provider = event.target.value as 'convex' | 'local';
-              void task.run(async () => {
-                await setStorage({ boardId: board._id, provider });
-                notice('Photo storage updated');
-              });
-            }}
-          >
-            <option value="convex">Convex cloud (default)</option>
-            <option value="local">Local storage (Mac mini)</option>
-          </select>
-        </Field>
-        <p>
-          Convex stores photos online. Local storage requires the Mac mini photo service to be set
-          up and running.
-        </p>
-        <ErrorNote text={task.error} />
-      </div>
-    </section>
-  );
-}
 
 function BoardDetails({ board, canEdit }: { board: Doc<'boards'>; canEdit: boolean }) {
   const [editing, setEditing] = useState(false);
@@ -184,7 +143,9 @@ export function PendingRequestsList({ boardId }: { boardId: Id<'boards'> }) {
             </div>
             <div className="join-request-actions">
               <button
-                className="button primary small"
+                className="icon-button"
+                aria-label={`Accept ${req.userName}`}
+                title={`Accept ${req.userName}`}
                 disabled={task.busy}
                 onClick={() =>
                   task.run(async () => {
@@ -193,10 +154,12 @@ export function PendingRequestsList({ boardId }: { boardId: Id<'boards'> }) {
                   })
                 }
               >
-                <Check size={14} /> Accept
+                <Check size={17} />
               </button>
               <button
-                className="button secondary small danger-hover"
+                className="icon-button danger-hover"
+                aria-label={`Reject ${req.userName}`}
+                title={`Reject ${req.userName}`}
                 disabled={task.busy}
                 onClick={() =>
                   task.run(async () => {
@@ -205,7 +168,7 @@ export function PendingRequestsList({ boardId }: { boardId: Id<'boards'> }) {
                   })
                 }
               >
-                <X size={14} /> Reject
+                <X size={17} />
               </button>
             </div>
           </div>
@@ -257,43 +220,45 @@ export function Invitations({
   if (!invitations) return <Spinner label="Loading invitations…" />;
 
   return (
-    <>
-      <p className="muted">
+    <div className="compact-invitations">
+      <p className="small muted">
         {canManage
           ? 'Share an invite. You approve who joins.'
-          : 'Share an invite. A board admin approves who joins.'}
+          : 'A board admin approves new members.'}
       </p>
-
       {code && (
-        <div className="invite-code-card">
-          <Field label="Board invite code">
-            <div className="code-input-group">
-              <input
-                readOnly
-                value={code}
-                className="code-input"
-                onFocus={(e) => e.target.select()}
-              />
+        <Field label="Invite code">
+          <div className="settings-input-actions">
+            <input
+              readOnly
+              aria-label="Board invite code"
+              value={code}
+              className="code-input"
+              onFocus={(event) => event.target.select()}
+            />
+            <button
+              type="button"
+              className="icon-button"
+              aria-label={copiedCode ? 'Invite code copied' : 'Copy invite code'}
+              title="Copy invite code"
+              disabled={task.busy}
+              onClick={() =>
+                task.run(async () => {
+                  await navigator.clipboard.writeText(code);
+                  setCopiedCode(true);
+                  notice('Invite code copied.');
+                })
+              }
+            >
+              {copiedCode ? <Check size={17} /> : <Copy size={17} />}
+            </button>
+            {canManage && (
               <button
                 type="button"
-                className="button secondary"
-                disabled={task.busy}
-                onClick={() =>
-                  task.run(async () => {
-                    await navigator.clipboard.writeText(code);
-                    setCopiedCode(true);
-                    notice('Invite code copied.');
-                  })
-                }
-              >
-                {copiedCode ? <Check size={16} /> : <Copy size={16} />}
-                {copiedCode ? 'Copied' : 'Copy code'}
-              </button>
-              <button
-                type="button"
-                className="button secondary icon-only"
+                className="icon-button"
+                aria-label="Regenerate invite code"
                 title="Regenerate invite code"
-                disabled={!canManage || task.busy}
+                disabled={task.busy}
                 onClick={() =>
                   task.run(async () => {
                     const newCode = await regenerateCode({ boardId });
@@ -303,47 +268,57 @@ export function Invitations({
                   })
                 }
               >
-                <RefreshCw size={15} />
+                <RefreshCw size={17} />
               </button>
+            )}
+          </div>
+        </Field>
+      )}
+      {active ? (
+        <div className="compact-invite-link">
+          <Field label="Invitation link">
+            <div className="settings-input-actions">
+              <input
+                readOnly
+                aria-label="Invitation link"
+                value={link}
+                onFocus={(event) => event.target.select()}
+              />
+              <button
+                type="button"
+                className="icon-button"
+                aria-label={copiedLink ? 'Invitation link copied' : 'Copy invitation link'}
+                title="Copy invitation link"
+                disabled={task.busy}
+                onClick={() =>
+                  task.run(async () => {
+                    await navigator.clipboard.writeText(link);
+                    setCopiedLink(true);
+                    notice('Invitation link copied.');
+                  })
+                }
+              >
+                {copiedLink ? <Check size={17} /> : <Copy size={17} />}
+              </button>
+              {canManage && (
+                <button
+                  type="button"
+                  className="icon-button danger-text"
+                  aria-label="Revoke invitation link"
+                  title="Revoke invitation link"
+                  disabled={task.busy}
+                  onClick={() => setRevoking(active._id)}
+                >
+                  <X size={17} />
+                </button>
+              )}
             </div>
           </Field>
-        </div>
-      )}
-
-      {active ? (
-        <div className="invite-link-box">
-          <Field label="Invitation link">
-            <input readOnly value={link} onFocus={(e) => e.target.select()} />
-          </Field>
-          <div className="actions">
-            <button
-              className="button secondary"
-              disabled={task.busy}
-              onClick={() =>
-                task.run(async () => {
-                  await navigator.clipboard.writeText(link);
-                  setCopiedLink(true);
-                  notice('Invitation link copied.');
-                })
-              }
-            >
-              {copiedLink ? <Check size={16} /> : <Copy size={16} />}
-              {copiedLink ? 'Copied' : 'Copy link'}
-            </button>
-            <button
-              className="text-button danger-text"
-              disabled={!canManage || task.busy}
-              title={!canManage ? 'Only a board admin can revoke invitation links' : undefined}
-              onClick={() => setRevoking(active._id)}
-            >
-              Revoke link
-            </button>
-          </div>
           <small className="muted">Expires {new Date(active.expiresAt).toLocaleDateString()}</small>
         </div>
       ) : (
         <button
-          className="button primary"
+          className="settings-inline-action"
           disabled={task.busy}
           onClick={() =>
             task.run(async () => {
@@ -352,7 +327,7 @@ export function Invitations({
             })
           }
         >
-          <Link2 size={16} /> Create invitation link
+          <Link2 size={17} /> Create invitation link
         </button>
       )}
       <ErrorNote text={task.error} />
@@ -365,9 +340,10 @@ export function Invitations({
           This link will stop working. Existing members will keep their access.
         </Confirm>
       )}
-    </>
+    </div>
   );
 }
+
 function TypeEditor({
   boardId,
   type,
@@ -464,6 +440,9 @@ export function Settings() {
         <div>
           <h1>Board Settings</h1>
         </div>
+        <Link className="settings-safety" to={`/boards/${id}/safety`}>
+          <ShieldCheck size={17} /> Safety
+        </Link>
       </div>
       <div className="settings-sections">
         <section className="settings-section settings-details">
@@ -477,7 +456,6 @@ export function Settings() {
             <BoardDetails board={detail.board} canEdit={isAdmin} />
           </div>
         </section>
-        {isAdmin && <PhotoStorageSettings board={detail.board} />}
         <section className="settings-section settings-types">
           <div className="section-heading">
             <h2>
@@ -487,11 +465,13 @@ export function Settings() {
               Visit types
             </h2>
             <button
-              className="button secondary"
+              className="icon-button"
+              aria-label="Add visit type"
+              title="Add visit type"
               onClick={() => setEditingType('new')}
               disabled={detail.types.length >= 50}
             >
-              <Plus size={16} /> New type
+              <Plus size={18} />
             </button>
           </div>
           <div className="settings-section-body">
@@ -604,11 +584,11 @@ export function Settings() {
         </section>
       </div>
       <div className="settings-delete">
-        <button className="button secondary" onClick={() => setLeaving(true)}>
-          Leave board
+        <button className="settings-inline-action danger-text" onClick={() => setLeaving(true)}>
+          <LogOut size={17} /> Leave board
         </button>
         <button
-          className="button danger"
+          className="settings-inline-action danger-text"
           disabled={!isAdmin}
           title={!isAdmin ? 'Only a board admin can delete this board' : undefined}
           onClick={() => setDeleting(true)}
@@ -670,8 +650,8 @@ export function Settings() {
             navigate('/');
           }}
         >
-          All visits, photos, and ratings will be permanently removed for everyone. This cannot be
-          undone.
+          This board and its content will be hidden for everyone. Contact support about a recovery
+          request. Recovery requires verification and is not guaranteed.
         </Confirm>
       )}
     </div>

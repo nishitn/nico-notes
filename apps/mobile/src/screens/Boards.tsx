@@ -1,47 +1,42 @@
 import { useState } from 'react';
-import { Text, View } from 'react-native';
-import { useMutation, useQuery } from 'convex/react';
-import { useAuthActions } from '@convex-dev/auth/react';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Button as MaterialButton, Dialog, Icon, IconButton, Portal } from 'react-native-paper';
+import { useMutation, usePaginatedQuery, useQuery } from '../convexLive';
 import { api } from '@nico-notes/backend/api';
 import type { Doc, Id } from '@nico-notes/backend/dataModel';
 import type { ScreenProps } from '../navigation';
-import {
-  Avatar,
-  Card,
-  Button,
-  ErrorNote,
-  Field,
-  Heading,
-  Loading,
-  Page,
-  styles,
-  Title,
-  useTask,
-} from '../ui';
-import { JournalScreen } from '../JournalScreen';
-import { clearNativeGoogleSession } from '../../modules/google-sign-in';
+import { colors, Button, ErrorNote, Field, Loading, Page, styles, Title, useTask } from '../ui';
 import { PlaceTopBar } from './Places';
+import { AccountTools } from '../ReleaseTools';
+import { ProfilePhoto } from '../ProfilePhoto';
+import { useUnsavedChanges } from '../useUnsavedChanges';
 
 export { VisitCard } from '../VisitCard';
-export function BoardsScreen({ navigation }: ScreenProps<'Boards'>) {
-  return <JournalScreen navigation={navigation} />;
-}
-export function BoardScreen({ route, navigation }: ScreenProps<'Board'>) {
-  return <JournalScreen navigation={navigation} initialBoardId={route.params.boardId} />;
-}
 export function BoardFormScreen({ route, navigation }: ScreenProps<'BoardForm'>) {
   const boardId = route.params?.boardId;
   const data = useQuery(api.boards.get, boardId ? { boardId } : 'skip');
-  if (boardId && !data) return <Loading />;
+  const boards = usePaginatedQuery(api.boards.list, {}, { initialNumItems: 24 });
   return (
-    <BoardForm
-      key={boardId ?? 'new'}
-      initial={data?.board}
-      onDone={(id) => {
-        if (boardId) navigation.goBack();
-        else navigation.replace('Board', { boardId: id });
-      }}
-    />
+    <View style={styles.page}>
+      <PlaceTopBar
+        navigation={navigation}
+        boardId={boardId}
+        boardName={data?.board.name}
+        boards={boards}
+      />
+      {boardId && !data ? (
+        <Loading />
+      ) : (
+        <BoardForm
+          key={boardId ?? 'new'}
+          initial={data?.board}
+          onDone={(id) => {
+            if (boardId) navigation.goBack();
+            else navigation.replace('Board', { boardId: id });
+          }}
+        />
+      )}
+    </View>
   );
 }
 function BoardForm({
@@ -53,52 +48,98 @@ function BoardForm({
 }) {
   const [name, setName] = useState(initial?.name ?? '');
   const [description, setDescription] = useState(initial?.description ?? '');
-  const [accent, setAccent] = useState<Doc<'boards'>['accent']>(initial?.accent ?? 'coral');
   const create = useMutation(api.boards.create);
   const update = useMutation(api.boards.update);
   const task = useTask();
+  const dirty = name !== (initial?.name ?? '') || description !== (initial?.description ?? '');
+  const allowExit = useUnsavedChanges(dirty, task.busy);
+  const save = () =>
+    void task.run(async () => {
+      const fields = { name, description, accent: initial?.accent ?? ('coral' as const) };
+      if (initial) {
+        await update({ boardId: initial._id, ...fields });
+        allowExit();
+        onDone(initial._id);
+      } else {
+        const id = await create(fields);
+        allowExit();
+        onDone(id);
+      }
+    });
   return (
     <Page>
-      <Title>{initial ? 'Make it yours.' : 'A new shared chapter.'}</Title>
-      <Field label="Board name" value={name} onChangeText={setName} maxLength={80} />
-      <Field
-        label="Description"
-        multiline
-        value={description}
-        onChangeText={setDescription}
-        maxLength={500}
-      />
-      <Heading>Choose a color</Heading>
-      <View style={styles.row}>
-        {(['coral', 'sage', 'peach'] as const).map((value) => (
-          <Button
-            key={value}
-            title={`${accent === value ? '✓ ' : ''}${value}`}
-            secondary={accent !== value}
-            onPress={() => setAccent(value)}
-          />
-        ))}
+      <View style={boardFormStyles.form}>
+        <View style={boardFormStyles.heading}>
+          <Title style={boardFormStyles.title}>{initial ? 'Board details' : 'New board'}</Title>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={initial ? 'Save board details' : 'Create board'}
+            accessibilityState={{ disabled: !name.trim() || task.busy, busy: task.busy }}
+            disabled={!name.trim() || task.busy}
+            onPress={save}
+            style={({ pressed }) => [
+              boardFormStyles.save,
+              { opacity: !name.trim() || task.busy ? 0.4 : pressed ? 0.6 : 1 },
+            ]}
+          >
+            {task.busy ? (
+              <ActivityIndicator size="small" color={colors.rust} />
+            ) : (
+              <Icon source="check" size={20} color={colors.rust} />
+            )}
+            <Text style={styles.link}>{initial ? 'Save' : 'Create'}</Text>
+          </Pressable>
+        </View>
+        <Field
+          label="Board name"
+          value={name}
+          onChangeText={setName}
+          maxLength={80}
+          placeholder="e.g. Our food adventures"
+          editable={!task.busy}
+          style={boardFormStyles.input}
+        />
+        <Field
+          label="Description (optional)"
+          multiline
+          value={description}
+          onChangeText={setDescription}
+          maxLength={500}
+          placeholder="What is this board for?"
+          editable={!task.busy}
+          style={[boardFormStyles.input, boardFormStyles.description]}
+        />
+        <ErrorNote error={task.error} />
       </View>
-      <ErrorNote error={task.error} />
-      <Button
-        title={task.busy ? 'Saving…' : 'Save board'}
-        disabled={!name.trim() || task.busy}
-        onPress={() =>
-          void task.run(async () => {
-            const fields = { name, description, accent };
-            if (initial) {
-              await update({ boardId: initial._id, ...fields });
-              onDone(initial._id);
-            } else onDone(await create(fields));
-          })
-        }
-      />
     </Page>
   );
 }
+const boardFormStyles = StyleSheet.create({
+  form: { gap: 18 },
+  heading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  title: { fontSize: 24, lineHeight: 32, flex: 1 },
+  save: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    minWidth: 64,
+    minHeight: 44,
+  },
+  input: {
+    fontSize: 14,
+    minHeight: 44,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  description: { minHeight: 88 },
+});
 export function JoinScreen({ route, navigation }: ScreenProps<'Join'>) {
   const [input, setInput] = useState(route.params?.token ?? '');
-  const [sent, setSent] = useState('');
+  const [sentBoard, setSentBoard] = useState<Id<'boards'>>();
+  const outcomes = useQuery(api.boards.myOutgoingRequests);
+  const outcome = outcomes?.find((item) => item.boardId === sentBoard);
   const request = useMutation(api.boards.requestToJoin);
   const task = useTask();
   return (
@@ -115,14 +156,24 @@ export function JoinScreen({ route, navigation }: ScreenProps<'Join'>) {
         onChangeText={setInput}
       />
       <ErrorNote error={task.error} />
-      {!!sent && (
+      {!!sentBoard && (
         <Text accessibilityLiveRegion="polite" style={styles.body}>
-          {sent}
+          {outcome?.status === 'accepted'
+            ? 'Your request was approved.'
+            : outcome?.status === 'rejected'
+              ? 'Your request was declined. You can ask the admin for help or request again.'
+              : 'Request sent. Waiting for admin approval.'}
         </Text>
+      )}
+      {outcome?.status === 'accepted' && (
+        <Button
+          title="Open board"
+          onPress={() => navigation.replace('Board', { boardId: outcome.boardId })}
+        />
       )}
       <Button
         title={task.busy ? 'Sending…' : 'Request to join'}
-        disabled={!input.trim() || task.busy || !!sent}
+        disabled={!input.trim() || task.busy || (!!sentBoard && outcome?.status !== 'rejected')}
         onPress={() =>
           void task.run(async () => {
             let code = input.trim();
@@ -135,7 +186,7 @@ export function JoinScreen({ route, navigation }: ScreenProps<'Join'>) {
             const result = await request({ code });
             if (result.status === 'already_member')
               navigation.replace('Board', { boardId: result.boardId });
-            else setSent(`Request sent to ${result.boardName}. Waiting for admin approval.`);
+            else setSentBoard(result.boardId);
           })
         }
       />
@@ -144,54 +195,84 @@ export function JoinScreen({ route, navigation }: ScreenProps<'Join'>) {
 }
 export function AccountScreen({ navigation }: ScreenProps<'Account'>) {
   const me = useQuery(api.boards.me);
-  const update = useMutation(api.boards.updateProfile);
-  const { signOut } = useAuthActions();
-  const task = useTask();
-  const [name, setName] = useState<string>();
+  const [editingName, setEditingName] = useState(false);
   return (
     <View style={styles.page}>
       <PlaceTopBar navigation={navigation} />
-      <Page>
-        <Title>Your account</Title>
-        <Text style={styles.muted}>Your profile is shared with the people on your boards.</Text>
-        <Card>
-          <View style={styles.row}>
-            <Avatar name={me?.name} image={me?.image} size={64} />
-            <View style={{ flex: 1, gap: 4 }}>
-              <Heading>{me?.name ?? 'Your profile'}</Heading>
-              <Text style={styles.muted}>Your shared journal profile</Text>
+      {!me ? (
+        <Loading />
+      ) : (
+        <Page>
+          <Title>Your account</Title>
+          <View style={{ paddingVertical: 12, marginBottom: 12 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
+              <ProfilePhoto name={me.name} image={me.image} />
+              <Text
+                style={{ fontFamily: 'EpilogueSemiBold', fontSize: 21, color: colors.ink, flex: 1 }}
+              >
+                {me.name}
+              </Text>
+              <IconButton
+                icon="pencil-outline"
+                iconColor={colors.rust}
+                accessibilityLabel="Edit name"
+                style={{ margin: 0, backgroundColor: colors.coralLight }}
+                onPress={() => setEditingName(true)}
+              />
             </View>
           </View>
+          <AccountTools navigation={navigation} />
+          {editingName && <EditProfileName name={me.name} onClose={() => setEditingName(false)} />}
+        </Page>
+      )}
+    </View>
+  );
+}
+
+function EditProfileName({ name, onClose }: { name: string; onClose: () => void }) {
+  const update = useMutation(api.boards.updateProfile);
+  const [draft, setDraft] = useState(name);
+  const task = useTask();
+  const save = () =>
+    void task.run(async () => {
+      await update({ name: draft });
+      onClose();
+    });
+  return (
+    <Portal>
+      <Dialog
+        visible
+        onDismiss={() => !task.busy && onClose()}
+        dismissable={!task.busy}
+        style={{ backgroundColor: colors.paper }}
+      >
+        <Dialog.Title>Edit name</Dialog.Title>
+        <Dialog.Content style={{ gap: 12 }}>
           <Field
             label="Display name"
-            value={name ?? me?.name ?? ''}
-            onChangeText={setName}
+            value={draft}
+            onChangeText={setDraft}
             maxLength={80}
+            autoFocus
+            editable={!task.busy}
+            onSubmitEditing={() => draft.trim() && !task.busy && save()}
           />
           <ErrorNote error={task.error} />
-          <Button
-            title={task.busy ? 'Saving…' : 'Save name'}
-            disabled={task.busy || !(name ?? me?.name)?.trim()}
-            onPress={() =>
-              void task.run(async () => {
-                await update({ name: name ?? me?.name ?? '' });
-                setName(undefined);
-              })
-            }
-          />
-        </Card>
-        <Button
-          secondary
-          title="Sign out"
-          disabled={task.busy}
-          onPress={() =>
-            void task.run(async () => {
-              await signOut();
-              await clearNativeGoogleSession().catch(() => undefined);
-            })
-          }
-        />
-      </Page>
-    </View>
+        </Dialog.Content>
+        <Dialog.Actions>
+          <MaterialButton disabled={task.busy} onPress={onClose}>
+            Cancel
+          </MaterialButton>
+          <MaterialButton
+            textColor={colors.rust}
+            disabled={task.busy || !draft.trim()}
+            loading={task.busy}
+            onPress={save}
+          >
+            Save name
+          </MaterialButton>
+        </Dialog.Actions>
+      </Dialog>
+    </Portal>
   );
 }

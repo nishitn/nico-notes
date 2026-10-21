@@ -4,8 +4,7 @@ import { Icon } from 'react-native-paper';
 import { colors } from './ui';
 
 export const VALID_SCORES = [
-  1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5,
-  6.0, 6.5, 7.0, 7.5, 8.0, 8.5, 9.0, 9.5, 10.0,
+  1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5, 7.0, 7.5, 8.0, 8.5, 9.0, 9.5, 10.0,
 ];
 
 function scoreDescriptor(score: number): string {
@@ -25,20 +24,24 @@ export type ScorePickerProps = {
   onChange: (score: number | undefined) => void;
   label?: string;
   compact?: boolean;
+  disabled?: boolean;
 };
 
-export function ScorePicker({ value, onChange, label, compact = false }: ScorePickerProps) {
+export function ScorePicker({ value, onChange, label, disabled = false }: ScorePickerProps) {
   const scrollRef = useRef<ScrollView>(null);
-  const currentScore = value !== null && value !== undefined && Number.isFinite(value) ? value : undefined;
+  const initialScore = useRef(value);
+  const currentScore =
+    value !== null && value !== undefined && Number.isFinite(value) ? value : undefined;
 
   useEffect(() => {
     // Auto-scroll to near the selected score or near 8.0
-    const targetScore = currentScore ?? 8.0;
+    const targetScore = initialScore.current ?? 8.0;
     const index = VALID_SCORES.findIndex((s) => Math.abs(s - targetScore) < 0.25);
     if (index > 4 && scrollRef.current) {
-      setTimeout(() => {
+      const timer = setTimeout(() => {
         scrollRef.current?.scrollTo({ x: Math.max(0, (index - 2) * 52), animated: true });
       }, 100);
+      return () => clearTimeout(timer);
     }
   }, []);
 
@@ -67,11 +70,11 @@ export function ScorePicker({ value, onChange, label, compact = false }: ScorePi
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Decrease score by 0.5"
-          disabled={currentScore !== undefined && currentScore <= 1.0}
+          disabled={disabled || (currentScore !== undefined && currentScore <= 1.0)}
           onPress={() => handleStep(-0.5)}
           style={({ pressed }) => [
             scorePickerStyles.stepBtn,
-            (currentScore !== undefined && currentScore <= 1.0) && scorePickerStyles.stepBtnDisabled,
+            currentScore !== undefined && currentScore <= 1.0 && scorePickerStyles.stepBtnDisabled,
             pressed && { opacity: 0.7 },
           ]}
         >
@@ -99,11 +102,11 @@ export function ScorePicker({ value, onChange, label, compact = false }: ScorePi
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Increase score by 0.5"
-          disabled={currentScore !== undefined && currentScore >= 10.0}
+          disabled={disabled || (currentScore !== undefined && currentScore >= 10.0)}
           onPress={() => handleStep(0.5)}
           style={({ pressed }) => [
             scorePickerStyles.stepBtn,
-            (currentScore !== undefined && currentScore >= 10.0) && scorePickerStyles.stepBtnDisabled,
+            currentScore !== undefined && currentScore >= 10.0 && scorePickerStyles.stepBtnDisabled,
             pressed && { opacity: 0.7 },
           ]}
         >
@@ -118,6 +121,7 @@ export function ScorePicker({ value, onChange, label, compact = false }: ScorePi
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Clear score"
+            disabled={disabled}
             onPress={() => onChange(undefined)}
             style={scorePickerStyles.clearBtn}
           >
@@ -140,7 +144,8 @@ export function ScorePicker({ value, onChange, label, compact = false }: ScorePi
               key={score}
               accessibilityRole="button"
               accessibilityLabel={`Score ${score.toFixed(1)}`}
-              accessibilityState={{ selected: isSelected }}
+              accessibilityState={{ selected: isSelected, disabled }}
+              disabled={disabled}
               onPress={() => onChange(isSelected ? undefined : score)}
               style={({ pressed }) => [
                 scorePickerStyles.pill,
@@ -242,7 +247,10 @@ const scorePickerStyles = StyleSheet.create({
     position: 'absolute',
     right: 12,
     top: 12,
-    padding: 4,
+    minWidth: 48,
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   pillsContainer: {
     flexDirection: 'row',
@@ -258,7 +266,8 @@ const scorePickerStyles = StyleSheet.create({
     backgroundColor: colors.paper,
     borderWidth: 1,
     borderColor: colors.border,
-    minWidth: 46,
+    minWidth: 48,
+    minHeight: 48,
     alignItems: 'center',
     justifyContent: 'center',
   },

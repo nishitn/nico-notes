@@ -8,12 +8,12 @@ type NativeGoogleSignIn = {
 };
 
 const native =
-  Platform.OS === 'android'
+  Platform.OS === 'android' || Platform.OS === 'ios'
     ? requireOptionalNativeModule<NativeGoogleSignIn>('NicoGoogleSignIn')
     : null;
 
 export async function signInWithNativeGoogle(clientId?: string) {
-  if (!native) throw new Error('Install the latest Android app build to use Google sign-in.');
+  if (!native) throw new Error('Install the latest app build to use Google sign-in.');
   if (!clientId) throw new Error('Google sign-in is not configured for this app build.');
   return native.signIn(clientId);
 }

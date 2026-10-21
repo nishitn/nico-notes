@@ -1,3 +1,4 @@
+import { POLICY_VERSION } from '../legal';
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 import { convexTest } from 'convex-test';
 import { ConvexError } from 'convex/values';
@@ -18,7 +19,11 @@ const fields = {
 async function setup() {
   const t = convexTest(schema, modules);
   const [adminId, memberId, outsiderId] = await t.run(async (ctx) =>
-    Promise.all(['Admin', 'Member', 'Outsider'].map((name) => ctx.db.insert('users', { name }))),
+    Promise.all(
+      ['Admin', 'Member', 'Outsider'].map((name) =>
+        ctx.db.insert('users', { termsVersion: POLICY_VERSION, name }),
+      ),
+    ),
   );
   const admin = t.withIdentity({ subject: `${adminId}|session` });
   const member = t.withIdentity({ subject: `${memberId}|session` });
@@ -54,16 +59,20 @@ describe('Canonical places', () => {
       location: { latitude: 1, longitude: 2 },
     });
     const visits = await Promise.all([first, second, third].map(get));
-    expect(new Set(visits.map((visit) => visit.placeId)).size).toBe(1);
-    expect(visits.map((visit) => visit.visitNumber)).toEqual([1, 2, 3]);
-    for (const visit of visits) {
-      expect(visit.place).toBe('12 Main Street');
-      expect(visit.location).toEqual({ latitude: 12, longitude: 77 });
+    expect(visits[0].placeId).not.toBe(visits[1].placeId);
+    expect(visits[1].placeId).toBe(visits[2].placeId);
+    expect(visits.map((visit) => visit.visitNumber)).toEqual([1, 1, 2]);
+    expect(visits[0].place).toBe('12 Main Street');
+    expect(visits[0].location).toEqual({ latitude: 12, longitude: 77 });
+    for (const visit of visits.slice(1)) {
+      expect(visit.place).toBe('');
+      expect(visit.location).toBeUndefined();
+      expect(visit.title).toBe('Saved Google place');
       expect(visit.googlePlaceId).toBe('google-1');
     }
     const different = await create({ googlePlaceId: 'google-2' });
-    expect((await get(different)).placeId).not.toBe(visits[0].placeId);
-    expect(await t.run((ctx) => ctx.db.query('places').collect())).toHaveLength(2);
+    expect((await get(different)).placeId).not.toBe(visits[1].placeId);
+    expect(await t.run((ctx) => ctx.db.query('places').collect())).toHaveLength(3);
   });
 
   it('renumbers on backdated creation, date edits, place moves and deletion', async () => {
@@ -119,7 +128,8 @@ describe('Canonical places', () => {
     expect((await get(first)).placeId).toBe((await get(second)).placeId);
     expect((await get(first)).visitNumber).toBe(1);
     expect((await get(second)).visitNumber).toBe(2);
-    expect(await t.run((ctx) => ctx.db.get(oldPlace))).toBeNull();
+    expect((await t.run((ctx) => ctx.db.get(oldPlace)))?.deletedAt).toBeDefined();
+    expect(await admin.query(api.places.get, { placeId: oldPlace })).toBeNull();
   });
 
   it('merges a matched legacy place into an existing Google place and preserves ratings', async () => {
@@ -143,15 +153,16 @@ describe('Canonical places', () => {
       location: { latitude: 10, longitude: 11 },
     });
     expect(result).toBe(target);
-    expect(await t.run((ctx) => ctx.db.get(source))).toBeNull();
+    expect((await t.run((ctx) => ctx.db.get(source)))?.deletedAt).toBeDefined();
+    expect(await admin.query(api.places.get, { placeId: source })).toBeNull();
     expect(await get(first)).toMatchObject({
       placeId: target,
-      place: 'Verified street',
+      place: '',
       visitNumber: 1,
     });
     expect(await get(second)).toMatchObject({
       placeId: target,
-      place: 'Verified street',
+      place: '',
       visitNumber: 2,
     });
     expect((await admin.query(api.visits.get, { visitId: first })).ratings).toHaveLength(1);
@@ -188,7 +199,7 @@ describe('Canonical places', () => {
     expect((await get(next)).visitNumber).toBe(4);
   });
 
-  it('backfills unopened boards and removes their places during board deletion', async () => {
+  it('backfills unopened boards and retains their places behind a deleted board', async () => {
     vi.useFakeTimers();
     const { t, admin, boardId, adminId, get } = await setup();
     const legacy = await t.run((ctx) =>
@@ -199,7 +210,10 @@ describe('Canonical places', () => {
     expect((await get(legacy)).placeId).toBeDefined();
     await admin.mutation(api.boards.remove, { boardId });
     await t.finishAllScheduledFunctions(vi.runAllTimers);
-    expect(await t.run((ctx) => ctx.db.query('places').collect())).toEqual([]);
+    expect(await t.run((ctx) => ctx.db.query('places').collect())).toHaveLength(1);
+    await expect(
+      admin.query(api.places.list, { boardId, paginationOpts: { cursor: null, numItems: 10 } }),
+    ).rejects.toThrow(/access/);
   });
 
   it('prevents a match from splitting a legacy group while linking is still in progress', async () => {
@@ -222,7 +236,7 @@ describe('Canonical places', () => {
     await t.finishAllScheduledFunctions(vi.runAllTimers);
     await admin.mutation(api.places.match, selection);
     expect((await get(linked)).placeId).toBe((await get(legacy)).placeId);
-    expect((await get(legacy)).place).toBe('Verified address');
+    expect((await get(legacy)).place).toBe('');
   });
 
   it('isolates board identities and rejects cross-board links and unauthorized matches/backfills', async () => {
@@ -356,7 +370,7 @@ describe('User errors and sign-in redirects', () => {
     const placeId = (await get(visitId)).placeId!;
     const place = await admin.query(api.places.get, { placeId });
     expect(place?._id).toBe(placeId);
-    expect(place?.name).toBe('Café Table');
+    expect(place?.name).toBe('Saved Google place');
     await expect(outsider.query(api.places.get, { placeId })).rejects.toThrow();
   });
   it.each([

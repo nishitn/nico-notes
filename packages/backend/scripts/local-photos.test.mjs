@@ -82,7 +82,7 @@ test('writes private image files and serves them only after an access check', as
         headers: { Authorization: 'Bearer outsider' },
       })
     ).status,
-    503,
+    403,
   );
   const response = await fetch(`${base}/photos/file?id=${photoId}`, {
     headers: { Authorization: 'Bearer member' },
@@ -117,7 +117,7 @@ test('serves and cleans up photos stored under an earlier brand prefix', async (
 test('rejects invalid image bytes and unauthorized uploads', async (t) => {
   const { send, state } = await setup(t);
   assert.equal((await send(Buffer.from('not an image'))).status, 415);
-  assert.equal((await send(png, 'outsider')).status, 503);
+  assert.equal((await send(png, 'outsider')).status, 403);
   assert.equal(state.writes, 0);
 });
 test('rejects path traversal and oversized images', async (t) => {

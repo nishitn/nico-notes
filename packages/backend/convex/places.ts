@@ -1,6 +1,8 @@
+import { storedPlace, GOOGLE_PLACE_LABEL } from '../placePersistence';
 import { paginationOptsValidator } from 'convex/server';
 import { ConvexError, v } from 'convex/values';
-import { internalMutation, type MutationCtx } from './_generated/server';
+import { type MutationCtx } from './_generated/server';
+import { liveInternalMutation as internalMutation } from './softDeletion';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import schema, { locationValidator } from './schema';
@@ -61,7 +63,12 @@ export async function syncPlace(ctx: MutationCtx, placeId: Id<'places'>) {
       visit.googlePlaceId !== place.googlePlaceId ||
       JSON.stringify(visit.location) !== JSON.stringify(place.location)
     ) {
+      const detailsChanged =
+        visit.place !== place.address ||
+        visit.googlePlaceId !== place.googlePlaceId ||
+        JSON.stringify(visit.location) !== JSON.stringify(place.location);
       await ctx.db.patch(visit._id, {
+        ...(detailsChanged ? { revision: (visit.revision ?? 0) + 1 } : {}),
         place: place.address,
         location: place.location,
         googlePlaceId: place.googlePlaceId,
@@ -85,12 +92,17 @@ type PlaceInput = {
 };
 
 export async function resolvePlace(ctx: MutationCtx, input: PlaceInput): Promise<Doc<'places'>> {
+  validateLocation(input.location);
+  textValue(input.title, 'Place name');
+  input = storedPlace(input);
   const name = textValue(input.title, 'Place name');
   const address = input.place.trim().slice(0, 250);
   const googlePlaceId = input.googlePlaceId
     ? textValue(input.googlePlaceId, 'Google Place ID', 300)
     : undefined;
-  const matchKey = normalizedPlaceKey(name, address);
+  const matchKey = googlePlaceId
+    ? JSON.stringify(['google', googlePlaceId])
+    : normalizedPlaceKey(name, address);
   let place = googlePlaceId
     ? await ctx.db
         .query('places')
@@ -99,7 +111,7 @@ export async function resolvePlace(ctx: MutationCtx, input: PlaceInput): Promise
         )
         .unique()
     : null;
-  if (!place) {
+  if (!place && !googlePlaceId) {
     const candidates = await ctx.db
       .query('places')
       .withIndex('by_boardId_and_matchKey', (q) =>
@@ -107,11 +119,7 @@ export async function resolvePlace(ctx: MutationCtx, input: PlaceInput): Promise
       )
       .take(100);
     // A known, different Google ID identifies a different place even if the labels coincide.
-    place =
-      candidates.find(
-        (candidate) =>
-          !googlePlaceId || !candidate.googlePlaceId || candidate.googlePlaceId === googlePlaceId,
-      ) ?? null;
+    place = candidates.find((candidate) => !candidate.googlePlaceId) ?? null;
   }
   const location = validateLocation(input.location);
   if (place) {
@@ -119,12 +127,15 @@ export async function resolvePlace(ctx: MutationCtx, input: PlaceInput): Promise
     // Fill missing data during linking; explicit corrections use update/match below.
     const patch = {
       googlePlaceId: place.googlePlaceId ?? googlePlaceId,
-      location: place.location ?? location,
-      address: place.address || address,
+      location: googlePlaceId ? undefined : (place.location ?? location),
+      address: googlePlaceId ? '' : place.address || address,
     };
     await ctx.db.patch(place._id, {
       ...patch,
-      matchKey: normalizedPlaceKey(place.name, patch.address),
+      name: googlePlaceId ? GOOGLE_PLACE_LABEL : place.name,
+      matchKey: googlePlaceId
+        ? JSON.stringify(['google', googlePlaceId])
+        : normalizedPlaceKey(place.name, patch.address),
     });
     return { ...place, ...patch };
   }
@@ -142,7 +153,9 @@ export async function resolvePlace(ctx: MutationCtx, input: PlaceInput): Promise
 export async function requireLinkedBoard(ctx: MutationCtx, boardId: Id<'boards'>) {
   const unlinked = await ctx.db
     .query('visits')
-    .withIndex('by_boardId_and_placeId', (q) => q.eq('boardId', boardId).eq('placeId', undefined))
+    .withIndex('by_boardId_and_status_and_placeId', (q) =>
+      q.eq('boardId', boardId).eq('status', undefined).eq('placeId', undefined),
+    )
     .first();
   if (unlinked)
     throw new ConvexError('Places are still being linked. Please try again in a moment.');
@@ -155,7 +168,13 @@ export async function updatePlaceDetails(
   address: string,
   location: Doc<'places'>['location'],
 ) {
-  const matchKey = normalizedPlaceKey(source.name, address);
+  if (source.googlePlaceId) {
+    address = '';
+    location = undefined;
+  }
+  const matchKey = source.googlePlaceId
+    ? JSON.stringify(['google', source.googlePlaceId])
+    : normalizedPlaceKey(source.name, address);
   const candidates = await ctx.db
     .query('places')
     .withIndex('by_boardId_and_matchKey', (q) =>
@@ -186,7 +205,7 @@ export async function updatePlaceDetails(
 
 export async function linkVisit(ctx: MutationCtx, visitId: Id<'visits'>) {
   const visit = await ctx.db.get(visitId);
-  if (!visit) return;
+  if (!visit || visit.status === 'planned') return;
   const place = visit.placeId ? await ctx.db.get(visit.placeId) : await resolvePlace(ctx, visit);
   if (!place || place.boardId !== visit.boardId)
     throw new ConvexError('This place is unavailable.');
@@ -232,6 +251,7 @@ export const match = authedMutation({
   },
   returns: v.id('places'),
   handler: async (ctx, { placeId, name, address, googlePlaceId, location }) => {
+    validateLocation(location);
     const source = await ctx.db.get(placeId);
     if (!source) throw new ConvexError('This place is no longer available.');
     await member(ctx, source.boardId);
@@ -244,11 +264,11 @@ export const match = authedMutation({
       location,
     });
     await ctx.db.patch(target._id, {
-      name: textValue(name, 'Place name'),
-      address: address.trim().slice(0, 250),
-      matchKey: normalizedPlaceKey(name, address.trim().slice(0, 250)),
+      name: GOOGLE_PLACE_LABEL,
+      address: '',
+      matchKey: JSON.stringify(['google', googlePlaceId]),
       googlePlaceId: textValue(googlePlaceId, 'Google Place ID', 300),
-      location: validateLocation(location),
+      location: undefined,
     });
     if (source._id !== target._id) {
       for (const visit of await placeVisits(ctx, source._id))
@@ -267,7 +287,9 @@ async function startLinking(ctx: MutationCtx, boardId: Id<'boards'>) {
   if (board.placeLinkingStartedAt && board.placeLinkingStartedAt > Date.now() - 60_000) return;
   const unlinked = await ctx.db
     .query('visits')
-    .withIndex('by_boardId_and_placeId', (q) => q.eq('boardId', boardId).eq('placeId', undefined))
+    .withIndex('by_boardId_and_status_and_placeId', (q) =>
+      q.eq('boardId', boardId).eq('status', undefined).eq('placeId', undefined),
+    )
     .first();
   if (!unlinked) return;
   await ctx.db.patch(boardId, { placeLinkingStartedAt: Date.now() });
@@ -292,7 +314,9 @@ export const linkBoardBatch = internalMutation({
     if (!board || board.deleting) return null;
     const visit = await ctx.db
       .query('visits')
-      .withIndex('by_boardId_and_placeId', (q) => q.eq('boardId', boardId).eq('placeId', undefined))
+      .withIndex('by_boardId_and_status_and_placeId', (q) =>
+        q.eq('boardId', boardId).eq('status', undefined).eq('placeId', undefined),
+      )
       .first();
     if (visit) {
       await linkVisit(ctx, visit._id);

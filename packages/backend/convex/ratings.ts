@@ -1,3 +1,4 @@
+import { logVisitChange } from './activity';
 import { ConvexError, v } from 'convex/values';
 import { authedMutation, visitAccess } from './lib';
 import { validScore } from '../shared';
@@ -14,7 +15,9 @@ export const save = authedMutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const { board, isAdmin } = await visitAccess(ctx, args.visitId);
+    const { visit, board, isAdmin } = await visitAccess(ctx, args.visitId);
+    if (visit.status === 'planned')
+      throw new ConvexError('Mark this visit as visited before adding ratings.');
     const userId = args.userId ?? ctx.userId;
     if (userId !== ctx.userId) {
       if (!isAdmin) throw new ConvexError('Only a board admin can rate for another member.');
@@ -43,7 +46,10 @@ export const save = authedMutation({
       )
       .unique();
     if (args.score === null) {
-      if (existing) await ctx.db.delete(existing._id);
+      if (existing) {
+        await ctx.db.delete(existing._id);
+        await logVisitChange(ctx, args.visitId, ctx.userId, `cleared ${args.kind} rating on`);
+      }
       return null;
     }
     if (!validScore(args.score)) throw new ConvexError('Ratings must be 1–10 in half-point steps.');
@@ -55,6 +61,7 @@ export const save = authedMutation({
       score: args.score,
       note: args.note.trim().slice(0, 1000),
     };
+    if (existing?.score === fields.score && existing.note === fields.note) return null;
     if (existing) await ctx.db.patch(existing._id, fields);
     else {
       const ratings = await ctx.db
@@ -65,6 +72,12 @@ export const save = authedMutation({
         throw new ConvexError('This visit has reached its 2,000-rating limit.');
       await ctx.db.insert('ratings', fields);
     }
+    await logVisitChange(
+      ctx,
+      args.visitId,
+      ctx.userId,
+      `${existing ? 'updated' : 'added'} ${args.kind} rating to ${fields.score}/10 on`,
+    );
     return null;
   },
 });

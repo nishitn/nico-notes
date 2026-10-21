@@ -1,3 +1,4 @@
+import { POLICY_VERSION } from '../legal';
 import { expect, it } from 'vite-plus/test';
 import { convexTest } from 'convex-test';
 import schema from '../convex/schema';
@@ -9,8 +10,11 @@ const modules = import.meta.glob('../convex/**/*.*s');
 it('restores the notes once with both existing accounts and editable Mansi ratings', async () => {
   const t = convexTest(schema, modules);
   const accounts = await t.run(async (ctx) => ({
-    ownerId: await ctx.db.insert('users', { name: 'Nishit Nagar' }),
-    mansiUserId: await ctx.db.insert('users', { name: 'mansi goyal' }),
+    ownerId: await ctx.db.insert('users', { termsVersion: POLICY_VERSION, name: 'Nishit Nagar' }),
+    mansiUserId: await ctx.db.insert('users', {
+      termsVersion: POLICY_VERSION,
+      name: 'mansi goyal',
+    }),
   }));
   const restored = await t.mutation(internal.importNotes.restoreBangalore, accounts);
   expect(restored).toMatchObject({ inserted: 22, ratings: 92 });

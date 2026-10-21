@@ -1,19 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
-import {
-  BackHandler,
-  FlatList,
-  Keyboard,
-  Linking,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { BackHandler, FlatList, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Image } from 'expo-image';
-import { useFocusEffect } from '@react-navigation/native';
+import { router, useFocusEffect, useIsFocused } from 'expo-router';
 import {
-  BottomNavigation,
   Button as MaterialButton,
   Divider,
   FAB,
@@ -22,56 +11,44 @@ import {
   List,
   Searchbar,
 } from 'react-native-paper';
-import { useMutation, usePaginatedQuery, useQuery } from 'convex/react';
+import { usePaginatedQuery } from './convexLive';
 import { api } from '@nico-notes/backend/api';
-import type { Id } from '@nico-notes/backend/dataModel';
 import type { ScreenProps } from './navigation';
-import {
-  Avatar,
-  Card,
-  colors,
-  confirm,
-  Heading,
-  Loading,
-  SectionHeading,
-  styles,
-  Title,
-} from './ui';
+import { Avatar, Card, colors, Heading, Loading, SectionHeading, styles, Title } from './ui';
 import { BoardPlaces } from './BoardPlaces';
 import { useKeyboard } from './useKeyboard';
 import { VisitCard } from './VisitCard';
+import { Notifications } from './Notifications';
 import { BoardPicker } from './BoardPicker';
-import { journalTabs as tabs } from './journalNavigation';
+import { useJournal } from './JournalContext';
 import { distanceBetween, formatDistance } from './placeSearch';
 import { useCurrentLocation } from './useCurrentLocation';
+import { PlaceTopBar } from './screens/Places';
 
 type Props = {
   navigation: ScreenProps<'Boards'>['navigation'] | ScreenProps<'Board'>['navigation'];
-  initialBoardId?: Id<'boards'>;
+  tab?: 'home' | 'notifications' | 'settings';
+  section?: 'visits' | 'wishlist';
 };
 
-export function JournalScreen({ navigation, initialBoardId }: Props) {
-  const me = useQuery(api.boards.me);
-  const boards = usePaginatedQuery(api.boards.list, {}, { initialNumItems: 24 });
-  const summaries = useQuery(api.boards.summaries);
-  const requests = useQuery(api.boards.myOutgoingRequests);
-  const [selectedId, setSelectedId] = useState(initialBoardId);
-  // An explicit board may be beyond the loaded page; keep it until it is switched.
-  const boardId = selectedId ?? boards.results[0]?._id;
-  const board = useQuery(api.boards.get, boardId ? { boardId } : 'skip');
-  const visits = usePaginatedQuery(api.visits.list, boardId ? { boardId } : 'skip', {
-    initialNumItems: 24,
-  });
-  const wishlist = usePaginatedQuery(api.wishlist.list, boardId ? { boardId } : 'skip', {
-    initialNumItems: 50,
-  });
-  const removeWishlist = useMutation(api.wishlist.remove);
-  const current = useCurrentLocation(true);
-  const pending = useQuery(
-    api.boards.pendingRequests,
-    board?.isAdmin && boardId ? { boardId } : 'skip',
+export function JournalScreen({ navigation, tab = 'home', section }: Props) {
+  const { me, boards, summaries, requests, boardId, board, pending, setSelectedId } = useJournal();
+  const focused = useIsFocused();
+  const visits = usePaginatedQuery(
+    api.visits.list,
+    boardId && section === 'visits' ? { boardId } : 'skip',
+    {
+      initialNumItems: 24,
+    },
   );
-  const [index, setIndex] = useState(0);
+  const wishlist = usePaginatedQuery(
+    api.wishlist.list,
+    boardId && section === 'wishlist' ? { boardId } : 'skip',
+    {
+      initialNumItems: 50,
+    },
+  );
+  const current = useCurrentLocation(focused && section === 'wishlist');
   const [createOpen, setCreateOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [wishlistSearch, setWishlistSearch] = useState('');
@@ -83,18 +60,21 @@ export function JournalScreen({ navigation, initialBoardId }: Props) {
           setCreateOpen(false);
           return true;
         }
-        if (index !== 0) {
-          setIndex(0);
+        if (section) {
+          navigation.goBack();
           return true;
         }
         return false;
       });
       return () => subscription.remove();
-    }, [createOpen, index]),
+    }, [createOpen, section, navigation]),
   );
-  const switchTab = (next: number) => {
+  useFocusEffect(useCallback(() => () => setCreateOpen(false), []));
+  const openSection = (next: 'visits' | 'wishlist') => {
     setCreateOpen(false);
-    setIndex(next);
+    if (boardId) {
+      navigation.navigate(next === 'visits' ? 'JournalVisits' : 'JournalWishlist', { boardId });
+    }
   };
   const closeThen = (action: () => void) => {
     setCreateOpen(false);
@@ -113,6 +93,11 @@ export function JournalScreen({ navigation, initialBoardId }: Props) {
       loadMoreVisits(100);
     }
   }, [search, visitsStatus, loadMoreVisits]);
+
+  const { loadMore: loadMoreWishlist, status: wishlistStatus } = wishlist;
+  useEffect(() => {
+    if (wishlistSearch.trim() && wishlistStatus === 'CanLoadMore') loadMoreWishlist(50);
+  }, [wishlistSearch, wishlistStatus, loadMoreWishlist]);
 
   function renderHome() {
     return (
@@ -177,6 +162,34 @@ export function JournalScreen({ navigation, initialBoardId }: Props) {
           ) : (
             <Title>Your shared journal.</Title>
           )}
+          {boardId && (
+            <View style={journal.boardActions}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityHint="Browse completed visits"
+                onPress={() => openSection('visits')}
+                style={({ pressed }) => [
+                  journal.boardAction,
+                  pressed && { backgroundColor: colors.coralLight },
+                ]}
+              >
+                <Icon source="book-open-outline" size={21} color={colors.rust} />
+                <Text style={journal.boardActionText}>Visits</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityHint="Browse planned visits"
+                onPress={() => openSection('wishlist')}
+                style={({ pressed }) => [
+                  journal.boardAction,
+                  pressed && { backgroundColor: colors.coralLight },
+                ]}
+              >
+                <Icon source="bookmark-outline" size={21} color={colors.rust} />
+                <Text style={journal.boardActionText}>Wishlist</Text>
+              </Pressable>
+            </View>
+          )}
           {!!pending?.length && boardId && (
             <Card>
               <Text style={styles.label}>
@@ -206,6 +219,7 @@ export function JournalScreen({ navigation, initialBoardId }: Props) {
                 navigation.navigate('VisitForm', {
                   boardId,
                   placeId: place?._id,
+                  wishlistId: place?.wishlistId,
                   googlePlaceId: place?.googlePlaceId,
                   title: place?.name ?? title,
                   place: place?.address,
@@ -229,9 +243,23 @@ export function JournalScreen({ navigation, initialBoardId }: Props) {
             </Card>
           ) : null}
           {requests?.map((request) => (
-            <Text key={request._id} style={styles.muted}>
-              Waiting for approval · {request.boardName}
-            </Text>
+            <View key={request._id} style={{ gap: 8 }}>
+              <Text style={styles.muted}>
+                {request.status === 'pending'
+                  ? 'Waiting for approval'
+                  : request.status === 'accepted'
+                    ? 'Request approved'
+                    : 'Request declined'}{' '}
+                · {request.boardName}
+              </Text>
+              {request.status === 'accepted' && (
+                <MaterialButton
+                  onPress={() => navigation.navigate('Board', { boardId: request.boardId })}
+                >
+                  Open board
+                </MaterialButton>
+              )}
+            </View>
           ))}
         </View>
       </ScrollView>
@@ -258,7 +286,20 @@ export function JournalScreen({ navigation, initialBoardId }: Props) {
         keyboardShouldPersistTaps="handled"
         ListHeaderComponent={
           <View style={{ gap: 18 }}>
-            <Title>Visits</Title>
+            <View style={journal.boardTitleRow}>
+              <Title style={{ flex: 1 }}>Visits</Title>
+              {boardId && (
+                <MaterialButton
+                  mode="contained"
+                  buttonColor={colors.rust}
+                  textColor={colors.paper}
+                  icon="plus"
+                  onPress={newVisit}
+                >
+                  Add visit
+                </MaterialButton>
+              )}
+            </View>
             {!!boardId && (
               <Searchbar
                 placeholder="Search visits…"
@@ -355,7 +396,8 @@ export function JournalScreen({ navigation, initialBoardId }: Props) {
               <View style={{ flex: 1, gap: 4 }}>
                 <Title>Wishlist</Title>
                 <Text style={styles.muted}>
-                  {board?.board.name ?? 'Your shared board'} · {wishlist.results.length}{' '}
+                  {wishlist.results.length}
+                  {wishlist.status === 'Exhausted' ? '' : '+'}{' '}
                   {wishlist.results.length === 1 ? 'place' : 'places'} to visit
                 </Text>
               </View>
@@ -389,107 +431,66 @@ export function JournalScreen({ navigation, initialBoardId }: Props) {
               ? formatDistance(distanceBetween(item.location, current.location))
               : null;
           return (
-            <Card style={journal.wishlistCard}>
-              <View style={{ gap: 8 }}>
-                <View style={journal.wishlistHeader}>
-                  <View style={{ flex: 1, gap: 4 }}>
-                    <Text style={journal.wishlistTitle}>{item.title}</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Open ${item.title}`}
+              onPress={() =>
+                item.visitId
+                  ? navigation.navigate('Visit', { visitId: item.visitId })
+                  : navigation.navigate('Wishlist', { id: item._id })
+              }
+              style={({ pressed }) => [journal.wishlistCard, { opacity: pressed ? 0.7 : 1 }]}
+            >
+              <View style={journal.wishlistHeader}>
+                <View style={{ flex: 1, gap: 6 }}>
+                  <Text style={journal.wishlistTitle}>{item.title}</Text>
+                  {!!(distance || item.place) && (
                     <Text style={styles.muted} numberOfLines={2}>
-                      {distance ? `${distance} · ` : ''}
-                      {item.place || 'Address not recorded'}
+                      {[distance, item.place].filter(Boolean).join(' · ')}
                     </Text>
-                  </View>
-                  <IconButton
-                    icon="delete-outline"
-                    iconColor={colors.muted}
-                    size={20}
-                    onPress={() =>
-                      confirm(
-                        `Remove “${item.title}” from your wishlist?`,
-                        () => void removeWishlist({ id: item._id, confirmed: true }),
-                      )
-                    }
-                  />
-                </View>
-                {!!item.notes && (
-                  <View style={journal.wishlistNotes}>
-                    <Text style={journal.wishlistNotesText}>{item.notes}</Text>
-                  </View>
-                )}
-                {!!item.link && (
-                  <Pressable
-                    accessibilityRole="button"
-                    onPress={() => void Linking.openURL(item.link!)}
-                    style={journal.wishlistLink}
-                  >
-                    <Icon source="link-variant" size={14} color={colors.rust} />
-                    <Text style={journal.wishlistLinkText} numberOfLines={1}>
-                      {item.link}
-                    </Text>
-                  </Pressable>
-                )}
-                <View style={journal.wishlistActions}>
-                  {boardId && (
-                    <MaterialButton
-                      mode="contained"
-                      buttonColor={colors.rust}
-                      textColor={colors.paper}
-                      icon="plus"
-                      onPress={() =>
-                        navigation.navigate('VisitForm', {
-                          boardId,
-                          title: item.title,
-                          place: item.place,
-                          location: item.location,
-                          googlePlaceId: item.googlePlaceId,
-                        })
-                      }
-                    >
-                      Log visit
-                    </MaterialButton>
                   )}
-                  <MaterialButton
-                    mode="outlined"
-                    textColor={colors.rust}
-                    style={{ borderColor: colors.border }}
-                    icon="navigation-variant-outline"
-                    onPress={() =>
-                      void Linking.openURL(
-                        `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-                          item.location
-                            ? `${item.location.latitude},${item.location.longitude}`
-                            : `${item.title} ${item.place ?? ''}`,
-                        )}${item.googlePlaceId ? `&query_place_id=${encodeURIComponent(item.googlePlaceId)}` : ''}`,
-                      )
-                    }
-                  >
-                    Maps
-                  </MaterialButton>
+                  {!!item.notes && (
+                    <Text style={journal.wishlistNotesText} numberOfLines={2}>
+                      {item.notes}
+                    </Text>
+                  )}
                 </View>
+                <Icon source="chevron-right" size={22} color={colors.muted} />
               </View>
-            </Card>
+            </Pressable>
           );
         }}
         ListEmptyComponent={
-          <View style={journal.emptyWishlist}>
-            <Icon source="bookmark-outline" size={48} color={colors.rust} />
-            <Heading>Your wishlist is empty</Heading>
-            <Text style={[styles.muted, { textAlign: 'center', maxWidth: 280 }]}>
-              Save spots you’re excited to try next. Find them on the map or tap “Add place”.
-            </Text>
-            {boardId && (
-              <MaterialButton
-                mode="contained"
-                buttonColor={colors.rust}
-                textColor={colors.paper}
-                icon="plus"
-                style={{ marginTop: 8 }}
-                onPress={() => navigation.navigate('WishlistForm', { boardId })}
-              >
-                Add to wishlist
-              </MaterialButton>
-            )}
-          </View>
+          wishlist.status === 'LoadingFirstPage' && boardId ? (
+            <Loading />
+          ) : (
+            <View style={journal.emptyWishlist}>
+              <Icon source="bookmark-outline" size={40} color={colors.rust} />
+              <Heading>
+                {wishlistSearch.trim()
+                  ? wishlist.status === 'LoadingMore' || wishlist.status === 'CanLoadMore'
+                    ? 'Searching wishlist…'
+                    : 'No matching places'
+                  : 'Your wishlist is empty'}
+              </Heading>
+              <Text style={[styles.muted, { textAlign: 'center', maxWidth: 280 }]}>
+                {wishlistSearch.trim()
+                  ? 'Try another name or area.'
+                  : 'Save places you’d like to try next.'}
+              </Text>
+            </View>
+          )
+        }
+        ListFooterComponent={
+          boardId && (wishlist.status === 'CanLoadMore' || wishlist.status === 'LoadingMore') ? (
+            <MaterialButton
+              loading={wishlist.status === 'LoadingMore'}
+              disabled={wishlist.status === 'LoadingMore'}
+              onPress={() => wishlist.loadMore(50)}
+            >
+              {wishlistSearch.trim() ? 'Searching more places…' : 'Load more places'}
+            </MaterialButton>
+          ) : null
         }
       />
     );
@@ -497,244 +498,230 @@ export function JournalScreen({ navigation, initialBoardId }: Props) {
 
   return (
     <View style={styles.page}>
-      <View style={journal.topbar}>
-        <View style={journal.brand}>
-          <Image
-            source={require('../../web/public/favicon.svg')}
-            contentFit="contain"
-            style={journal.brandMark}
-            accessible={false}
-          />
-          <Text style={journal.wordmark}>
-            nico notes<Text style={{ color: colors.primary }}>.</Text>
-          </Text>
+      {section ? (
+        <PlaceTopBar
+          navigation={navigation}
+          boardId={boardId}
+          boardName={boardName}
+          boards={boards}
+          onBack={() => navigation.goBack()}
+        />
+      ) : (
+        <View style={journal.topbar}>
+          <View style={journal.brand}>
+            <Image
+              source={require('../../web/public/favicon.svg')}
+              contentFit="contain"
+              style={journal.brandMark}
+              accessible={false}
+            />
+            <Text style={journal.wordmark}>
+              nico notes<Text style={{ color: colors.primary }}>.</Text>
+            </Text>
+          </View>
+          {tab !== 'settings' && (
+            <View style={journal.boardPickerSlot}>
+              <BoardPicker
+                boards={boards.results}
+                boardId={boardId}
+                boardName={boardName}
+                canLoadMore={boards.status === 'CanLoadMore'}
+                loadingMore={boards.status === 'LoadingMore'}
+                onLoadMore={() => boards.loadMore(24)}
+                onSelect={(id) => {
+                  setSelectedId(id);
+                  setSearch('');
+                }}
+                onNewBoard={newBoard}
+                onJoinBoard={joinBoard}
+              />
+            </View>
+          )}
         </View>
-        {tabs[index]?.key !== 'settings' && (
-          <View style={journal.boardPickerSlot}>
-            <BoardPicker
-              boards={boards.results}
-              boardId={boardId}
-              boardName={boardName}
-              canLoadMore={boards.status === 'CanLoadMore'}
-              loadingMore={boards.status === 'LoadingMore'}
-              onLoadMore={() => boards.loadMore(24)}
-              onSelect={(id) => {
-                setSelectedId(id);
-                setSearch('');
-              }}
-              onNewBoard={newBoard}
-              onJoinBoard={joinBoard}
+      )}
+      {section ? (
+        section === 'visits' ? (
+          renderVisits()
+        ) : (
+          renderWishlist()
+        )
+      ) : tab === 'home' ? (
+        renderHome()
+      ) : tab === 'notifications' ? (
+        <Notifications
+          key={boardId ?? 'none'}
+          boardId={boardId}
+          onOpen={(visitId) => navigation.navigate('Visit', { visitId })}
+        />
+      ) : (
+        <ScrollView contentContainerStyle={journal.content}>
+          <Title>Settings</Title>
+          <Text style={styles.muted}>Your account, your boards, and your preferences.</Text>
+          <View style={journal.tools}>
+            <List.Item
+              title="Your account"
+              description={me?.name ?? 'Profile and sign-in'}
+              left={(props) => (
+                <List.Icon {...props} icon="account-outline" color={colors.primary} />
+              )}
+              right={(props) => <List.Icon {...props} icon="chevron-right" color={colors.muted} />}
+              onPress={() => navigation.navigate('Account')}
+            />
+            <Divider />
+            <List.Item
+              title="New board"
+              left={(props) => <List.Icon {...props} icon="plus" color={colors.primary} />}
+              onPress={newBoard}
+            />
+            <Divider />
+            <List.Item
+              title="Join board"
+              left={(props) => (
+                <List.Icon {...props} icon="account-multiple-plus-outline" color={colors.primary} />
+              )}
+              onPress={joinBoard}
             />
           </View>
-        )}
-      </View>
-      <BottomNavigation
-        navigationState={{ index, routes: tabs }}
-        onIndexChange={switchTab}
-        renderScene={({ route }) =>
-          route.key === 'home' ? (
-            renderHome()
-          ) : route.key === 'visits' ? (
-            renderVisits()
-          ) : route.key === 'wishlist' ? (
-            renderWishlist()
-          ) : (
-            <ScrollView contentContainerStyle={journal.content}>
-              <Title>Settings</Title>
-              <Text style={styles.muted}>Your account, your boards, and your preferences.</Text>
-              <View style={journal.tools}>
-                <List.Item
-                  title="Your account"
-                  description={me?.name ?? 'Profile and sign-in'}
-                  left={(props) => (
-                    <List.Icon {...props} icon="account-outline" color={colors.primary} />
-                  )}
-                  right={(props) => (
-                    <List.Icon {...props} icon="chevron-right" color={colors.muted} />
-                  )}
-                  onPress={() => navigation.navigate('Account')}
-                />
-                <Divider />
-                <List.Item
-                  title="New board"
-                  left={(props) => <List.Icon {...props} icon="plus" color={colors.primary} />}
-                  onPress={newBoard}
-                />
-                <Divider />
-                <List.Item
-                  title="Join board"
-                  left={(props) => (
-                    <List.Icon
-                      {...props}
-                      icon="account-multiple-plus-outline"
-                      color={colors.primary}
-                    />
-                  )}
-                  onPress={joinBoard}
-                />
-              </View>
 
-              {!!summaries && summaries.length > 0 && (
-                <View style={{ gap: 14 }}>
-                  <SectionHeading title="Your Boards" count={summaries.length} />
-                  {summaries.map((b) => (
-                    <Pressable
-                      key={b._id}
-                      onPress={() => {
-                        setSelectedId(b._id);
-                        setSearch('');
-                        switchTab(0);
+          {!!summaries && summaries.length > 0 && (
+            <View style={{ gap: 14 }}>
+              <SectionHeading title="Your Boards" count={summaries.length} />
+              {summaries.map((b) => (
+                <Pressable
+                  key={b._id}
+                  onPress={() => {
+                    setSelectedId(b._id);
+                    setSearch('');
+                    router.navigate('/');
+                  }}
+                >
+                  <Card style={{ gap: 12 }}>
+                    <View
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'flex-start',
+                        justifyContent: 'space-between',
+                        gap: 8,
                       }}
                     >
-                      <Card style={{ gap: 12 }}>
-                        <View
-                          style={{
-                            flexDirection: 'row',
-                            alignItems: 'flex-start',
-                            justifyContent: 'space-between',
-                            gap: 8,
-                          }}
-                        >
-                          <View style={{ flex: 1, gap: 4 }}>
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                              <Text
-                                style={{
-                                  fontFamily: 'EpilogueSemiBold',
-                                  fontSize: 18,
-                                  lineHeight: 24,
-                                  color: colors.ink,
-                                  letterSpacing: -0.4,
-                                }}
-                              >
-                                {b.name}
-                              </Text>
-                              {b._id === boardId && (
-                                <View
-                                  style={{
-                                    backgroundColor: colors.coralLight,
-                                    paddingHorizontal: 8,
-                                    paddingVertical: 2,
-                                    borderRadius: 10,
-                                  }}
-                                >
-                                  <Text
-                                    style={{
-                                      fontFamily: 'JakartaSemiBold',
-                                      fontSize: 11,
-                                      color: colors.rust,
-                                    }}
-                                  >
-                                    Active
-                                  </Text>
-                                </View>
-                              )}
-                            </View>
-                            {!!b.description && (
-                              <Text numberOfLines={2} style={styles.muted}>
-                                {b.description}
-                              </Text>
-                            )}
-                          </View>
-                          <Icon source="chevron-right" size={20} color={colors.rust} />
-                        </View>
-
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                            <Icon source="book-open-outline" size={16} color={colors.rust} />
-                            <Text
-                              style={{
-                                fontFamily: 'JakartaSemiBold',
-                                fontSize: 13,
-                                color: colors.rust,
-                              }}
-                            >
-                              {b.visitCount} {b.visitCount === 1 ? 'visit' : 'visits'}
-                            </Text>
-                          </View>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                            <Icon source="account-group-outline" size={16} color={colors.rust} />
-                            <Text
-                              style={{
-                                fontFamily: 'JakartaSemiBold',
-                                fontSize: 13,
-                                color: colors.rust,
-                              }}
-                            >
-                              {b.memberCount} {b.memberCount === 1 ? 'member' : 'members'}
-                            </Text>
-                          </View>
-                        </View>
-
-                        {b.members.length > 0 && (
-                          <View
+                      <View style={{ flex: 1, gap: 4 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                          <Text
                             style={{
-                              flexDirection: 'row',
-                              alignItems: 'center',
-                              gap: 10,
-                              paddingTop: 6,
-                              borderTopWidth: 1,
-                              borderTopColor: colors.border,
+                              fontFamily: 'EpilogueSemiBold',
+                              fontSize: 18,
+                              lineHeight: 24,
+                              color: colors.ink,
+                              letterSpacing: -0.4,
                             }}
                           >
-                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                              {b.members.map((m, i) => (
-                                <View
-                                  key={m._id}
-                                  style={{
-                                    borderRadius: 14,
-                                    borderWidth: 2,
-                                    borderColor: colors.paper,
-                                    marginLeft: i ? -8 : 0,
-                                  }}
-                                >
-                                  <Avatar name={m.name} image={m.image} size={28} />
-                                </View>
-                              ))}
-                            </View>
-                            <Text
-                              numberOfLines={1}
+                            {b.name}
+                          </Text>
+                          {b._id === boardId && (
+                            <View
                               style={{
-                                fontFamily: 'Jakarta',
-                                fontSize: 12,
-                                color: colors.muted,
-                                flex: 1,
+                                backgroundColor: colors.coralLight,
+                                paddingHorizontal: 8,
+                                paddingVertical: 2,
+                                borderRadius: 10,
                               }}
                             >
-                              {b.members.map((m) => m.name || 'Member').join(', ')}
-                            </Text>
-                          </View>
+                              <Text
+                                style={{
+                                  fontFamily: 'JakartaSemiBold',
+                                  fontSize: 11,
+                                  color: colors.rust,
+                                }}
+                              >
+                                Active
+                              </Text>
+                            </View>
+                          )}
+                        </View>
+                        {!!b.description && (
+                          <Text numberOfLines={2} style={styles.muted}>
+                            {b.description}
+                          </Text>
                         )}
-                      </Card>
-                    </Pressable>
-                  ))}
-                </View>
-              )}
-            </ScrollView>
-          )
-        }
-        barStyle={{
-          backgroundColor: colors.paper,
-          borderTopWidth: 1,
-          borderTopColor: colors.border,
-        }}
-        activeIndicatorStyle={{ backgroundColor: colors.coralLight }}
-        activeColor={colors.primary}
-        inactiveColor={colors.muted}
-        renderIcon={({ route, focused }) => (
-          <Icon
-            source={focused ? route.focusedIcon : route.unfocusedIcon}
-            size={24}
-            color={focused ? colors.primary : colors.muted}
-          />
-        )}
-        safeAreaInsets={{ bottom: 0 }}
-        sceneAnimationEnabled
-        sceneAnimationType="shifting"
-        keyboardHidesNavigationBar
-        labeled
-        shifting={false}
-      />
-      {(index === 0 || index === 2) && (
+                      </View>
+                      <Icon source="chevron-right" size={20} color={colors.rust} />
+                    </View>
+
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Icon source="book-open-outline" size={16} color={colors.rust} />
+                        <Text
+                          style={{
+                            fontFamily: 'JakartaSemiBold',
+                            fontSize: 13,
+                            color: colors.rust,
+                          }}
+                        >
+                          {b.visitCount ?? '—'} {b.visitCount === 1 ? 'visit' : 'visits'}
+                        </Text>
+                      </View>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Icon source="account-group-outline" size={16} color={colors.rust} />
+                        <Text
+                          style={{
+                            fontFamily: 'JakartaSemiBold',
+                            fontSize: 13,
+                            color: colors.rust,
+                          }}
+                        >
+                          {b.memberCount} {b.memberCount === 1 ? 'member' : 'members'}
+                        </Text>
+                      </View>
+                    </View>
+
+                    {b.members.length > 0 && (
+                      <View
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: 10,
+                          paddingTop: 6,
+                          borderTopWidth: 1,
+                          borderTopColor: colors.border,
+                        }}
+                      >
+                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                          {b.members.map((m, i) => (
+                            <View
+                              key={m._id}
+                              style={{
+                                borderRadius: 14,
+                                borderWidth: 2,
+                                borderColor: colors.paper,
+                                marginLeft: i ? -8 : 0,
+                              }}
+                            >
+                              <Avatar name={m.name} image={m.image} size={28} />
+                            </View>
+                          ))}
+                        </View>
+                        <Text
+                          numberOfLines={1}
+                          style={{
+                            fontFamily: 'Jakarta',
+                            fontSize: 12,
+                            color: colors.muted,
+                            flex: 1,
+                          }}
+                        >
+                          {b.members.map((m) => m.name || 'Member').join(', ')}
+                        </Text>
+                      </View>
+                    )}
+                  </Card>
+                </Pressable>
+              ))}
+            </View>
+          )}
+        </ScrollView>
+      )}
+
+      {tab === 'home' && focused && !section && (
         <FAB.Group
           open={createOpen}
           visible={!keyboardOpen}
@@ -809,7 +796,24 @@ const journal = StyleSheet.create({
     maxWidth: 840,
     alignSelf: 'center',
   },
-  boardHeader: { gap: 8, paddingBottom: 24, borderBottomWidth: 1, borderColor: colors.border },
+  boardHeader: { gap: 8, paddingBottom: 12 },
+  boardActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 8 },
+  boardAction: {
+    flex: 1,
+    minWidth: 120,
+    minHeight: 52,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    borderWidth: 1,
+    borderColor: colors.rust,
+    borderRadius: 16,
+    backgroundColor: 'transparent',
+  },
+  boardActionText: { fontFamily: 'JakartaSemiBold', fontSize: 15, color: colors.rust },
   boardTitleRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
   boardTitle: {
     fontFamily: 'EpilogueItalic',
@@ -858,37 +862,11 @@ const journal = StyleSheet.create({
     color: colors.ink,
     letterSpacing: -0.4,
   },
-  wishlistNotes: {
-    backgroundColor: colors.peachLight,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: colors.peachBorder,
-  },
   wishlistNotesText: {
     fontFamily: 'Jakarta',
     fontSize: 13,
     lineHeight: 19,
-    color: colors.ink,
-  },
-  wishlistLink: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingVertical: 4,
-  },
-  wishlistLinkText: {
-    fontFamily: 'JakartaSemiBold',
-    fontSize: 12,
-    color: colors.rust,
-    textDecorationLine: 'underline',
-  },
-  wishlistActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingTop: 8,
+    color: colors.muted,
   },
   emptyWishlist: {
     padding: 36,
@@ -908,5 +886,5 @@ const journal = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
-  createActions: { position: 'absolute', left: 0, right: 0, bottom: 80, paddingBottom: 0 },
+  createActions: { position: 'absolute', left: 0, right: 0, bottom: 0, paddingBottom: 0 },
 });

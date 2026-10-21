@@ -1,6 +1,17 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { MarkerClusterer } from '@googlemaps/markerclusterer';
-import { Expand, LoaderCircle, LocateFixed, MapPin, Minus, Plus, RefreshCw, X } from 'lucide-react';
+import {
+  Expand,
+  LoaderCircle,
+  LocateFixed,
+  MapPin,
+  Maximize,
+  Minimize,
+  Minus,
+  Plus,
+  RefreshCw,
+  X,
+} from 'lucide-react';
 import {
   DEFAULT_MAP_LOCATION,
   googleMapsConfigured,
@@ -9,10 +20,17 @@ import {
   nearbyBounds,
   type MapLocation,
 } from './googleMaps';
+import { Modal } from './ui';
 import { useCurrentLocation } from './useCurrentLocation';
 
 export type { MapLocation } from './googleMaps';
-export type MapPlace = { id: string; title: string; location: MapLocation; count: number };
+export type MapPlace = {
+  id: string;
+  title: string;
+  location: MapLocation;
+  count: number;
+  wishlist?: boolean;
+};
 
 export function mapsLink(place: {
   title: string;
@@ -35,6 +53,9 @@ export function PlacesMap({
   onLocationChange,
   autoLocate = false,
   label = 'Map of visited places',
+  fullscreenHeader,
+  fullscreenFooter,
+  fitKey,
 }: {
   places: MapPlace[];
   selectedId?: string;
@@ -43,10 +64,31 @@ export function PlacesMap({
   onLocationChange?: (location: MapLocation) => void;
   autoLocate?: boolean;
   label?: string;
+  fullscreenHeader?: ReactNode;
+  fullscreenFooter?: ReactNode;
+  fitKey?: string;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const [instance, setInstance] = useState<google.maps.Map | null>(null);
   const [error, setError] = useState('');
+  const [fullscreen, setFullscreen] = useState(false);
+  const initialZoom = useRef(15);
+  const fullscreenButton = useRef<HTMLButtonElement>(null);
+  const restoreFocus = useRef(false);
+  useEffect(() => {
+    if (fullscreen || !instance || !restoreFocus.current) return;
+    restoreFocus.current = false;
+    fullscreenButton.current?.focus({ preventScroll: true });
+  }, [fullscreen, instance]);
+  function toggleFullscreen() {
+    const center = instance?.getCenter();
+    if (center) initialCenter.current = { latitude: center.lat(), longitude: center.lng() };
+    initialZoom.current = instance?.getZoom() ?? 15;
+    intent.current = 'manual';
+    restoreFocus.current = fullscreen;
+    setInstance(null);
+    setFullscreen((value) => !value);
+  }
   const [retry, setRetry] = useState(0);
   const [hideLocationError, setHideLocationError] = useState(false);
   const callbacks = useRef({ onSelect, onPick, onLocationChange });
@@ -77,7 +119,7 @@ export function PlacesMap({
         if (disposed) return;
         map = new maps.Map(element, {
           center: latLng(initialCenter.current),
-          zoom: 15,
+          zoom: initialZoom.current,
           mapId: import.meta.env.VITE_GOOGLE_MAPS_MAP_ID || 'DEMO_MAP_ID',
           disableDefaultUI: true,
           zoomControl: false,
@@ -115,10 +157,13 @@ export function PlacesMap({
       window.removeEventListener('nico-notes:maps-auth-error', authFailure);
       element.replaceChildren();
     };
-  }, [retry]);
+  }, [retry, fullscreen]);
 
   const coordinateKey = places
-    .map((p) => `${p.id}:${p.location.latitude}:${p.location.longitude}:${p.count}:${p.title}`)
+    .map(
+      (p) =>
+        `${p.id}:${p.location.latitude}:${p.location.longitude}:${p.count}:${p.title}:${p.wishlist}`,
+    )
     .join('|');
   useEffect(() => {
     if (!instance) return;
@@ -126,14 +171,16 @@ export function PlacesMap({
     const listeners: google.maps.MapsEventListener[] = [];
     for (const place of places) {
       const content = document.createElement('div');
-      content.className = 'visit-pin';
+      content.className = `visit-pin ${place.wishlist ? 'wishlist-pin' : ''}`;
       const heart = document.createElement('span');
       heart.setAttribute('aria-hidden', 'true');
       content.append(heart);
       const marker = new google.maps.marker.AdvancedMarkerElement({
         position: latLng(place.location),
         content,
-        title: `${place.title}, ${place.count} ${place.count === 1 ? 'visit' : 'visits'}`,
+        title: place.wishlist
+          ? `${place.title}, Wishlist`
+          : `${place.title}, ${place.count} ${place.count === 1 ? 'visit' : 'visits'}`,
       });
       listeners.push(marker.addListener('click', () => callbacks.current.onSelect?.(place.id)));
       next.set(place.id, marker);
@@ -208,11 +255,30 @@ export function PlacesMap({
     });
   }
 
-  return (
+  const appliedFitKey = useRef(fitKey);
+  useEffect(() => {
+    if (!instance || appliedFitKey.current === fitKey || !places.length) return;
+    appliedFitKey.current = fitKey;
+    showAllPins();
+    // Fit once when the map filter changes, including asynchronously loaded wishlist pins.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [instance, fitKey, coordinateKey]);
+
+  const content = (
     <div className={`places-map ${onPick ? 'pin-picker' : ''}`}>
       <div className="map-canvas" ref={host} role="region" aria-label={label} />
       {instance && !error && (
         <div className="map-controls" role="group" aria-label="Map controls">
+          <button
+            type="button"
+            className="map-control"
+            ref={fullscreenButton}
+            title={fullscreen ? 'Exit fullscreen map' : 'Fullscreen map'}
+            aria-label={fullscreen ? 'Exit fullscreen map' : 'Fullscreen map'}
+            onClick={toggleFullscreen}
+          >
+            {fullscreen ? <Minimize size={20} /> : <Maximize size={20} />}
+          </button>
           <button
             type="button"
             className="map-control"
@@ -310,5 +376,14 @@ export function PlacesMap({
         </div>
       )}
     </div>
+  );
+  return fullscreen ? (
+    <Modal title="Your Places map" className="fullscreen-map-modal" onClose={toggleFullscreen}>
+      {fullscreenHeader}
+      {content}
+      {fullscreenFooter && <div className="fullscreen-map-selection">{fullscreenFooter}</div>}
+    </Modal>
+  ) : (
+    content
   );
 }

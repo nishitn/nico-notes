@@ -7,7 +7,7 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
-import { Image } from 'expo-image';
+import { GoogleAttribution, GoogleSearchInfo } from './GoogleAttribution';
 import { Icon } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { GooglePlace } from '../modules/google-places';
@@ -53,7 +53,13 @@ export function PlaceSearchResults({
       ? Math.max(90, Math.min(280, windowHeight - keyboardHeight - insets.top - 180))
       : 280;
   function row(
-    place: { name: string; address: string; location?: unknown; distance?: number },
+    place: {
+      name: string;
+      address: string;
+      location?: unknown;
+      distance?: number;
+      attributions?: string[];
+    },
     key: string,
     onSelect: () => void,
     onAdd: () => void,
@@ -78,6 +84,9 @@ export function PlaceSearchResults({
               {place.address || 'Address not recorded'}
               {!place.location ? ' · No map pin' : ''}
             </Text>
+            {place.attributions?.length ? (
+              <GoogleAttribution attributions={place.attributions} />
+            ) : null}
           </View>
         </Pressable>
         <Pressable
@@ -121,12 +130,9 @@ export function PlaceSearchResults({
           </Text>
         )}
         <View style={searchStyles.heading}>
-          <View style={styles.row}>
-            <Image
-              source={require('../assets/google/g-logo.png')}
-              style={{ width: 16, height: 16 }}
-            />
-            <Text style={styles.eyebrow}>GOOGLE MAPS</Text>
+          <View>
+            <GoogleAttribution />
+            <GoogleSearchInfo />
           </View>
           {loading && <ActivityIndicator size="small" color={colors.rust} />}
         </View>

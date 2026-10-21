@@ -18,3 +18,4 @@ apps/mobile/modules/*/android/build/
 *.aab
 .gradle/
 **/.gradle/
+.release/

@@ -1,5 +1,5 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { useQuery } from 'convex/react';
+import { useQuery } from '../convexLive';
 import { Icon } from 'react-native-paper';
 import { api } from '@nico-notes/backend/api';
 import type { ScreenProps } from '../navigation';
@@ -43,7 +43,7 @@ export function YourBoardsScreen({ navigation }: ScreenProps<'YourBoards'>) {
                   <View style={boardCard.stat}>
                     <Icon source="book-open-outline" size={16} color={colors.rust} />
                     <Text style={boardCard.statText}>
-                      {board.visitCount} {board.visitCount === 1 ? 'visit' : 'visits'}
+                      {board.visitCount ?? '—'} {board.visitCount === 1 ? 'visit' : 'visits'}
                     </Text>
                   </View>
                   <View style={boardCard.stat}>

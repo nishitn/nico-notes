@@ -68,6 +68,7 @@ it('can search without a device location instead of restricting to an old saved 
   expect(results[0]).toEqual({
     id: 'venue',
     title: 'Venue',
+    attributions: [],
     place: 'Bengaluru',
     location: { latitude: 12.96, longitude: 77.65 },
   });

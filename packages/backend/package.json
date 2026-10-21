@@ -6,7 +6,10 @@
   "exports": {
     "./api": "./convex/_generated/api.js",
     "./dataModel": "./convex/_generated/dataModel.d.ts",
-    "./shared": "./shared.ts"
+    "./shared": "./shared.ts",
+    "./legal": "./legal.ts",
+    "./livePlaces": "./livePlaces.ts",
+    "./attributions": "./attributions.ts"
   },
   "scripts": {
     "dev": "convex dev",

@@ -1,3 +1,4 @@
+import { logChange } from './activity';
 import { ConvexError, v } from 'convex/values';
 import { admin, authedMutation, member } from './lib';
 import { textValue } from '../shared';
@@ -27,6 +28,7 @@ export const save = authedMutation({
       if (!isAdmin && old.categories.some((name) => !categories.includes(name)))
         throw new ConvexError('Only a board admin can remove preset categories.');
       await ctx.db.patch(id, fields);
+      await logChange(ctx, args.boardId, ctx.userId, `updated the visit type “${fields.name}”`);
       return id;
     }
     const types = await ctx.db
@@ -34,6 +36,7 @@ export const save = authedMutation({
       .withIndex('by_boardId', (q) => q.eq('boardId', args.boardId))
       .take(50);
     if (types.length >= 50) throw new ConvexError('A board can have up to 50 visit types.');
+    await logChange(ctx, args.boardId, ctx.userId, `added the visit type “${fields.name}”`);
     return ctx.db.insert('visitTypes', fields);
   },
 });
@@ -45,6 +48,7 @@ export const remove = authedMutation({
     if (!type) return null;
     await admin(ctx, type.boardId);
     await ctx.db.delete(id);
+    await logChange(ctx, type.boardId, ctx.userId, `removed the visit type “${type.name}”`);
     return null;
   },
 });

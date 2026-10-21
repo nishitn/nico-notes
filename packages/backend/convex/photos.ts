@@ -1,15 +1,65 @@
+import { logChange, logVisitChange } from './activity';
 import { ConvexError, v } from 'convex/values';
-import { internalMutation, internalQuery, query, mutation } from './_generated/server';
+import { query, mutation } from './_generated/server';
+import {
+  liveInternalMutation as internalMutation,
+  liveInternalQuery as internalQuery,
+} from './softDeletion';
 import { admin, authedMutation, authedQuery, visitAccess } from './lib';
 import { MAX_PHOTOS, MAX_PHOTO_BYTES, PHOTO_TYPES } from '../shared';
 import schema, { photoStorage } from './schema';
-import { deletePhoto } from './cleanup';
+import { isModerator } from './account';
+import type { Doc } from './_generated/dataModel';
+import type { QueryCtx } from './_generated/server';
+import { requireActiveUser } from './lib';
 
+async function readPhotoAccess(ctx: QueryCtx, photo: Doc<'photos'>) {
+  try {
+    await visitAccess(ctx, photo.visitId);
+  } catch (error) {
+    const userId = await requireActiveUser(ctx);
+    if (!(await isModerator(ctx, userId))) throw error;
+    const photoReports = await ctx.db
+      .query('reports')
+      .withIndex('by_photoId', (q) => q.eq('photoId', photo._id))
+      .take(100);
+    const visitReports = await ctx.db
+      .query('reports')
+      .withIndex('by_visitId', (q) => q.eq('visitId', photo.visitId))
+      .take(100);
+    if (![...photoReports, ...visitReports].some((report) => report.status === 'open')) throw error;
+  }
+}
+// Completion is recoverable for the photo's lifetime, even after the short-lived
+// reservation expires. Never renew an uncertain operation into a duplicate upload.
+async function reservation(
+  ctx: QueryCtx,
+  uploadId: import('./_generated/dataModel').Id<'uploads'>,
+) {
+  const upload = await ctx.db.get(uploadId);
+  if (upload && upload.expiresAt > Date.now()) return upload;
+  const photo = await ctx.db
+    .query('photos')
+    .withIndex('by_uploadId', (q) => q.eq('uploadId', uploadId))
+    .first();
+  if (photo)
+    return {
+      _id: uploadId,
+      _creationTime: photo._creationTime,
+      visitId: photo.visitId,
+      userId: photo.uploaderId,
+      caption: photo.caption,
+      photoId: photo._id,
+      provider: photo.storageId ? ('convex' as const) : ('local' as const),
+      expiresAt: Number.MAX_SAFE_INTEGER,
+    };
+  throw new ConvexError('Upload expired. Please retry.');
+}
 export const reserve = authedMutation({
   args: { visitId: v.id('visits'), caption: v.string() },
   returns: v.id('uploads'),
   handler: async (ctx, { visitId, caption }) => {
-    const { board } = await visitAccess(ctx, visitId);
+    await visitAccess(ctx, visitId);
     const photos = await ctx.db
       .query('photos')
       .withIndex('by_visitId', (q) => q.eq('visitId', visitId))
@@ -20,14 +70,18 @@ export const reserve = authedMutation({
       .take(MAX_PHOTOS);
     for (const reservation of reservations)
       if (reservation.expiresAt <= Date.now()) await ctx.db.delete(reservation._id);
-    if (photos.length + reservations.filter((r) => r.expiresAt > Date.now()).length >= MAX_PHOTOS)
+    if (
+      photos.length + reservations.filter((r) => !r.photoId && r.expiresAt > Date.now()).length >=
+      MAX_PHOTOS
+    )
       throw new ConvexError('A visit can have up to 10 photos.');
     return ctx.db.insert('uploads', {
       visitId,
       userId: ctx.userId,
       caption: caption.trim().slice(0, 300),
       expiresAt: Date.now() + 15 * 60 * 1000,
-      provider: board.photoStorage ?? 'convex',
+      // Storage is a service-wide choice. Ignore historical board preferences.
+      provider: 'convex',
     });
   },
 });
@@ -44,9 +98,7 @@ export const checkUpload = internalQuery({
   args: { uploadId: v.id('uploads') },
   returns: schema.doc('uploads'),
   handler: async (ctx, { uploadId }) => {
-    const upload = await ctx.db.get(uploadId);
-    if (!upload || upload.expiresAt <= Date.now())
-      throw new ConvexError('Upload expired. Please retry.');
+    const upload = await reservation(ctx, uploadId);
     const { userId } = await visitAccess(ctx, upload.visitId);
     if (userId !== upload.userId) throw new ConvexError('This upload belongs to another person.');
     if (upload.provider === 'local')
@@ -62,13 +114,17 @@ export const finishUpload = internalMutation({
   },
   returns: v.id('photos'),
   handler: async (ctx, { uploadId, storageId, contentType }) => {
-    const upload = await ctx.db.get(uploadId);
-    if (!upload || upload.expiresAt <= Date.now())
-      throw new ConvexError('Upload expired. Please retry.');
+    const upload = await reservation(ctx, uploadId);
     const { userId } = await visitAccess(ctx, upload.visitId);
     if (userId !== upload.userId) throw new ConvexError('This upload belongs to another person.');
     if (upload.provider === 'local')
       throw new ConvexError('Use the local photo service for this upload.');
+    if (upload.photoId) {
+      const completed = await ctx.db.get(upload.photoId);
+      if (!completed) throw new ConvexError('This photo was removed.');
+      if (completed.storageId !== storageId) await ctx.storage.delete(storageId);
+      return completed._id;
+    }
     const file = await ctx.db.system.get(storageId);
     if (
       !file ||
@@ -86,10 +142,12 @@ export const finishUpload = internalMutation({
       visitId: upload.visitId,
       uploaderId: userId,
       storageId,
+      uploadId,
       caption: upload.caption,
       contentType,
     });
-    await ctx.db.delete(uploadId);
+    await logVisitChange(ctx, upload.visitId, userId, 'added a photo to');
+    await ctx.db.patch(uploadId, { photoId: id, expiresAt: Date.now() + 24 * 60 * 60 * 1000 });
     return id;
   },
 });
@@ -99,7 +157,7 @@ export const file = internalQuery({
   handler: async (ctx, { photoId }) => {
     const photo = await ctx.db.get(photoId);
     if (!photo) throw new ConvexError('Photo not found.');
-    await visitAccess(ctx, photo.visitId);
+    await readPhotoAccess(ctx, photo);
     if (!photo.storageId) throw new ConvexError('This photo is stored on the Mac mini.');
     return photo.storageId;
   },
@@ -113,7 +171,11 @@ export const updateCaption = authedMutation({
     const { isAdmin } = await visitAccess(ctx, photo.visitId);
     if (photo.uploaderId !== ctx.userId && !isAdmin)
       throw new ConvexError('Only the uploader or admin can change the caption.');
-    await ctx.db.patch(photoId, { caption: caption.trim().slice(0, 300) });
+    const clean = caption.trim().slice(0, 300);
+    if (clean !== photo.caption) {
+      await ctx.db.patch(photoId, { caption: clean });
+      await logVisitChange(ctx, photo.visitId, ctx.userId, 'updated a photo caption on');
+    }
     return null;
   },
 });
@@ -126,14 +188,22 @@ export const remove = authedMutation({
     const { isAdmin } = await visitAccess(ctx, photo.visitId);
     if (photo.uploaderId !== ctx.userId && !isAdmin)
       throw new ConvexError('Only the uploader or admin can remove this photo.');
-    await deletePhoto(ctx, photo);
+    await ctx.db.delete(photo._id);
+    await logVisitChange(ctx, photo.visitId, ctx.userId, 'removed a photo from');
     return null;
   },
 });
 export const configuration = query({
   args: {},
-  returns: v.object({ googleReady: v.boolean(), googleClientId: v.optional(v.string()) }),
+  returns: v.object({
+    googleReady: v.boolean(),
+    googleClientId: v.optional(v.string()),
+    supportEmail: v.string(),
+    localStorageReady: v.boolean(),
+  }),
   handler: async () => ({
+    supportEmail: 'nishit.nagar1@gmail.com',
+    localStorageReady: false,
     // OAuth client IDs are public. Credentials and signing keys stay server-side.
     ...(process.env.AUTH_GOOGLE_ID ? { googleClientId: process.env.AUTH_GOOGLE_ID } : {}),
     googleReady:
@@ -149,9 +219,14 @@ export const setStorage = authedMutation({
   returns: v.null(),
   handler: async (ctx, { boardId, provider }) => {
     await admin(ctx, boardId);
-    if (provider === 'local' && !process.env.LOCAL_PHOTO_SECRET)
-      throw new ConvexError('Set up the local photo service before selecting local storage.');
+    if (provider !== 'convex')
+      throw new ConvexError(
+        'Photos are stored securely in Convex. Local storage is no longer available.',
+      );
+    const board = await ctx.db.get(boardId);
     await ctx.db.patch(boardId, { photoStorage: provider });
+    if ((board?.photoStorage ?? 'convex') !== provider)
+      await logChange(ctx, boardId, ctx.userId, 'changed the photo storage setting');
     return null;
   },
 });
@@ -161,9 +236,7 @@ export const uploadProvider = authedQuery({
   args: { uploadId: v.id('uploads') },
   returns: photoStorage,
   handler: async (ctx, { uploadId }) => {
-    const upload = await ctx.db.get(uploadId);
-    if (!upload || upload.expiresAt <= Date.now())
-      throw new ConvexError('Upload expired. Please retry.');
+    const upload = await reservation(ctx, uploadId);
     await visitAccess(ctx, upload.visitId);
     if (upload.userId !== ctx.userId)
       throw new ConvexError('This upload belongs to another person.');
@@ -178,7 +251,7 @@ export const fileProvider = authedQuery({
   handler: async (ctx, { photoId }) => {
     const photo = await ctx.db.get(photoId);
     if (!photo) return null;
-    await visitAccess(ctx, photo.visitId);
+    await readPhotoAccess(ctx, photo);
     return photo.storageId ? 'convex' : photo.localKey ? 'local' : null;
   },
 });
@@ -219,39 +292,10 @@ export const finishLocalUpload = authedMutation({
     secret: v.string(),
   },
   returns: v.id('photos'),
-  handler: async (ctx, { uploadId, contentType, secret }) => {
-    requireLocalSecret(secret);
-    const existing = await ctx.db
-      .query('photos')
-      .withIndex('by_localKey', (q) => q.eq('localKey', uploadId))
-      .unique();
-    if (existing) {
-      await visitAccess(ctx, existing.visitId);
-      if (existing.uploaderId !== ctx.userId)
-        throw new ConvexError('This upload belongs to another person.');
-      return existing._id;
-    }
-    const ticket = await ctx.db.get(uploadId);
-    if (!ticket || ticket.expiresAt <= Date.now())
-      throw new ConvexError('Upload expired. Please retry.');
-    await visitAccess(ctx, ticket.visitId);
-    if (ticket.userId !== ctx.userId)
-      throw new ConvexError('This upload belongs to another person.');
-    if (ticket.provider !== 'local') throw new ConvexError('Use Convex for this upload.');
-    const photos = await ctx.db
-      .query('photos')
-      .withIndex('by_visitId', (q) => q.eq('visitId', ticket.visitId))
-      .take(MAX_PHOTOS);
-    if (photos.length >= MAX_PHOTOS) throw new ConvexError('This visit already has 10 photos.');
-    const photoId = await ctx.db.insert('photos', {
-      visitId: ticket.visitId,
-      uploaderId: ctx.userId,
-      localKey: uploadId,
-      caption: ticket.caption,
-      contentType,
-    });
-    await ctx.db.delete(uploadId);
-    return photoId;
+  handler: async () => {
+    throw new ConvexError(
+      'Local uploads are no longer available. Please retry with Convex storage.',
+    );
   },
 });
 export const localFile = authedQuery({
@@ -260,7 +304,7 @@ export const localFile = authedQuery({
   handler: async (ctx, { photoId }) => {
     const photo = await ctx.db.get(photoId);
     if (!photo) throw new ConvexError('Photo not found.');
-    await visitAccess(ctx, photo.visitId);
+    await readPhotoAccess(ctx, photo);
     return photo.localKey ? { key: photo.localKey, contentType: photo.contentType } : null;
   },
 });

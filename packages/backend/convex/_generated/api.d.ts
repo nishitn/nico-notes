@@ -8,6 +8,8 @@
  * @module
  */
 
+import type * as account from "../account.js";
+import type * as activity from "../activity.js";
 import type * as auth from "../auth.js";
 import type * as boards from "../boards.js";
 import type * as cleanup from "../cleanup.js";
@@ -17,9 +19,17 @@ import type * as importNotes from "../importNotes.js";
 import type * as items from "../items.js";
 import type * as lib from "../lib.js";
 import type * as migrations from "../migrations.js";
+import type * as notifications from "../notifications.js";
 import type * as photos from "../photos.js";
 import type * as places from "../places.js";
+import type * as plannedVisits from "../plannedVisits.js";
+import type * as profile from "../profile.js";
 import type * as ratings from "../ratings.js";
+import type * as recovery from "../recovery.js";
+import type * as releaseMigrations from "../releaseMigrations.js";
+import type * as reviewer from "../reviewer.js";
+import type * as safety from "../safety.js";
+import type * as softDeletion from "../softDeletion.js";
 import type * as testing from "../testing.js";
 import type * as visitTypes from "../visitTypes.js";
 import type * as visits from "../visits.js";
@@ -32,6 +42,8 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  account: typeof account;
+  activity: typeof activity;
   auth: typeof auth;
   boards: typeof boards;
   cleanup: typeof cleanup;
@@ -41,9 +53,17 @@ declare const fullApi: ApiFromModules<{
   items: typeof items;
   lib: typeof lib;
   migrations: typeof migrations;
+  notifications: typeof notifications;
   photos: typeof photos;
   places: typeof places;
+  plannedVisits: typeof plannedVisits;
+  profile: typeof profile;
   ratings: typeof ratings;
+  recovery: typeof recovery;
+  releaseMigrations: typeof releaseMigrations;
+  reviewer: typeof reviewer;
+  safety: typeof safety;
+  softDeletion: typeof softDeletion;
   testing: typeof testing;
   visitTypes: typeof visitTypes;
   visits: typeof visits;

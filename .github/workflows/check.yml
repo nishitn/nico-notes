@@ -1,0 +1,50 @@
+name: Verify
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm release:check
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:navigation
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-and-android-bundles
+          path: |
+            apps/web/dist
+            apps/mobile/dist
+          retention-days: 7
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v3
+      - run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.1.12297006"
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @nico-notes/mobile exec expo prebuild --platform android --no-install
+      - run: ./gradlew :app:assembleDebug
+        working-directory: apps/mobile/android

@@ -1,3 +1,4 @@
+import { POLICY_VERSION } from '../legal';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vite-plus/test';
 import { convexTest } from 'convex-test';
 import { exportPKCS8, generateKeyPair } from 'jose';
@@ -38,12 +39,15 @@ describe('native Google session and account continuity', () => {
     expect(await t.query(api.photos.configuration, {})).toEqual({
       googleReady: true,
       googleClientId: 'public-client.apps.googleusercontent.com',
+      supportEmail: 'nishit.nagar1@gmail.com',
+      localStorageReady: false,
     });
   });
   it('opens a Convex session for the existing Google account, retaining its boards', async () => {
     const t = setup();
     const userId = await t.run(async (ctx) => {
       const id = await ctx.db.insert('users', {
+        termsVersion: POLICY_VERSION,
         name: 'Existing member',
         email: 'person@example.com',
       });
@@ -76,6 +80,7 @@ describe('native Google session and account continuity', () => {
     const t = setup();
     const existingId = await t.run((ctx) =>
       ctx.db.insert('users', {
+        termsVersion: POLICY_VERSION,
         name: 'Someone else',
         email: 'person@example.com',
         emailVerificationTime: Date.now(),

@@ -1,10 +1,13 @@
 import { useState } from 'react';
 import { useAuthActions } from '@convex-dev/auth/react';
-import { useMutation, useQuery } from 'convex/react';
+import { useMutation, useQuery } from './convexLive';
 import { Link } from 'react-router-dom';
-import { ArrowRight, LayoutGrid, LogOut, Pencil } from 'lucide-react';
+import { ChevronRight, Pencil } from 'lucide-react';
 import { api } from '@nico-notes/backend/api';
-import { ErrorNote, Field, Form, Initials, Modal, Spinner, Submit, useNotice, useTask } from './ui';
+import { ErrorNote, Field, Form, Modal, Spinner, Submit, useNotice, useTask } from './ui';
+import { APP_VERSION } from '@nico-notes/backend/legal';
+import { BlockedPeople, DeleteAccountButton } from './ReleasePages';
+import { ProfilePhoto } from './ProfilePhoto';
 
 function EditName({ name, onClose }: { name: string; onClose: () => void }) {
   const [draft, setDraft] = useState(name);
@@ -59,42 +62,53 @@ export function AccountPage() {
           <h1>Your account</h1>
         </div>
       </div>
-      <section className="account-card" aria-label="Your profile">
+      <section className="account-profile" aria-label="Your profile">
         <div className="account-details">
-          <Initials name={me.name} image={me.image} />
+          <ProfilePhoto name={me.name} image={me.image} />
           <div className="account-name">
             <h2>{me.name}</h2>
-            <button
-              className="icon-button"
-              aria-label="Edit name"
-              title="Edit name"
-              onClick={() => setEditingName(true)}
-            >
-              <Pencil size={17} />
-            </button>
           </div>
+          <button
+            className="icon-button account-edit"
+            aria-label="Edit name"
+            onClick={() => setEditingName(true)}
+          >
+            <Pencil size={19} />
+          </button>
         </div>
-        <Link to="/boards" className="account-link">
-          <span className="account-link-icon">
-            <LayoutGrid size={21} />
-          </span>
-          <span>
-            <strong>Your boards</strong>
-          </span>
-          <ArrowRight size={18} />
+      </section>
+      <nav className="account-card account-group" aria-label="Account settings">
+        <Link to="/support" className="account-link">
+          <strong>Help and support</strong>
+          <ChevronRight size={18} />
         </Link>
+      </nav>
+      <nav className="account-card account-group" aria-label="Privacy and terms">
+        <Link to="/privacy" className="account-link">
+          <strong>Privacy policy</strong>
+          <ChevronRight size={18} />
+        </Link>
+        <Link to="/terms" className="account-link">
+          <strong>Terms of use</strong>
+          <ChevronRight size={18} />
+        </Link>
+      </nav>
+      <BlockedPeople />
+      <section className="account-card account-group">
         <button
           className="account-link account-sign-out"
           disabled={task.busy}
           onClick={() => task.run(signOut)}
         >
-          <span className="account-link-icon">
-            <LogOut size={20} />
-          </span>
           <strong>{task.busy ? 'Signing out…' : 'Sign out'}</strong>
+          <ChevronRight size={18} />
         </button>
       </section>
       <ErrorNote text={task.error} />
+      <footer className="account-footer">
+        <DeleteAccountButton className="account-delete" />
+        <p>nico notes · {APP_VERSION}</p>
+      </footer>
       {editingName && <EditName name={me.name} onClose={() => setEditingName(false)} />}
     </div>
   );
