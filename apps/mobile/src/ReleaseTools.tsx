@@ -101,19 +101,16 @@ export function AccountTools({ navigation }: Pick<ScreenProps<'Account'>, 'navig
             })
           }
         />
+        <AccountRow
+          separator
+          danger
+          label="Delete account"
+          disabled={task.busy}
+          onPress={() => setDeleting(true)}
+        />
       </Card>
       {!deleting && <ErrorNote error={task.error} />}
       <View style={{ alignItems: 'center', gap: 4, paddingTop: 2 }}>
-        <Pressable
-          accessibilityRole="button"
-          disabled={task.busy}
-          onPress={() => setDeleting(true)}
-          style={{ minHeight: 44, justifyContent: 'center', paddingHorizontal: 16 }}
-        >
-          <Text style={[styles.muted, { fontSize: 13, textDecorationLine: 'underline' }]}>
-            Delete account
-          </Text>
-        </Pressable>
         <Text style={[styles.muted, { fontSize: 12 }]}>nico notes · {APP_VERSION}</Text>
       </View>
       <Portal>

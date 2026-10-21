@@ -8,12 +8,14 @@ export function AccountRow({
   disabled,
   separator,
   expanded,
+  danger,
 }: {
   label: string;
   onPress: () => void;
   disabled?: boolean;
   separator?: boolean;
   expanded?: boolean;
+  danger?: boolean;
 }) {
   return (
     <Pressable
@@ -28,8 +30,12 @@ export function AccountRow({
         disabled && { opacity: 0.5 },
       ]}
     >
-      <Text style={row.label}>{label}</Text>
-      <Icon source={expanded ? 'chevron-up' : 'chevron-right'} size={19} color={colors.muted} />
+      <Text style={[row.label, danger && { color: colors.error }]}>{label}</Text>
+      <Icon
+        source={expanded ? 'chevron-up' : 'chevron-right'}
+        size={19}
+        color={danger ? colors.error : colors.muted}
+      />
     </Pressable>
   );
 }

@@ -205,20 +205,35 @@ export function AccountScreen({ navigation }: ScreenProps<'Account'>) {
         <Page>
           <Title>Your account</Title>
           <View style={{ paddingVertical: 12, marginBottom: 12 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 16 }}>
               <ProfilePhoto name={me.name} image={me.image} />
-              <Text
-                style={{ fontFamily: 'EpilogueSemiBold', fontSize: 21, color: colors.ink, flex: 1 }}
+              <View
+                style={{
+                  flex: 1,
+                  minHeight: 68,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 16,
+                }}
               >
-                {me.name}
-              </Text>
-              <IconButton
-                icon="pencil-outline"
-                iconColor={colors.rust}
-                accessibilityLabel="Edit name"
-                style={{ margin: 0, backgroundColor: colors.coralLight }}
-                onPress={() => setEditingName(true)}
-              />
+                <Text
+                  style={{
+                    fontFamily: 'EpilogueSemiBold',
+                    fontSize: 21,
+                    color: colors.ink,
+                    flex: 1,
+                  }}
+                >
+                  {me.name}
+                </Text>
+                <IconButton
+                  icon="pencil-outline"
+                  iconColor={colors.rust}
+                  accessibilityLabel="Edit name"
+                  style={{ margin: 0, backgroundColor: colors.coralLight }}
+                  onPress={() => setEditingName(true)}
+                />
+              </View>
             </View>
           </View>
           <AccountTools navigation={navigation} />
