@@ -1,9 +1,9 @@
 import { useMutation, usePaginatedQuery, useQuery } from './convexLive';
 import { Link, useParams } from 'react-router-dom';
 import { useEffect, useState } from 'react';
-import { ArrowRight, Bell, Check, CheckCheck } from 'lucide-react';
+import { ArrowRight, Bell, Check, CheckCheck, Trash2 } from 'lucide-react';
 import { api } from '@nico-notes/backend/api';
-import { notificationTime } from '@nico-notes/backend/notificationTime';
+import { nextNotificationTimeUpdate, notificationTime } from '@nico-notes/backend/notificationTime';
 import { notificationText } from '@nico-notes/backend/notificationText';
 import { GoogleAttribution } from './GoogleAttribution';
 import type { Id } from '@nico-notes/backend/dataModel';
@@ -32,27 +32,49 @@ export function BoardNotifications({ boardId }: { boardId: Id<'boards'> }) {
   );
   const markRead = useMutation(api.notifications.markRead);
   const markOneRead = useMutation(api.notifications.markOneRead);
+  const deleteAll = useMutation(api.notifications.deleteAll);
   const hasUnread = useQuery(api.notifications.hasUnread, { boardId });
   const task = useTask();
   const newest = results[0];
   const [now, setNow] = useState(Date.now);
+  const nextUpdate = results.reduce(
+    (next, item) => Math.min(next, nextNotificationTimeUpdate(item.createdAt, now) ?? Infinity),
+    Infinity,
+  );
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, []);
+    if (!Number.isFinite(nextUpdate)) return;
+    const timer = setTimeout(() => setNow(Date.now()), Math.max(0, nextUpdate - Date.now()));
+    return () => clearTimeout(timer);
+  }, [nextUpdate]);
   return (
     <section aria-labelledby="notifications-title">
       <div className="page-heading notifications-heading">
         <h2 id="notifications-title">Notifications</h2>
-        <button
-          className="button secondary small"
-          disabled={!newest || !(hasUnread ?? results.some((item) => item.unread)) || task.busy}
-          onClick={() =>
-            newest && void task.run(() => markRead({ boardId, throughId: newest._id }))
-          }
-        >
-          <CheckCheck size={17} /> {task.busy ? 'Marking as read…' : 'Mark all as read'}
-        </button>
+        <div className="notification-toolbar">
+          <button
+            className="button secondary small"
+            disabled={!newest || !(hasUnread ?? results.some((item) => item.unread)) || task.busy}
+            onClick={() =>
+              newest && void task.run(() => markRead({ boardId, throughId: newest._id }))
+            }
+          >
+            <CheckCheck size={17} /> Mark all as read
+          </button>
+          <button
+            className="button danger-outline small"
+            disabled={!newest || task.busy}
+            onClick={() => {
+              if (
+                window.confirm(
+                  'Delete all notifications for this board? This clears your feed only. New notifications will still appear.',
+                )
+              )
+                void task.run(() => deleteAll({ boardId }));
+            }}
+          >
+            <Trash2 size={17} /> Delete all notifications
+          </button>
+        </div>
       </div>
       <ErrorNote text={task.error} />
       {status === 'LoadingFirstPage' ? (

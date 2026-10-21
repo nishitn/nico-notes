@@ -3,11 +3,11 @@ import { FlatList, StyleSheet, Text, View } from 'react-native';
 import { Button, Icon } from 'react-native-paper';
 import { useMutation, usePaginatedQuery, useQuery } from './convexLive';
 import { api } from '@nico-notes/backend/api';
-import { notificationTime } from '@nico-notes/backend/notificationTime';
+import { nextNotificationTimeUpdate, notificationTime } from '@nico-notes/backend/notificationTime';
 import { notificationText } from '@nico-notes/backend/notificationText';
 import { GoogleAttribution } from './GoogleAttribution';
 import type { Id } from '@nico-notes/backend/dataModel';
-import { Card, colors, ErrorNote, Heading, Loading, styles, Title, useTask } from './ui';
+import { Card, colors, confirm, ErrorNote, Heading, Loading, styles, Title, useTask } from './ui';
 
 export function Notifications({
   boardId,
@@ -23,14 +23,20 @@ export function Notifications({
   );
   const markRead = useMutation(api.notifications.markRead);
   const markOneRead = useMutation(api.notifications.markOneRead);
+  const deleteAll = useMutation(api.notifications.deleteAll);
   const hasUnread = useQuery(api.notifications.hasUnread, boardId ? { boardId } : 'skip');
   const task = useTask();
   const newest = results[0];
   const [now, setNow] = useState(Date.now);
+  const nextUpdate = (boardId ? results : []).reduce(
+    (next, item) => Math.min(next, nextNotificationTimeUpdate(item.createdAt, now) ?? Infinity),
+    Infinity,
+  );
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, []);
+    if (!Number.isFinite(nextUpdate)) return;
+    const timer = setTimeout(() => setNow(Date.now()), Math.max(0, nextUpdate - Date.now()));
+    return () => clearTimeout(timer);
+  }, [nextUpdate]);
   return (
     <FlatList
       style={styles.page}
@@ -42,17 +48,34 @@ export function Notifications({
           <View style={notificationStyles.heading}>
             <Title>Notifications</Title>
             {!!boardId && !!newest && (
-              <Button
-                compact
-                icon="check-all"
-                textColor={colors.rust}
-                loading={task.busy}
-                disabled={!(hasUnread ?? results.some((item) => item.unread)) || task.busy}
-                onPress={() => void task.run(() => markRead({ boardId, throughId: newest._id }))}
-                labelStyle={notificationStyles.actionLabel}
-              >
-                Mark all as read
-              </Button>
+              <View style={notificationStyles.toolbar}>
+                <Button
+                  compact
+                  icon="check-all"
+                  textColor={colors.rust}
+                  disabled={!(hasUnread ?? results.some((item) => item.unread)) || task.busy}
+                  onPress={() => void task.run(() => markRead({ boardId, throughId: newest._id }))}
+                  labelStyle={notificationStyles.actionLabel}
+                >
+                  Mark all as read
+                </Button>
+                <Button
+                  compact
+                  icon="delete-outline"
+                  textColor={colors.rust}
+                  disabled={task.busy}
+                  onPress={() =>
+                    confirm(
+                      'Delete all notifications?',
+                      () => void task.run(() => deleteAll({ boardId })),
+                      'This clears your feed for this board only. New notifications will still appear.',
+                    )
+                  }
+                  labelStyle={notificationStyles.actionLabel}
+                >
+                  Delete all notifications
+                </Button>
+              </View>
             )}
           </View>
           <ErrorNote error={task.error} />
@@ -156,6 +179,7 @@ const notificationStyles = StyleSheet.create({
     borderLeftWidth: 1,
     borderLeftColor: colors.border,
   },
+  toolbar: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 8 },
   unread: { borderLeftWidth: 3, borderLeftColor: colors.primary, backgroundColor: '#fff8f1' },
   row: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
   body: { ...styles.body, flex: 1, fontSize: 13, lineHeight: 19 },

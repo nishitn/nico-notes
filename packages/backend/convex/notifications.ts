@@ -30,7 +30,9 @@ export const list = authedQuery({
       .unique();
     const result = await ctx.db
       .query('boardChanges')
-      .withIndex('by_boardId', (q) => q.eq('boardId', boardId))
+      .withIndex('by_boardId', (q) =>
+        q.eq('boardId', boardId).gt('_creationTime', membership?.notificationsClearedAt ?? 0),
+      )
       .order('desc')
       .paginate(paginationOpts);
     const readIds = new Set(membership?.notificationReadIds);
@@ -78,11 +80,43 @@ export const hasUnread = authedQuery({
     const changes = await ctx.db
       .query('boardChanges')
       .withIndex('by_boardId', (q) =>
-        q.eq('boardId', boardId).gt('_creationTime', membership?.notificationsReadAt ?? 0),
+        q
+          .eq('boardId', boardId)
+          .gt(
+            '_creationTime',
+            Math.max(membership?.notificationsReadAt ?? 0, membership?.notificationsClearedAt ?? 0),
+          ),
       )
       .order('desc')
       .take(readIds.size + 1);
     return changes.some((change) => !readIds.has(change._id));
+  },
+});
+
+export const deleteAll = authedMutation({
+  args: { boardId: v.id('boards') },
+  returns: v.null(),
+  handler: async (ctx, { boardId }) => {
+    const { userId } = await member(ctx, boardId);
+    const membership = await ctx.db
+      .query('memberships')
+      .withIndex('by_boardId_and_userId', (q) => q.eq('boardId', boardId).eq('userId', userId))
+      .unique();
+    if (!membership) throw new ConvexError('This board is unavailable.');
+    const newest = await ctx.db
+      .query('boardChanges')
+      .withIndex('by_boardId', (q) => q.eq('boardId', boardId))
+      .order('desc')
+      .first();
+    if (!newest) return null;
+    // Clear only this member's feed, including notifications beyond the loaded pages.
+    const clearedAt = Math.max(membership.notificationsClearedAt ?? 0, newest._creationTime);
+    await ctx.db.patch(membership._id, {
+      notificationsClearedAt: clearedAt,
+      notificationsReadAt: Math.max(membership.notificationsReadAt ?? 0, clearedAt),
+      notificationReadIds: [],
+    });
+    return null;
   },
 });
 

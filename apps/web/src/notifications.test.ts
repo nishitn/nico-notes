@@ -42,6 +42,8 @@ describe('Notifications interface', () => {
     const html = render();
     expect(html).toContain('No changes yet');
     expect(html).toContain('Mark all as read');
+    expect(html).toContain('Delete all notifications');
+    expect(html.match(/disabled=""/g)).toHaveLength(2);
     expect(html).toContain('disabled=""');
     expect(html).not.toContain('What’s changed on your board');
   });
@@ -75,6 +77,7 @@ describe('Notifications interface', () => {
     expect(html).toContain('Older notifications');
     expect(html.match(/class="notification-read"/g)).toHaveLength(1);
     expect(html).toContain('Mark as read');
+    expect(html).toContain('Delete all notifications');
     expect(html).toContain('notification-time muted');
   });
   it('keeps mark all available when the latest notification is read but an older one is unread', () => {
@@ -99,8 +102,25 @@ describe('Notifications interface', () => {
     fixture.status = 'Exhausted';
     const html = render();
     expect(html).not.toContain('disabled=""');
-    expect(html).toContain('0 sec ago');
+    expect(html).toContain('Just now');
+    expect(html).not.toContain('sec ago');
     expect(html).toContain('1 min ago');
+  });
+  it('keeps delete all available when all notifications are already read', () => {
+    fixture.status = 'Exhausted';
+    fixture.results = [
+      {
+        _id: 'read-change',
+        actorName: 'Alice',
+        summary: 'added a visit',
+        createdAt: Date.now(),
+        unread: false,
+        visitId: null,
+      },
+    ];
+    const html = render();
+    expect(html.match(/disabled=""/g)).toHaveLength(1);
+    expect(html).toContain('Delete all notifications');
   });
   it('renders resolved place names, changed fields and wishlist actions', () => {
     fixture.status = 'Exhausted';

@@ -87,6 +87,7 @@ const schema = defineSchema({
     userId: v.id('users'),
     role: v.optional(memberRole),
     notificationsReadAt: v.optional(v.number()),
+    notificationsClearedAt: v.optional(v.number()),
     notificationReadIds: v.optional(v.array(v.id('boardChanges'))),
   })
     .index('by_userId', ['userId'])

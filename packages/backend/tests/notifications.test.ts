@@ -129,6 +129,72 @@ describe('Board notifications', () => {
     expect(await alice.query(api.notifications.hasUnread, { boardId })).toBe(false);
   });
 
+  it('deletes all pages for one member while preserving shared history and future notifications', async () => {
+    const { t, ids, alice, bob, boardId, addVisit, feed } = await setup();
+    const visitId = await addVisit();
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 35; i++) {
+        await ctx.db.insert('boardChanges', { boardId, actorId: ids.bob, summary: `Change ${i}` });
+      }
+    });
+    const before = await feed();
+    expect(before.page).toHaveLength(30);
+    expect(before.isDone).toBe(false);
+    await alice.mutation(api.notifications.markOneRead, {
+      boardId,
+      notificationId: before.page[0]._id,
+    });
+    await alice.mutation(api.notifications.deleteAll, { boardId });
+    await alice.mutation(api.notifications.deleteAll, { boardId });
+    expect(await feed()).toMatchObject({ page: [], isDone: true });
+    expect(await alice.query(api.notifications.hasUnread, { boardId })).toBe(false);
+    const bobFeed = await bob.query(api.notifications.list, { boardId, paginationOpts });
+    expect(bobFeed.page).toHaveLength(30);
+    expect(bobFeed.isDone).toBe(false);
+    expect(await bob.query(api.notifications.hasUnread, { boardId })).toBe(true);
+    expect(await t.run((ctx) => ctx.db.get(visitId))).toBeTruthy();
+    expect(
+      await t.run((ctx) =>
+        ctx.db
+          .query('boardChanges')
+          .withIndex('by_boardId', (q) => q.eq('boardId', boardId))
+          .take(40),
+      ),
+    ).toHaveLength(36);
+    const otherBoardId = await alice.mutation(api.boards.create, {
+      name: 'Other board',
+      description: '',
+      accent: 'sage',
+    });
+    await t.run((ctx) =>
+      ctx.db.insert('boardChanges', { boardId: otherBoardId, summary: 'Other change' }),
+    );
+    await alice.mutation(api.notifications.deleteAll, { boardId });
+    expect(
+      (await alice.query(api.notifications.list, { boardId: otherBoardId, paginationOpts })).page,
+    ).toHaveLength(1);
+    await addVisit();
+    expect((await feed()).page).toHaveLength(1);
+    expect((await feed()).page[0].unread).toBe(true);
+    expect(await alice.query(api.notifications.hasUnread, { boardId })).toBe(true);
+    // An old mark-read request cannot restore cleared entries or read the new change.
+    await alice.mutation(api.notifications.markRead, {
+      boardId,
+      throughId: before.page[0]._id,
+    });
+    expect((await feed()).page).toHaveLength(1);
+    expect(await alice.query(api.notifications.hasUnread, { boardId })).toBe(true);
+  });
+
+  it('can delete an empty feed without suppressing future notifications', async () => {
+    const { alice, boardId, addVisit, feed } = await setup();
+    await alice.mutation(api.notifications.deleteAll, { boardId });
+    expect((await feed()).page).toEqual([]);
+    await addVisit();
+    expect((await feed()).page).toHaveLength(1);
+    expect(await alice.query(api.notifications.hasUnread, { boardId })).toBe(true);
+  });
+
   it('denies outsiders, unauthenticated users, removed members and cross-board read markers', async () => {
     const { t, alice, bob, outsider, ids, boardId, addVisit, feed } = await setup();
     await addVisit();
@@ -144,6 +210,7 @@ describe('Board notifications', () => {
       await expect(
         client.mutation(api.notifications.markOneRead, { boardId, notificationId: row._id }),
       ).rejects.toThrow();
+      await expect(client.mutation(api.notifications.deleteAll, { boardId })).rejects.toThrow();
     }
     const other = await alice.mutation(api.boards.create, {
       name: 'Private',
@@ -157,6 +224,7 @@ describe('Board notifications', () => {
       alice.mutation(api.notifications.markOneRead, { boardId: other, notificationId: row._id }),
     ).rejects.toThrow(/Invalid notification/);
     await alice.mutation(api.boards.removeMember, { boardId, userId: ids.bob });
+    await expect(bob.mutation(api.notifications.deleteAll, { boardId })).rejects.toThrow(/access/);
     await expect(bob.query(api.notifications.list, { boardId, paginationOpts })).rejects.toThrow(
       /access/,
     );

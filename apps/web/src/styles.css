@@ -6119,6 +6119,11 @@ img.avatar {
 .notifications-heading h2 {
   margin: 0;
 }
+.notification-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 .notification-list {
   list-style: none;
   padding: 0;
